@@ -14,7 +14,10 @@ dependencies = [
 name = "activity-storage"
 version = "0.1.0"
 dependencies = [
+ "activity-core",
  "rusqlite",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
