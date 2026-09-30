@@ -6,6 +6,9 @@ license.workspace = true
 
 [dependencies]
 activity-core = { path = "../core" }
+# consumer 把 Event 交给 BatchWriter（spec §3 的 Event Bus 那一层），
+# 所以 collector 依赖 storage。storage 不反向依赖 collector，无环。
+activity-storage = { path = "../storage" }
 serde.workspace = true
 
 [target.'cfg(windows)'.dependencies]

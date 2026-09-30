@@ -7,6 +7,7 @@ name = "activity-collector"
 version = "0.1.0"
 dependencies = [
  "activity-core",
+ "activity-storage",
  "serde",
  "windows 0.58.0",
 ]
