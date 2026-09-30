@@ -1,0 +1,7 @@
+packages:
+  - "."
+
+# pnpm 12 默认拦截依赖的 postinstall 脚本；Vite 依赖 esbuild 的构建产物，必须显式放行。
+# 放在 pnpm-workspace.yaml 而不是 package.json 的 "pnpm" 字段（pnpm 12 已不再读后者）。
+allowBuilds:
+  esbuild: true
