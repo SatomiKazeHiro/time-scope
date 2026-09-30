@@ -8,6 +8,12 @@ target/
 
 # 参考资料 / 本地资料（不入库）
 .reference
+
+# 本地临时 vendored 的第三方 pi 包（仅本机使用）
+vendor/
+
+# 本地 pi 项目设置（引用 gitignored 的 vendor 路径，不应入库）
+.pi/
 *.db
 *.db-wal
 *.db-shm
