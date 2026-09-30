@@ -1,0 +1,9 @@
+[package]
+name = "activity-collector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+activity-core = { path = "../core" }
+serde.workspace = true

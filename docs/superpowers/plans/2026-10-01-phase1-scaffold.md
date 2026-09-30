@@ -964,6 +964,8 @@ fn background_thread_auto_flushes_without_manual_call() {
     let rows = get_events_in_range(&conn, 0, i64::MAX).unwrap();
     assert_eq!(rows.len(), 2, "background thread should flush on its own");
 }
+```
+
 - [ ] **Step 2: 运行测试确认失败**
 
 Run: `cd src-tauri && cargo test -p activity-storage --test writer`

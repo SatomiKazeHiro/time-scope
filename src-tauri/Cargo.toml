@@ -1,7 +1,5 @@
 [workspace]
-# 分步补齐：Task 2 只有 core；Task 3 补 storage；Task 6 把根变成 tauri 应用包并补 collector。
-# cargo 会在 members 指向不存在目录时直接报错，这是刻意的防呆。
-members = ["crates/core", "crates/storage"]
+members = ["crates/core", "crates/storage", "crates/collector", "."]
 resolver = "2"
 
 [workspace.package]
@@ -13,6 +11,27 @@ license = "MIT"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Task 6 会把本文件变成真正的应用包，届时补上：
-#   members = [..., "."]
-#   [package] / [lib] / [dependencies] / [build-dependencies]
+# 本 crate 即 workspace 根，也是最终的 Tauri 应用。
+[package]
+name = "time-scope"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Windows 本地个人时间账本"
+default-run = "time-scope"
+
+[lib]
+name = "time_scope_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+tauri = { version = "2.1", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+time = { version = "0.3", features = ["local-offset", "parsing", "formatting", "macros"] }
+activity-core = { path = "crates/core" }
+activity-storage = { path = "crates/storage" }
+activity-collector = { path = "crates/collector" }
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }

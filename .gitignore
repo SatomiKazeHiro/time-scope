@@ -24,3 +24,6 @@ vendor/
 .DS_Store
 .vscode/
 .idea/
+
+# Tauri 生成的 ACL schema（每次 build 重新生成）
+src-tauri/gen/schemas/
