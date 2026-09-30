@@ -14,6 +14,8 @@ vendor/
 
 # 本地 pi 项目设置（引用 gitignored 的 vendor 路径，不应入库）
 .pi/
+
+# 本地数据库
 *.db
 *.db-wal
 *.db-shm
