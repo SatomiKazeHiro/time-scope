@@ -1,0 +1,18 @@
+[workspace]
+# 分步补齐：Task 2 只有 core；Task 3 补 storage；Task 6 把根变成 tauri 应用包并补 collector。
+# cargo 会在 members 指向不存在目录时直接报错，这是刻意的防呆。
+members = ["crates/core"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Task 6 会把本文件变成真正的应用包，届时补上：
+#   members = [..., "."]
+#   [package] / [lib] / [dependencies] / [build-dependencies]
