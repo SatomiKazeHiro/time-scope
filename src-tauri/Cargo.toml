@@ -1,7 +1,7 @@
 [workspace]
 # 分步补齐：Task 2 只有 core；Task 3 补 storage；Task 6 把根变成 tauri 应用包并补 collector。
 # cargo 会在 members 指向不存在目录时直接报错，这是刻意的防呆。
-members = ["crates/core"]
+members = ["crates/core", "crates/storage"]
 resolver = "2"
 
 [workspace.package]

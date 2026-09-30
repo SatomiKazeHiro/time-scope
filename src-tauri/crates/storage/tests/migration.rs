@@ -1,0 +1,87 @@
+use activity_storage::open_in_memory;
+
+#[test]
+fn creates_expected_tables_and_indexes() {
+    let conn = open_in_memory();
+    let mut stmt = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index')")
+        .unwrap();
+    let names: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    for expected in [
+        "events",
+        "activities",
+        "activity_evidence",
+        "idx_events_timestamp",
+        "idx_events_type_timestamp",
+        "idx_activities_range",
+    ] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "missing {expected} in {names:?}"
+        );
+    }
+}
+
+#[test]
+fn journal_mode_is_wal() {
+    let conn = open_in_memory();
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .unwrap();
+    // 内存库无法用 WAL，会回退到 memory；此断言只确认 PRAGMA 可执行且未报错。
+    assert!(
+        mode == "memory" || mode == "wal",
+        "unexpected journal_mode {mode}"
+    );
+}
+
+#[test]
+fn file_db_uses_wal() {
+    // 内存库退化为 memory，WAL 只能在真文件上验证（spec §8.1）。
+    let dir = std::env::temp_dir().join(format!("ts-mig-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t.db");
+    let _ = std::fs::remove_file(&path);
+    let conn = activity_storage::open_file(&path).unwrap();
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+    let uv: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(uv, activity_storage::SCHEMA_VERSION);
+    drop(conn);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(&dir);
+}
+
+#[test]
+fn migrate_is_idempotent() {
+    let dir = std::env::temp_dir().join(format!("ts-idem-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t.db");
+    let _ = std::fs::remove_file(&path);
+    {
+        let _c = activity_storage::open_file(&path).unwrap();
+    }
+    // 第二次打开同一文件：CREATE TABLE IF NOT EXISTS 不应报错
+    let _c = activity_storage::open_file(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(&dir);
+}
+
+#[test]
+fn open_file_creates_missing_parent_directory() {
+    let dir = std::env::temp_dir().join(format!("ts-nested-{}-a-b", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("deeper").join("t.db");
+    let conn = activity_storage::open_file(&path).unwrap();
+    assert!(path.exists());
+    drop(conn);
+    let _ = std::fs::remove_dir_all(&dir);
+}
