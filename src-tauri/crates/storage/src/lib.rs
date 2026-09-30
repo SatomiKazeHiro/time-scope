@@ -4,9 +4,17 @@ pub mod writer;
 
 pub use query::{get_events_in_range, insert_events, now_ms, StoredEvent};
 pub use schema::{apply_pragmas, migrate, SCHEMA_VERSION};
+pub use writer::{flush_and_stop, BatchWriter};
 
 use rusqlite::Connection;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+/// 跨线程共享的连接。
+///
+/// `rusqlite::Connection` 是 `Send` 但**不是** `Sync`，所以不能直接 `Arc<Connection>`
+/// 丢给后台写盘线程。Mutex 是单文件、单写入者场景下最省事且正确的包法。
+pub type SharedConn = Arc<Mutex<Connection>>;
 
 /// 测试用：内存库，已应用 PRAGMA 与迁移。
 pub fn open_in_memory() -> Connection {
@@ -14,6 +22,16 @@ pub fn open_in_memory() -> Connection {
     apply_pragmas(&conn).expect("apply pragmas");
     migrate(&conn).expect("migrate");
     conn
+}
+
+/// 同 `open_in_memory`，但包成可跨线程共享的形式（`BatchWriter` 需要）。
+pub fn open_in_memory_shared() -> SharedConn {
+    Arc::new(Mutex::new(open_in_memory()))
+}
+
+/// 同 `open_file`，但包成可跨线程共享的形式（`BatchWriter` 需要）。
+pub fn open_file_shared(path: &Path) -> rusqlite::Result<SharedConn> {
+    Ok(Arc::new(Mutex::new(open_file(path)?)))
 }
 
 /// 生产用：文件库。父目录不存在时自动创建（spec §8.1 的 `%APPDATA%/time-scope/`）。
