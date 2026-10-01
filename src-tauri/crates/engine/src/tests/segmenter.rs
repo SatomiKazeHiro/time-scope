@@ -581,3 +581,107 @@ fn a_lone_short_segment_is_held_rather_than_emitted() {
     );
 }
 
+
+// --- 锁屏/睡眠（spec §3.1）---
+
+#[test]
+fn session_lock_starts_an_idle_segment() {
+    let segs = all_segments(
+        &[focus(0, "Code.exe"), Event::new(EventType::SessionLock, 400_000)],
+        &rules(),
+        &emit_now(),
+    );
+    let cats: Vec<&str> = segs.iter().map(|s| s.category.as_str()).collect();
+    assert!(
+        cats.contains(&"idle"),
+        "锁屏应产出 idle 段，实际={:?}",
+        cats
+    );
+    let idle = segs.iter().find(|s| s.category.as_str() == "idle").unwrap();
+    assert!(idle.start_at >= 400_000);
+}
+
+#[test]
+fn session_unlock_closes_the_idle_segment() {
+    let segs = all_segments(
+        &[
+            focus(0, "Code.exe"),
+            Event::new(EventType::SessionLock, 400_000),
+            Event::new(EventType::SessionUnlock, 1_000_000),
+        ],
+        &rules(),
+        &emit_now(),
+    );
+    let idle = segs.iter().find(|s| s.category.as_str() == "idle").unwrap();
+    assert!(idle.end_at >= 1_000_000, "解锁应把 idle 段收在解锁时刻");
+}
+
+#[test]
+fn the_work_segment_ends_when_the_screen_locks() {
+    // 锁屏前的工作不该延伸到锁屏之后
+    let segs = all_segments(
+        &[focus(0, "Code.exe"), Event::new(EventType::SessionLock, 400_000)],
+        &rules(),
+        &emit_now(),
+    );
+    let work = segs.iter().find(|s| s.category.as_str() == "work").unwrap();
+    assert_eq!(work.end_at, 400_000);
+}
+
+#[test]
+fn heartbeats_during_a_lock_do_not_produce_active_time() {
+    // Review Focus #1：锁屏 8 小时不该产生 active
+    let segs = all_segments(
+        &[
+            focus(0, "Code.exe"),
+            Event::new(EventType::SessionLock, 400_000),
+            heartbeat(500_000, 0),
+            heartbeat(600_000, 9), // 即便有输入心跳，锁屏期间也只该算 idle
+        ],
+        &rules(),
+        &emit_now(),
+    );
+    // 只看锁屏**之后**开始的段：锁屏前那段 work 是真实存在的
+    for s in segs.iter().filter(|s| s.start_at >= 400_000) {
+        assert_ne!(
+            s.category.as_str(),
+            "work",
+            "锁屏期间不该有 work 段：{s:?}"
+        );
+    }
+    let idle = segs.iter().find(|s| s.category.as_str() == "idle").unwrap();
+    assert!(idle.end_at >= 600_000, "心跳应延长 idle 段");
+}
+
+#[test]
+fn a_session_lock_is_not_a_repeat_of_the_previous_idle() {
+    // 重复收到锁屏事件不应反复开新段（锁屏 + 合盖可能各发一次）
+    let segs = all_segments(
+        &[
+            focus(0, "Code.exe"),
+            Event::new(EventType::SessionLock, 400_000),
+            Event::new(EventType::SessionLock, 410_000),
+        ],
+        &rules(),
+        &emit_now(),
+    );
+    assert_eq!(
+        segs.iter().filter(|s| s.category.as_str() == "idle").count(),
+        1,
+        "重复的锁屏事件不该产生第二个 idle 段：{:?}",
+        segs.iter().map(|s| s.category.as_str()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_missing_unlock_does_not_invent_extra_time() {
+    // Review Focus #1：解锁事件可能收不到（进程被杀）。那段时间只应是 idle，
+    // 绝不能凭空多出 active。
+    let segs = all_segments(
+        &[focus(0, "Code.exe"), Event::new(EventType::SessionLock, 400_000)],
+        &rules(),
+        &emit_now(),
+    );
+    let work = segs.iter().find(|s| s.category.as_str() == "work").unwrap();
+    assert_eq!(work.end_at, 400_000, "锁屏后的时间不能算进工作段");
+}

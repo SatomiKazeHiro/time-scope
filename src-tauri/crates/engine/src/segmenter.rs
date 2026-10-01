@@ -70,8 +70,9 @@ pub fn reduce(
 
     // 1. idle 状态翻转
     match event.event_type {
-        EventType::SystemIdle => st.is_idle = true,
-        EventType::SystemResume => st.is_idle = false,
+        // 锁屏/睡眠与"无输入"等价：那段时间用户不在，不该记成活跃（spec §3.1）
+        EventType::SystemIdle | EventType::SessionLock => st.is_idle = true,
+        EventType::SystemResume | EventType::SessionUnlock => st.is_idle = false,
         _ => {}
     }
 
@@ -84,15 +85,24 @@ pub fn reduce(
 
     match event.event_type {
         // --- idle 分支 ---
-        EventType::SystemIdle => {
-            close_current(&mut st, rules, ts);
-            let mut open = new_open_segment(ts, Category::Idle, None, 0.0);
-            open.evidence_event_ids.push(event.id.clone());
-            st.current_segment = Some(open);
-            st.current_context = Some(new_ctx);
-            st.last_switch_at = Some(ts);
+        EventType::SystemIdle | EventType::SessionLock => {
+            // 已经有一段 idle 时**不重开**：锁屏通知可能重复到达
+            // （锁屏与合盖各发一次），每次都开新段会把一段连续的空闲切碎。
+            match st.current_segment.clone() {
+                Some(cur) if cur.category == Category::Idle => {
+                    extend(&mut st, cur, ts, event.id.clone());
+                }
+                _ => {
+                    close_current(&mut st, rules, ts);
+                    let mut open = new_open_segment(ts, Category::Idle, None, 0.0);
+                    open.evidence_event_ids.push(event.id.clone());
+                    st.current_segment = Some(open);
+                    st.current_context = Some(new_ctx);
+                    st.last_switch_at = Some(ts);
+                }
+            }
         }
-        EventType::SystemResume => {
+        EventType::SystemResume | EventType::SessionUnlock => {
             // idle 段在 resume 时收尾；下一条事件会开新的 context 段
             close_current(&mut st, rules, ts);
             st.current_context = Some(new_ctx);
@@ -125,8 +135,11 @@ pub fn reduce(
                     }
                 }
                 Some(cur) => {
-                    let same = cur.application == new_ctx.application
-                        && cur.category == category;
+                    // 已经在 idle 段里时，心跳/焦点变化**只延长**它：
+                    // 锁屏期间"正在用哪个程序"没有意义（spec §3.1），
+                    // 让 application 参与判定会把一段连续的空闲切成碎片。
+                    let same = (st.is_idle && cur.category == Category::Idle)
+                        || (cur.application == new_ctx.application && cur.category == category);
                     if same {
                         extend(&mut st, cur, ts, event.id.clone());
                     } else if is_absorption(&st, &new_ctx, ts, config) {
