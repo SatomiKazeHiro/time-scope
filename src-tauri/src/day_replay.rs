@@ -1,5 +1,6 @@
 use crate::date_range::day_range_ms;
 use crate::engine_runtime::to_stored;
+use crate::redact::Redactor;
 use crate::rules::{load_rules, rules_path};
 use activity_core::{Event, EventType};
 use activity_engine::{EngineConfig, RuleSet};
@@ -38,8 +39,9 @@ pub fn replay_day_once(
     config: &EngineConfig,
     date: &str,
     offset: UtcOffset,
+    redactor: &Redactor,
 ) -> bool {
-    replay_day(conn, replayed, rules, config, date, offset).is_some()
+    replay_day(conn, replayed, rules, config, date, offset, redactor).is_some()
 }
 
 /// 同上，但把重放用的运行时交出来。启动时用它继续跑实时流——否则实时引擎从空状态
@@ -51,6 +53,7 @@ fn replay_day(
     config: &EngineConfig,
     date: &str,
     offset: UtcOffset,
+    redactor: &Redactor,
 ) -> Option<crate::engine_runtime::EngineRuntime> {
     if !replayed.claim(date) {
         return None;
@@ -66,7 +69,13 @@ fn replay_day(
         };
         rows.iter()
             .filter_map(|stored| {
-                serde_json::from_str::<EventType>(&stored.payload).ok().map(|event_type| Event {
+                // **对历史数据再脱敏一次**：脱敏功能上线前落库的标题不会被回溯改写，
+                // 但重放时经过这里，界面上就不会再露出旧数据里的敏感片段。
+                // events 表里的原始行保持不变（不做数据改写）。
+                let payload = redactor
+                    .redact_payload(&stored.payload)
+                    .unwrap_or_else(|| stored.payload.clone());
+                serde_json::from_str::<EventType>(&payload).ok().map(|event_type| Event {
                     id: stored.id.clone(),
                     timestamp: stored.timestamp,
                     event_type,
@@ -121,11 +130,12 @@ pub fn bootstrap_today(
         }
     }
     let config = EngineConfig::default();
+    let redactor = Redactor::new(&rules.redact);
     let offset = time::UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
     let today = today_string();
-    // 拿运行时而不是丢���：实时流要从"重放后的状态"继续，
+    // 拿运行时而不是丢掉：实时流要从"重放后的状态"继续，
     // 否则当前正在生长的那一段会在实时引擎里丢失。
-    let rt = replay_day(conn, replayed, &rules, &config, &today, offset)
+    let rt = replay_day(conn, replayed, &rules, &config, &today, offset, &redactor)
         .unwrap_or_else(|| crate::engine_runtime::EngineRuntime::new(rules.clone(), config));
     (rules, config, rt)
 }
@@ -195,6 +205,7 @@ mod tests {
             &cfg(),
             &day_str(-1),
             UtcOffset::UTC,
+            &Redactor::default(),
         );
         assert!(done, "昨天应该被重放");
 
@@ -208,9 +219,9 @@ mod tests {
         let replayed = ReplayedDays::default();
         insert_events(&conn.lock().unwrap(), &[focus(day_ts(-1, 9), "Code.exe")]).unwrap();
 
-        assert!(replay_day_once(&conn, &replayed, &rules(), &cfg(), &day_str(-1), UtcOffset::UTC));
+        assert!(replay_day_once(&conn, &replayed, &rules(), &cfg(), &day_str(-1), UtcOffset::UTC, &Redactor::default()));
         assert!(
-            !replay_day_once(&conn, &replayed, &rules(), &cfg(), &day_str(-1), UtcOffset::UTC),
+            !replay_day_once(&conn, &replayed, &rules(), &cfg(), &day_str(-1), UtcOffset::UTC, &Redactor::default()),
             "同一天不该重放第二次"
         );
         let rows = get_segments_in_range(&conn.lock().unwrap(), day_ts(-1, 0), day_ts(0, 0)).unwrap();
@@ -221,7 +232,7 @@ mod tests {
     fn an_empty_day_is_claimed_and_leaves_no_segments() {
         let conn = open_in_memory_shared();
         let replayed = ReplayedDays::default();
-        assert!(replay_day_once(&conn, &replayed, &rules(), &cfg(), &day_str(-3), UtcOffset::UTC));
+        assert!(replay_day_once(&conn, &replayed, &rules(), &cfg(), &day_str(-3), UtcOffset::UTC, &Redactor::default()));
         assert!(get_segments_in_range(&conn.lock().unwrap(), day_ts(-3, 0), day_ts(-2, 0))
             .unwrap()
             .is_empty());
@@ -231,6 +242,128 @@ mod tests {
     fn replaying_an_invalid_date_is_a_noop() {
         let conn = open_in_memory_shared();
         let replayed = ReplayedDays::default();
-        assert!(!replay_day_once(&conn, &replayed, &rules(), &cfg(), "not-a-date", UtcOffset::UTC));
+        assert!(!replay_day_once(&conn, &replayed, &rules(), &cfg(), "not-a-date", UtcOffset::UTC, &Redactor::default()));
+    }
+}
+
+
+#[cfg(test)]
+mod replay_redaction_tests {
+    use super::*;
+    use activity_storage::{insert_events, open_in_memory_shared};
+
+    /// 时间戳必须落在"今天"，否则按天重放查不到它
+    fn today_millis() -> i64 {
+        activity_storage::now_ms()
+    }
+
+    fn focus(app: &str, title: &str) -> Event {
+        Event::new(
+            EventType::WindowFocus(activity_core::WindowFocusPayload {
+                process_name: app.into(),
+                window_title: Some(title.into()),
+                exe_path: None,
+            }),
+            today_millis(),
+        )
+    }
+
+    fn rule_set(patterns: &[&str]) -> RuleSet {
+        let mut body = String::from(
+            "\n[[rule]]\nid = \"slack\"\nprocess = [\"slack.exe\"]\ncategory = \"communication\"\nconfidence = 0.8\n",
+        );
+        for p in patterns {
+            body.push_str(&format!("\n[[redact]]\npattern = '{}'\n", p));
+        }
+        RuleSet::from_toml(&body).unwrap()
+    }
+
+    fn config() -> EngineConfig {
+        EngineConfig::default()
+            .with_min_segment_duration_s(0)
+            .with_grace_period_s(0)
+    }
+
+    /// 唯一能看到窗口标题的地方是引擎的 `current_context`——落库的 segment 不存标题，
+    /// 所以想验证重放确实做了脱敏，只能从这里看。
+    fn replayed_title(rt: &crate::engine_runtime::EngineRuntime) -> Option<String> {
+        rt.state
+            .current_context
+            .as_ref()
+            .and_then(|c| c.window_title.clone())
+    }
+
+    #[test]
+    fn replay_applies_redaction_to_legacy_rows() {
+        // 场景：脱敏功能上线**之前**落库的明文标题。开启脱敏后翻看那一天，
+        // 引擎看到的不该是明文。
+        let conn = open_in_memory_shared();
+        insert_events(
+            &conn.lock().unwrap(),
+            &[focus("slack.exe", "客户Alice 的订单 998877")],
+        )
+        .unwrap();
+
+        let rt = replay_day(
+            &conn,
+            &ReplayedDays::default(),
+            &rule_set(&[]),
+            &config(),
+            &today_string(),
+            UtcOffset::UTC,
+            &Redactor::new(&["Alice".into(), r"订单 \d+".into()]),
+        )
+        .expect("应完成重放");
+
+        let title = replayed_title(&rt).expect("引擎应记住当前标题");
+        assert!(!title.contains("Alice"), "引擎不该看到明文：{title:?}");
+        assert!(!title.contains("998877"), "引擎不该看到订单号：{title:?}");
+        assert!(title.contains("[redacted]"), "应被替换为占位符：{title:?}");
+    }
+
+    #[test]
+    fn without_a_redactor_the_legacy_title_passes_through_unchanged() {
+        let conn = open_in_memory_shared();
+        insert_events(&conn.lock().unwrap(), &[focus("slack.exe", "客户Alice")]).unwrap();
+
+        let rt = replay_day(
+            &conn,
+            &ReplayedDays::default(),
+            &rule_set(&[]),
+            &config(),
+            &today_string(),
+            UtcOffset::UTC,
+            &Redactor::default(),
+        )
+        .expect("应完成重放");
+
+        assert_eq!(replayed_title(&rt).as_deref(), Some("客户Alice"));
+    }
+
+    #[test]
+    fn the_events_table_itself_is_never_rewritten() {
+        // 脱敏只作用在"读出来往引擎走"的路径上；原始数据保持不变，
+        // 这样用户随时能回去核对，也能自己决定要不要清库。
+        let conn = open_in_memory_shared();
+        insert_events(&conn.lock().unwrap(), &[focus("slack.exe", "客户Alice")]).unwrap();
+
+        replay_day(
+            &conn,
+            &ReplayedDays::default(),
+            &rule_set(&[]),
+            &config(),
+            &today_string(),
+            UtcOffset::UTC,
+            &Redactor::new(&["Alice".into()]),
+        );
+
+        let rows =
+            activity_storage::get_events_in_range(&conn.lock().unwrap(), 0, i64::MAX).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].payload.contains("Alice"),
+            "events 表的原始 payload 不该被改写：{}",
+            rows[0].payload
+        );
     }
 }

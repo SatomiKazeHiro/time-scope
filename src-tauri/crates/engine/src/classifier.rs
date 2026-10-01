@@ -40,6 +40,15 @@ pub struct RawRule {
 struct RulesDoc {
     #[serde(default, rename = "rule")]
     rule: Vec<RawRule>,
+    /// 脱敏模式（spec §11）。**保持未编译的字符串**：engine 不该为隐私关注点
+    /// 多一个 regex 依赖，编译与否由 app 层决定。
+    #[serde(default, rename = "redact")]
+    redact: Vec<RawRedact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawRedact {
+    pub pattern: String,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +69,8 @@ impl Rule {
 #[derive(Debug, Clone)]
 pub struct RuleSet {
     pub rules: Vec<Rule>,
+    /// 脱敏正则的**源码**，未编译（spec §11）
+    pub redact: Vec<String>,
     /// 规则集版本号，写进每条 Activity 的 `classifier_version`（spec §7.2）
     pub version: String,
 }
@@ -86,6 +97,7 @@ impl RuleSet {
     pub fn from_toml(src: &str) -> Result<RuleSet, RuleError> {
         let doc: RulesDoc = toml::from_str(src).map_err(RuleError::Parse)?;
         let raw = doc.rule;
+        let redact: Vec<String> = doc.redact.into_iter().map(|r| r.pattern).collect();
 
         let mut rules = Vec::with_capacity(raw.len());
         for r in raw {
@@ -114,9 +126,9 @@ impl RuleSet {
             });
         }
 
-        // 版本号由规则内容派生：改了规则，重算出来的 Activity 就能被区分开
-        let version = format!("rules:{}", rules.len());
-        Ok(RuleSet { rules, version })
+        // 版本号由规则内容派生：改了规则（含脱敏规则），重算出来的 Activity 就能被区分开
+        let version = format!("rules:{}+redact:{}", rules.len(), redact.len());
+        Ok(RuleSet { rules, redact, version })
     }
 
     /// 分类。进程名匹配**大小写不敏感**且只看文件名部分。
@@ -161,6 +173,24 @@ pub const DEFAULT_RULES_TOML: &str = r#"
 #
 # 没命中任何规则的程序会落到 unknown，置信度 0.0 —— 这是预期行为。
 # 想让它有颜色，往这里加一条就行。
+#
+# ---------------------------------------------------------------------------
+# 窗口标题脱敏（spec §11）
+#
+# 命中的部分会在**入库前**被替换成 [redacted]。例如：
+#
+#   [[redact]]
+#   pattern = '客户\d+'
+#   [[redact]]
+#   pattern = '(?i)salary'
+#
+# 注意：
+#   * 写正则**必须用单引号**。TOML 的双引号会处理转义，"\d" 会被当成非法转义而报错。
+#   * 默认**不预置任何脱敏规则**。过度脱敏会把有用的数据也毁掉，所以宁可你自己按需添加。
+#   * 正则写错只跳过这一条并在终端提示，不影响你的分类规则。
+#   * 脱敏只作用于新采集的数据；已落库的历史数据不会被回溯改写
+#     （但界面重放时也会脱敏，所以不会露出来）。
+# ---------------------------------------------------------------------------
 
 [[rule]]
 id = "vscode"

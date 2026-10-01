@@ -9,6 +9,7 @@ dependencies = [
  "activity-core",
  "activity-storage",
  "serde",
+ "serde_json",
  "windows 0.58.0",
 ]
 
@@ -3444,6 +3445,7 @@ dependencies = [
  "activity-core",
  "activity-engine",
  "activity-storage",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

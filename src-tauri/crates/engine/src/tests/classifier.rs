@@ -164,3 +164,103 @@ fn classification_defaults_to_unknown() {
     assert_eq!(c.confidence, 0.0);
     assert!(c.rule_id.is_none());
 }
+
+// --- 脱敏规则（spec §11）---
+
+#[test]
+fn parses_redact_patterns_alongside_rules() {
+    let rs = RuleSet::from_toml(
+        r#"
+[[rule]]
+id = "x"
+process = ["a.exe"]
+category = "work"
+confidence = 0.5
+
+[[redact]]
+pattern = "Alice"
+
+# TOML 单引号是 literal string，不处理转义 —— 写正则必须用它
+[[redact]]
+pattern = '订单 \d+'
+"#,
+    )
+    .unwrap();
+    assert_eq!(rs.redact.len(), 2);
+    assert!(rs.redact.iter().any(|p| p == "Alice"));
+    assert!(rs.redact.iter().any(|p| p.contains("订单")));
+}
+
+#[test]
+fn redact_list_is_optional_and_defaults_to_empty() {
+    // 没有 [[redact]] 的旧 rules.toml 必须仍能解析
+    let rs = RuleSet::from_toml(
+        r#"
+[[rule]]
+id = "x"
+process = ["a.exe"]
+category = "work"
+confidence = 0.5
+"#,
+    )
+    .unwrap();
+    assert!(rs.redact.is_empty());
+}
+
+#[test]
+fn rules_file_with_only_redact_entries_parses() {
+    let rs = RuleSet::from_toml("[[redact]]\npattern = \"secret\"\n").unwrap();
+    assert!(rs.rules.is_empty());
+    assert_eq!(rs.redact.len(), 1);
+}
+
+#[test]
+fn an_invalid_redact_regex_does_not_break_the_whole_file() {
+    // 脱敏规则写坏不该让分类规则一起失效——两者是独立的关注点
+    let rs = RuleSet::from_toml(
+        r#"
+[[rule]]
+id = "x"
+process = ["a.exe"]
+category = "work"
+confidence = 0.5
+
+[[redact]]
+pattern = "([unclosed"
+"#,
+    )
+    .unwrap();
+    assert_eq!(rs.rules.len(), 1, "分类规则应照常加载");
+    assert_eq!(rs.redact.len(), 1, "脱敏模式原样保留，由上层决定是否跳过");
+}
+
+#[test]
+fn default_rules_toml_declares_the_redact_key() {
+    // 默认规则里要有 [[redact]] 的说明，否则用户不知道这个键存在
+    let rs = RuleSet::from_toml(crate::DEFAULT_RULES_TOML).unwrap();
+    assert!(rs.redact.is_empty(), "默认不预置任何脱敏规则，避免过度脱敏");
+}
+
+#[test]
+fn redact_pattern_version_is_part_of_the_ruleset() {
+    // 改了脱敏规则，重算结果的 classifier_version 应该能区分开
+    let a = RuleSet::from_toml("[[redact]]\npattern = \"x\"\n").unwrap();
+    let b = RuleSet::from_toml("").unwrap();
+    assert_ne!(a.version, b.version);
+}
+
+#[test]
+fn redact_patterns_need_toml_literal_strings_for_backslashes() {
+    // TOML 的双引号串会处理转义，正则里的 \d 会被当成非法转义而解析失败。
+    // 写正则必须用单引号的 literal string。这是个用户一定会踩的坑。
+    assert!(
+        RuleSet::from_toml(r#"[[redact]]
+pattern = "\d+"
+"#)
+        .is_err(),
+        "双引号里的裸 \\d 应解析失败"
+    );
+    let ok = RuleSet::from_toml("[[redact]]\npattern = '\\d+'\n");
+    assert!(ok.is_ok(), "单引号里的 \\d 应解析成功，实际 {:?}", ok.err());
+    assert_eq!(ok.unwrap().redact, vec!["\\d+".to_string()]);
+}

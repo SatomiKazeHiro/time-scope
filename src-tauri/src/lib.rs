@@ -13,6 +13,7 @@
 
 mod date_range;
 mod day_replay;
+mod redact;
 mod engine_runtime;
 mod engine_thread;
 mod exit_flush;
@@ -24,6 +25,7 @@ use date_range::{day_range_ms, local_offset};
 use day_replay::{replay_day_once, ReplayedDays};
 use engine_runtime::EngineRuntime;
 use exit_flush::flush_for_exit;
+use redact::Redactor;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
@@ -38,6 +40,8 @@ struct AppState {
     replayed: ReplayedDays,
     rules: activity_engine::RuleSet,
     config: activity_engine::EngineConfig,
+    /// 标题脱敏器。consumer 与"按需重放"两条路径共用（spec §11）。
+    redactor: Arc<Redactor>,
 }
 
 /// 取某天的全部 ActivitySegment（spec §9）。
@@ -60,6 +64,7 @@ fn get_segments(
         &state.config,
         &date,
         offset,
+        &state.redactor,
     );
 
     let stored = {
@@ -82,13 +87,37 @@ pub fn run() {
             let (rule_set, config, runtime) = day_replay::bootstrap_today(&conn, &replayed);
             let engine = Arc::new(Mutex::new(runtime));
 
+            // 脱敏器：app 层构造，注入 consumer。敏感标题在**入队前**就被替换，
+            // 不会以明文在内存队列里存在（spec §11）。
+            let redactor = Arc::new(Redactor::new(&rule_set.redact));
+            if !redactor.is_empty() {
+                eprintln!(
+                    "[time-scope] 已启用 {} 条标题脱敏规则{}",
+                    redactor.len(),
+                    if redactor.skipped().is_empty() {
+                        String::new()
+                    } else {
+                        format!("（{} 条因正则非法被跳过）", redactor.skipped().len())
+                    }
+                );
+            }
+            let title_redactor: activity_collector::consumer::TitleRedactor = {
+                let r = Arc::clone(&redactor);
+                Arc::new(move |t: &str| r.redact(t).into_owned())
+            };
+
             let (tx, rx) = channel::<RawSignal>();
             let (ev_tx, ev_rx) = channel::<activity_core::Event>();
 
             activity_collector::window::spawn_window_watcher(tx.clone());
             // spec §5.3 默认：300s 判空闲，心跳窗口 10s
             activity_collector::input::spawn_input_poller(tx.clone(), 300, 10);
-            activity_collector::consumer::spawn_consumer(rx, Arc::clone(&writer), Some(ev_tx));
+            activity_collector::consumer::spawn_consumer_with(
+                rx,
+                Arc::clone(&writer),
+                Some(ev_tx),
+                Some(title_redactor),
+            );
             engine_thread::spawn_engine_thread(ev_rx, Arc::clone(&conn), Arc::clone(&engine));
 
             eprintln!("[time-scope] db: {}", rules::app_dir().join("time-scope.db").display());
@@ -99,6 +128,7 @@ pub fn run() {
                 replayed,
                 rules: rule_set,
                 config,
+                redactor,
             });
             Ok(())
         })

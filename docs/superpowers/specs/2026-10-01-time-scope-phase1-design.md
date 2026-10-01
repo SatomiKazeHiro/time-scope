@@ -422,6 +422,18 @@ function bucketStart(ts: number, intervalMs: number): number {
 - 窗口标题入库前过**脱敏规则**（`rules.toml` 中 `[[redact]]` 正则列表，命中替换为 `[redacted]`）。
 - 全部数据本地存储，应用不发起任何网络请求。
 
+> **实现约定**（2026-10-01 实施后补注）：
+>
+> - 脱敏发生在**入队之前**（consumer 里），敏感标题不会以明文在内存队列里存在哪怕一秒。
+>   脱敏器由 app 层构造后注入 collector——collector 因此既不认识规则、也不依赖 regex crate，
+>   §4 的边界不变。
+> - **写正则必须用 TOML 单引号**（literal string）。双引号会处理转义，`"\d"` 是非法转义。
+> - **默认不预置任何脱敏规则**：过度脱敏会把有用的数据也毁掉，宁可让用户按需添加。
+> - 一条正则编译失败只跳过该条并告警，**不影响分类规则**。
+> - 脱敏只作用于新采集的数据；已落库的历史标题**不会被回溯改写**（`events` 表保持原样，
+>   用户可自行核对或清库）。但“按需重放”读历史数据时会再脱敏一次，所以界面上不会露出。
+> - **进程名与 `exe_path` 不脱敏**（§11 只要求标题）。
+
 ## 12. 常驻与功耗预算
 
 - 托盘：`TrayIconBuilder`；关窗拦截 `CloseRequested` → `prevent_close()` + `hide()`；`RunEvent::ExitRequested` → `prevent_exit()`（退出仅走托盘菜单）。

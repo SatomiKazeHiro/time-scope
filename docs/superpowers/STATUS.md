@@ -35,7 +35,7 @@ Phase 1 分三步。**前两步已完成并合入 `main`**，第三步未开始�
 
 ```
 Rust  27 文件 / 2745 行      TS  13 文件 / 907 行
-测试  160 Rust + 59 前端 = 219 条用例，全绿，0 warning
+测试  193 Rust + 59 前端 = 252 条用例，全绿，0 warning
 提交  26 个（master..HEAD），工作区干净
 ```
 
@@ -53,6 +53,7 @@ time-scope/
     ├── src/rules.rs               rules.toml 加载 / 首次拷贝 / 容错
     ├── src/engine_runtime.rs      纯逻辑、零 IO
     ├── src/engine_thread.rs       唯一做 IO 的桥
+    ├── src/redact.rs              窗口标题脱敏（spec §11）
     ├── src/day_replay.rs          按需重放任意一天（补上次崩溃的孤儿事件）
     ├── src/exit_flush.rs          退出时 flush 队列
     └── crates/
@@ -74,7 +75,7 @@ time-scope/
 ### 自动化已覆盖（可随时重跑）
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 160 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 193 passed
 pnpm test                                                      # 59 passed
 pnpm build                                                     # 无 tsc 报错
 ```
@@ -124,6 +125,7 @@ pnpm build                                                     # 无 tsc 报错
 | **跨零点的段两天都看不到** | 凌晨查看昨天“缺一块” | ✅ 改为区间相交 |
 | **历史日期的孤儿事件永不分段** | 上次崩溃后翻到那天是空白 | ✅ 按需重放 |
 | review Minor 5（段 id 碰撞） | — | ⛔ **撤回**，见下 |
+| **窗口标题明文落库**（spec §11） | 隐私承诺与实现的差距 | ✅ `[[redact]]` 正则，入队前脱敏 |
 
 **撤回一条 review finding**：我说 `seg-{start_at}` 的 id 可能碰撞、`INSERT OR REPLACE`
 会静默覆盖。仔细想下来这不成立 —— grace 吸收是“复活前一段、丢弃新开的那段”，
@@ -134,7 +136,7 @@ pnpm build                                                     # 无 tsc 报错
 
 | 优先级 | 问题 | 现状 | 代价 |
 |---|---|---|---|
-| 🔴 高 | **窗口标题明文落库**（spec §11） | 脱敏未实现。spec §1 承诺“可脱敏” | **导出/分享数据前必须先做**。本地存储无网络请求时尚可接受 |
+| ✅ | ~~窗口标题明文落库~~ | **已实现**（`[[redact]]` 正则，入队前脱敏） | 历史数据不回溯改写，但重放时也会脱敏 |
 | 🟠 中 | **关窗口即退出**（spec §12） | 无托盘、无自启、无单实例 | 用户一天重开十几次；无单实例还可能开出两个进程同时写同一个 DB |
 | 🟠 中 | **锁屏/睡眠不采集**（spec §5.3） | `EventType` 变体已预留，采集未接 | 锁屏期间会继续记活跃；笔记本合盖后产生大段假 idle |
 | 🟡 低 | `segment-updated` 推送（spec §9） | 5 秒轮询顶着 | 段多时整表重查浪费，但轮询够用 |
@@ -214,7 +216,7 @@ wasm 目标…），边写边改比事后补救便宜。
 
 | 项 | spec | 为什么这个优先级 |
 |---|---|---|
-| **窗口标题脱敏** | §11 | **隐私承诺与实现的差距**。spec §1 承诺"窗口标题可脱敏"，当前标题明文落库。本地存储无网络请求时尚可接受，但**导出/分享数据前必须先做**。改动量小（`rules.toml` 加 `[[redact]]` 正则 + collector 侧过滤） |
+| ~~窗口标题脱敏~~ ✅ | §11 | 已完成（2026-10-01）：`rules.toml` 的 `[[redact]]` 正则，在 consumer 入队前替换为 `[redacted]` |
 | **托盘常驻 + 开机自启 + 单实例** | §12 | 常驻应用的基本形态。当前关窗口即退出，用户一天要重开十几次；单实例缺失还可能开出两个进程同时写同一个 DB |
 | **SessionLock/Unlock + 睡眠唤醒** | §5.3 | `EventType` 变体已预留。锁屏期间不该记活跃，笔记本合盖后不该产生大段 idle |
 | **`segment-updated` 推送** | §9 | 目前 5 秒轮询顶着。数据量上去后（一天几百段）整表重查会浪费，但**优先级最低**——轮询够用 |
@@ -242,7 +244,7 @@ wasm 目标…），边写边改比事后补救便宜。
 ## 七、给下一个接手的建议
 
 1. **动手前先读** spec 的 §3（架构）、§5（采集层）、§7（引擎）、§9（IPC）、§10（前端）。
-   spec 已与实现同步，但 §11/§12/§5.3 仍是待办状态。
+   spec 已与实现同步，但 §12/§5.3/§9 仍是待办状态。
 2. **`cargo test` 永远带 `--workspace`**。`src-tauri/Cargo.toml` 同时是 workspace 根和应用包，
    不带的话只跑根包（0 个测试）并显示绿色。
 3. **改 engine 前后跑 `cargo test -p activity-engine --test boundaries`**，
