@@ -21,6 +21,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "activity-engine"
+version = "0.1.0"
+dependencies = [
+ "activity-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "activity-storage"
 version = "0.1.0"
 dependencies = [
@@ -3432,6 +3441,7 @@ version = "0.1.0"
 dependencies = [
  "activity-collector",
  "activity-core",
+ "activity-engine",
  "activity-storage",
  "serde",
  "serde_json",

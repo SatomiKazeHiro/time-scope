@@ -1,0 +1,12 @@
+[package]
+name = "activity-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# 刻意没有 tauri / rusqlite / std::fs —— spec §4 要求 engine 是纯库。
+# crates/engine/tests/boundaries.rs 有一条测试专门守住这个边界。
+[dependencies]
+activity-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true

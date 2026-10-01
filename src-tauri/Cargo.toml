@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/storage", "crates/collector", "."]
+members = ["crates/core", "crates/storage", "crates/collector", "crates/engine", "."]
 resolver = "2"
 
 [workspace.package]
@@ -32,6 +32,7 @@ time = { version = "0.3", features = ["local-offset", "parsing", "formatting", "
 activity-core = { path = "crates/core" }
 activity-storage = { path = "crates/storage" }
 activity-collector = { path = "crates/collector" }
+activity-engine = { path = "crates/engine" }
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
