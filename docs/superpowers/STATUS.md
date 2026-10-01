@@ -30,7 +30,7 @@ Phase 1 分三步。**前两步已完成**，第三步未开始。
 
 ```
 Rust  27 文件 / 2745 行      TS  13 文件 / 907 行
-测试  151 Rust + 57 前端 = 208 条用例，全绿，0 warning
+测试  160 Rust + 59 前端 = 219 条用例，全绿，0 warning
 提交  26 个（master..HEAD），工作区干净
 ```
 
@@ -48,6 +48,7 @@ time-scope/
     ├── src/rules.rs               rules.toml 加载 / 首次拷贝 / 容错
     ├── src/engine_runtime.rs      纯逻辑、零 IO
     ├── src/engine_thread.rs       唯一做 IO 的桥
+    ├── src/day_replay.rs          按需重放任意一天（补上次崩溃的孤儿事件）
     ├── src/exit_flush.rs          退出时 flush 队列
     └── crates/
         ├── core/                  Event / EventType / 序列化，零 IO
@@ -68,8 +69,8 @@ time-scope/
 ### 自动化已覆盖（可随时重跑）
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 151 passed
-pnpm test                                                      # 57 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 160 passed
+pnpm test                                                      # 59 passed
 pnpm build                                                     # 无 tsc 报错
 ```
 
@@ -107,22 +108,29 @@ pnpm build                                                     # 无 tsc 报错
 
 ### 4.1 代码问题
 
-无未修项。上一轮 review 提出的 6 条 Minor 已全部修复
-（`b4931bb` / `676b701` / `40a0d18` / `19d9233`）。
-
-第二步实施中又发现并修掉两个（`ebadd45`）：
+**无未修项。** 两轮 review 共提出 6 + 3 条，全部修复（`b4931bb` / `676b701` / `40a0d18` /
+`19d9233` / `ebadd45` / `37bbbdc`）。
 
 | 问题 | 影响 | 状态 |
 |---|---|---|
-| 应用启动后心跳堆出 "unknown / 无应用" 幽灵段 | 每次启动多一个噪声段 | ✅ 已修 |
-| `min_segment_duration` 只延迟落库、从不合并 | spec §7.3 未实现，64ms 噪声段会落库 | ✅ 已修（`fold_short_segments`）|
+| 应用启动后心跳堆出 "unknown / 无应用" 幽灵段 | 每次启动多一个噪声段 | ✅ |
+| `min_segment_duration` 只延迟落库、从不合并 | spec §7.3 未实现，64ms 噪声段会落库 | ✅ `fold_short_segments` |
+| **时间线永不自动刷新** | 常驻应用看着像坏了 | ✅ 5s 轮询 |
+| **跨零点的段两天都看不到** | 凌晨查看昨天"缺一块" | ✅ 改为区间相交 |
+| **历史日期的孤儿事件永不分段** | 上次崩溃后翻到那天是空白 | ✅ 按需重放 |
+| review Minor 5（段 id 碰撞） | — | ⛔ **撤回**，见下 |
+
+**撤回一条 review finding**：我说 `seg-{start_at}` 的 id 可能碰撞、`INSERT OR REPLACE`
+会静默覆盖。仔细想下来这不成立 —— grace 吸收是"复活前一段、丢弃新开的那段"，
+所以不会有两个活着的段共享起点；重放又会先删当天。能为它写的测试根本触发不了，
+所以我把那个测试撤了，而不是留一个永远不会失败的测试。
 
 ### 4.2 spec 声明本轮不覆盖
 
 | spec 章节 | 内容 | 现状 |
 |---|---|---|
 | §5.3 | SessionLock/Unlock、睡眠唤醒采集 | `EventType` 变体已预留，采集未实现 |
-| §9 | `segment-updated` 事件推送 | 未实现；切日期时整表重查 |
+| §9 | `segment-updated` 事件推送 | 未实现；改用 5 秒轮询顶上 |
 | §11 | 窗口标题脱敏（`[[redact]]`） | **未实现，标题明文落库** |
 | §12 | 托盘常驻 / 开机自启 / 单实例 | 未实现，关窗口即退出 |
 
