@@ -7,14 +7,25 @@ Windows 本地个人时间账本。采集使用活动 → 聚合为可解释的 
 
 ## 当前状态
 
-**Phase 1 骨架**——端到端垂直切片已打通：
+**Phase 1 第二步完成**——采集 → 分类 → 时间线整条链路已打通：
 
 ```
-Windows 事件/输入  ─▶  collector  ─▶  Event  ─▶  SQLite(WAL)  ─▶  IPC  ─▶  24h 时间线 UI
+Windows 事件/输入 ─▶ collector ─▶ Event ─▶ SQLite(WAL)
+                                          │
+              activity-engine（纯库）◀───┘
+              reduce(): Context → 规则分类 → Segmenter 状态机
+                          │
+                          ▼
+                 ActivitySegment（category / confidence / evidence）
+                          │
+                          ▼
+              get_segments ─▶ 24h 分类着色时间线 + 粒度切换 + 当日汇总
 ```
 
-能切窗口、能记心跳、能按天查回原始事件并画出来。**尚缺**分类与汇总（engine crate）、
-窗口标题脱敏、托盘常驻/自启/单实例——见文末"还没做什么"。
+`rules.toml` 在 `%APPDATA%/time-scope/`，首次启动自动生成 16 条默认规则，
+可自由编辑。改坏了也不会崩——退回内置默认并保留你的文件。
+
+**尚缺**：窗口标题脱敏、托盘常驻/自启/单实例——见文末"还没做什么"。
 
 ## 环境要求
 
@@ -61,10 +72,17 @@ src-tauri/               Rust workspace
 
 ## 还没做什么
 
-- **engine crate**：Activity 分类（TOML 规则）、segmenter 状态机、分桶、汇总
-- **窗口标题脱敏**（spec §11 的 `[[redact]]` 规则）
-- **托盘常驻 / 开机自启 / 单实例**（spec §12）
-- 分类配色与证据链展示（spec §7、§10）
+- **窗口标题脱敏**（spec §11 的 `[[redact]]` 规则）—— 标题目前明文落库，
+  **导出/分享数据前必须先做**
+- **托盘常驻 / 开机自启 / 单实例**（spec §12）—— 关窗口即退出
+- **SessionLock / 锁屏与睡眠唤醒采集**（spec §5.3）—— 变体已预留，未采集
+- **`segment-updated` 实时推送**（spec §9）—— 目前切日期时整表重查
+- 分类色/粒度/汇总的**人工验证**（见验证清单第 2–5 步）
+
+## 人工验证清单
+
+`docs/superpowers/plans/2026-10-01-phase1-engine-verification.md`
+（第二步）与 `...scaffold-verification.md`（第一步）。
 
 ## 已知注意事项
 
