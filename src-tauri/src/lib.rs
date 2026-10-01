@@ -12,6 +12,7 @@
 //! ```
 
 mod close_behavior;
+mod tray;
 mod config;
 mod date_range;
 mod day_replay;
