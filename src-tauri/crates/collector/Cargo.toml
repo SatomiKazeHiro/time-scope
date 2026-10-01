@@ -23,6 +23,8 @@ windows = { version = "0.58", features = [
   "Win32_System_SystemInformation",
   "Win32_System_RemoteDesktop",
   "Win32_System_Power",
+  "Win32_System_LibraryLoader",   # GetModuleHandleW
+  "Win32_Graphics_Gdi",            # WNDCLASSW 的 HBRUSH/HICON 所在模块
 ] }
 
 [dev-dependencies]

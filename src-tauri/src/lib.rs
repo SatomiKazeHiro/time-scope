@@ -169,6 +169,19 @@ pub fn run() {
             );
             engine_thread::spawn_engine_thread(ev_rx, Arc::clone(&conn), Arc::clone(&engine));
 
+            // spec §5.3 / §3：锁屏与合盖监听。监听自己建了一个 message-only 窗口，
+            // 所以不依赖主窗口，也就不需要改动窗口结构。
+            let session = activity_collector::session::spawn_listener(tx.clone());
+            eprintln!(
+                "[time-scope] 锁屏/睡眠监听 {}",
+                match session {
+                    activity_collector::session::RegistrationOutcome::Ok => "已就绪",
+                    activity_collector::session::RegistrationOutcome::Failed { .. } => {
+                        "不可用，该时段将不被记录"
+                    }
+                }
+            );
+
             // spec §4：托盘 + 关窗行为 + 自启同步。托盘建不起来时内部会退回
             // "关窗即退出"，主链路不受影响（spec §7）。
             let tray_ok = residency::install(app, app_config);
