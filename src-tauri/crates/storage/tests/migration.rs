@@ -85,3 +85,61 @@ fn open_file_creates_missing_parent_directory() {
     drop(conn);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// --- 迁移版本化 ---
+
+#[test]
+fn migrate_is_a_noop_when_already_at_current_version() {
+    let conn = open_in_memory();
+    let before = activity_storage::current_version(&conn).unwrap();
+    activity_storage::migrate(&conn).unwrap();
+    assert_eq!(activity_storage::current_version(&conn).unwrap(), before);
+    assert_eq!(before, activity_storage::SCHEMA_VERSION);
+}
+
+#[test]
+fn migrate_lifts_a_version_0_database_to_current() {
+    // 模拟"还没记录版本的老库"（user_version 默认 0）
+    let conn = open_in_memory();
+    conn.pragma_update(None, "user_version", 0i64).unwrap();
+    // 把表删掉，模拟结构不存在
+    conn.execute_batch("DROP TABLE events").unwrap();
+
+    activity_storage::migrate(&conn).unwrap();
+
+    assert_eq!(
+        activity_storage::current_version(&conn).unwrap(),
+        activity_storage::SCHEMA_VERSION
+    );
+    // 迁移后表应该被重新建出来
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='events'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1, "迁移应重建缺失的表");
+}
+
+#[test]
+fn migrate_does_not_reapply_already_applied_versions() {
+    // 若 migrate 无条件重跑全部 SQL，第二次会在 ALTER 类迁移上失败。
+    // 现在只有 CREATE IF NOT EXISTS，所以用 pragma 计数验证"没有多余副作用"。
+    let conn = open_in_memory();
+    activity_storage::migrate(&conn).unwrap();
+    let count = |c: &rusqlite::Connection, sql: &str| -> i64 {
+        c.query_row(sql, [], |r| r.get(0)).unwrap()
+    };
+    let first_tables = count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE type='table'");
+    let first_idx = count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE type='index'");
+    activity_storage::migrate(&conn).unwrap();
+    activity_storage::migrate(&conn).unwrap();
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"), first_tables);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE type='index'"), first_idx);
+}
+
+#[test]
+fn current_version_is_reported_for_diagnostics() {
+    let conn = open_in_memory();
+    assert_eq!(
+        activity_storage::current_version(&conn).unwrap(),
+        activity_storage::SCHEMA_VERSION
+    );
+}

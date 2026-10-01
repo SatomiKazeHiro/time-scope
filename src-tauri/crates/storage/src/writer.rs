@@ -2,7 +2,7 @@ use crate::query::insert_events;
 use crate::SharedConn;
 use activity_core::Event;
 use rusqlite::Connection;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -18,8 +18,6 @@ pub struct BatchWriter {
     conn: SharedConn,
     queue: Arc<Mutex<Vec<Event>>>,
     stop: Arc<AtomicBool>,
-    /// 已成功写入条数，仅供诊断。
-    written: Arc<AtomicUsize>,
 }
 
 impl BatchWriter {
@@ -28,11 +26,9 @@ impl BatchWriter {
     pub fn new(conn: SharedConn, flush_interval_ms: u64, batch_size: usize) -> Self {
         let queue: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let written = Arc::new(AtomicUsize::new(0));
 
         let q = Arc::clone(&queue);
         let s = Arc::clone(&stop);
-        let w = Arc::clone(&written);
         let c = Arc::clone(&conn);
 
         std::thread::spawn(move || {
@@ -46,9 +42,7 @@ impl BatchWriter {
                     if !batch.is_empty() {
                         let n = batch.len();
                         match with_conn(&c, |conn| insert_events(conn, &batch)) {
-                            Ok(()) => {
-                                w.fetch_add(n, Ordering::SeqCst);
-                            }
+                            Ok(()) => {}
                             Err(e) => {
                                 eprintln!("[time-scope] final flush failed, dropped {n} events: {e}");
                             }
@@ -71,9 +65,7 @@ impl BatchWriter {
                 }
                 let n = batch.len();
                 match with_conn(&c, |conn| insert_events(conn, &batch)) {
-                    Ok(()) => {
-                        w.fetch_add(n, Ordering::SeqCst);
-                    }
+                    Ok(()) => {}
                     Err(e) => {
                         eprintln!("[time-scope] batch flush failed, dropped {n} events: {e}");
                     }
@@ -86,7 +78,6 @@ impl BatchWriter {
             conn,
             queue,
             stop,
-            written,
         }
     }
 
@@ -105,7 +96,6 @@ impl BatchWriter {
         }
         let n = batch.len();
         with_conn(&self.conn, |conn| insert_events(conn, &batch))?;
-        self.written.fetch_add(n, Ordering::SeqCst);
         Ok(n)
     }
 
@@ -121,9 +111,6 @@ impl BatchWriter {
         self.queue.lock().map(|g| g.len()).unwrap_or(0)
     }
 
-    pub fn written(&self) -> usize {
-        self.written.load(Ordering::SeqCst)
-    }
 }
 
 /// 锁中毒时取回内部值：一次写盘失败不应让整个采集线程 panic。
@@ -149,7 +136,3 @@ impl Drop for BatchWriter {
     }
 }
 
-/// 正常退出时显式收尾：同步冲一次。返回写入条数。
-pub fn flush_and_stop(writer: &BatchWriter) -> rusqlite::Result<usize> {
-    writer.flush()
-}
