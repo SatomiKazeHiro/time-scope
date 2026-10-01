@@ -207,11 +207,15 @@ pnpm build                                                     # 无 tsc 报错
 `docs/superpowers/plans/2026-10-01-phase1-engine-verification.md`。
 特别是第 2 步（分类着色）——**这是第二步唯一的核心验收点，自动化没覆盖到**。
 
-### C. 冻结 spec
+### C. ~~冻结 spec~~ ✅ 已完成（2026-10-01）
 
-实施中发现的偏差已记在 ledger，但**没回写到 spec**。spec 里 `EventType`、
-`ActivitySegment` 的定义和实际实现有细微出入，`min_segment_duration` 的语义也变了
-（从"事后合并"变成"延迟 + 释放前合并"）。
+spec 已按"以现实为准，但先判定谁错了"的原则同步完毕。逐条审计结果：
+**4 条是 spec 自己的问题**（grace 措辞、min/grace 参数矛盾、evidence 外键、ULID 说法），
+**2 条是 spec 对但实施漏了**（短段合并、规则匹配语义未定义），
+**1 条是 spec 正确而计划写错了**（上下文"维护"）。审计表见 spec §16。
+
+**仍未做**：spec 里的 §11 脱敏、§12 常驻、§5.3 锁屏采集、§9 推送都还是待办，
+下一轮「打磨」实施完后需要再同步一次。
 
 ---
 

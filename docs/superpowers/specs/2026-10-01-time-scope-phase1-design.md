@@ -151,7 +151,7 @@ pub enum EventType {
 }
 
 pub struct Event {
-    pub id: String,           // ULID
+    pub id: String,           // 见下方补注
     pub timestamp: i64,       // Unix ms
     pub event_type: EventType,
 }
@@ -173,6 +173,15 @@ pub enum Category {
     Browsing, Life, Idle, Unknown,
 }
 ```
+
+> **`Event.id` 的实际形式**（2026-10-01 实施后补注）：Phase 1 未引入 ulid 依赖，
+> 用的是 `<16 位十六进制时间戳><16 位十六进制进程内计数器>`，定长 32 字符。
+> 它满足 ULID 在本项目里唯一被依赖的性质（**字典序 == 时间序**），
+> 且同毫秒内靠计数器区分。将来若要与外部系统交换 id，再换成真 ULID。
+
+> **`ActivityContext` 的一致性判定**（同日补注）：判定"是否同一 context"只看
+> `application` 与 `is_idle`，**不看 `window_title`**。浏览器每秒都在改标题，
+> 按标题切段会把一天碎成几百段。这与 §7.3 状态机里"app + category 相同就延长"一致。
 
 ## 7. Activity Engine（engine crate，纯函数式）
 
@@ -223,26 +232,77 @@ confidence = 0.85
 
 匹配失败 → `category = unknown, confidence = 0.0`。每次分类记录 `classifier = "rule"` 和规则集版本号。
 
+> **匹配语义**（2026-10-01 实施后补注）：
+> - 进程名**大小写不敏感**（\`Code.exe\` 的规则能匹配 \`code.exe\`）。
+>   用户手写规则不该因为大小写失配而以为规则坏了。
+> - 只取**文件名部分**比较（\`C:\x\y\Code.exe\` 匹配 \`Code.exe\`）。
+> - 按声明顺序，**第一条命中即返回**。
+> - 规则里的 \`category\` 写错（如 \`not_a_category\`）**必须报错**并退回内置默认，
+>   不能静默落到 unknown——否则用户以为规则生效了。
+> - \`confidence\` 直接用规则里写的值。
+> - 规则文件被改坏（语法错 / 类别写错）时应用**不能崩**，应退回内置默认、
+>   在 stderr 说明、且**不覆盖用户的文件**（留着给他自己修）。
+
 ### 7.3 Segmenter 状态机
 
 ```
 同一 context（app + category 相同）
     → 延长当前 segment，追加 evidence event id
 context 变化
-    → 若距上次切换 < GRACE_PERIOD 且新 context 与再前一个相同 → 视为短暂切换，不切段
-    → 否则关闭旧 segment，开新 segment
+    → 若距上次切换 < GRACE_PERIOD 且新 context 与再前一个相同
+      → 视为短暂切换：**丢弃刚开的那段，从缓冲里复活前一段并延长**
+    → 否则关闭旧 segment（进缓冲），开新 segment
 idle
     → 关闭当前 segment，生成 idle segment（idle 期间的心跳不计入活跃）
 resume
     → 关闭 idle segment
 ```
 
+> **关于"视为短暂切换"**（2026-10-01 实施后补注）：这里的处理必须是**复活前一段**，
+> 而不是简单地"不切段"。字面按"不切段"实现会把当前段（那个一闪而过的 context）延长下去，
+> `Code → chrome(2s) → Code` 会留下一个 **chrome** 段——可"短暂切换"的语义是
+> **当作它没发生过**，那么活下来的必须是前一个 context。
+> 实现在 `engine/src/segmenter.rs` 的 `absorb()`。
+
+> **关于上下文的维护方式**（同日补注）：context 是从事件流里**维护**的，即
+> **沿用上一份再应用当前事件**，而不是每个事件从空 context 重建。
+> 重建的话，`InputHeartbeat`（不携带 application）会把 application 冲成 `None`，
+> 导致"同一应用"判定失败、**每来一个心跳就切一段**。
+
+**已关闭段的缓冲与落库门槛**（同日补注）：
+
+segment 一旦落库就改不了，因此引擎内部维护 `pending` 缓冲，只有满足下面条件的段才交给上层落库：
+
+```
+可以落库 = 该段已结束
+         且 (距今 ≥ max(min_segment_duration, grace_period))    ← 门槛取两者较大
+         或 短段已完成合并（见下）
+```
+
+门槛取 `max(...)` 的原因：grace 吸收要能**复活**前一段，而复活要求前一段**还没落库**。
+若落库门槛只有 `min_segment_duration(30s)`，那么 40 秒时回来的段早已落库、无法复活，
+`grace_period(60s)` 有一半是空转。门槛必须覆盖整个宽限窗口。
+
+**短段合并**（同日补注）：短于 `min_segment_duration` 的段在**落库前**并入相邻的长段：
+
+- 优先并入**前驱**长段；没有前驱则并入**后继**长段
+- 正在生长的当前段也可作为后继目标，但仅当该短段确实紧邻（它后面没有别的段还卡在缓冲里），
+  否则会跨过中间那段时间被并错
+- 两侧都找不到长邻居时**先留在缓冲里等下一轮**，而不是硬并——宁可不并，不可并错
+- 等满三倍门槛仍无邻居，则原样放行，避免孤立短段永远卡在缓冲里
+
+合并会取两段 `start_at`/`end_at` 的并集边界，并拼接 `evidence_event_ids`。
+
+> **无应用的事件不开段**（同日补注）：`InputHeartbeat` 不携带 application。
+> 当还没有任何已知应用时，**不应**为它开一个 `unknown / 无应用`的段——应用一启动
+> 就会被心跳堆出一个噪声段。已有段之后的心跳照常延长该段。
+
 可调参数（配置文件）：
 
 | 参数 | 默认值 | 含义 |
 |---|---|---|
-| `min_segment_duration` | 30s | 短于此的 segment 并入相邻 segment |
-| `grace_period` | 60s | 短暂上下文切换宽限 |
+| `min_segment_duration` | 30s | 短于此的 segment 并入相邻 segment（见上） |
+| `grace_period` | 60s | 短暂上下文切换宽限（见上） |
 | `idle_threshold` | 300s | 判定空闲的无输入时长 |
 
 ### 7.4 可重放
@@ -278,17 +338,38 @@ CREATE INDEX idx_activities_range ON activities(start_at, end_at);
 
 CREATE TABLE activity_evidence (
     activity_id TEXT NOT NULL REFERENCES activities(id),
-    event_id TEXT NOT NULL REFERENCES events(id),
+    event_id TEXT NOT NULL,          -- 软引用，不 REFERENCES events(id)，见下方补注
     PRIMARY KEY (activity_id, event_id)
 );
 ```
+
+> **`event_id` 不加外键**（2026-10-01 实施后修正）：采集链路是两条并行路径——
+> 一边把 Event 压进内存队列（5s 后才落库），一边让 engine 同步 ingest；
+> engine 可能**立即**产出一个需要落库的段。于是**段会先于它引用的 Event 落库**，
+> 外键必然违反。实现时的 4 个测试实测报 `FOREIGN KEY constraint failed`，
+> 同样的顺序在真实运行中也会发生。
+>
+> 代价是失去"证据一定指向真实 event"的引用完整性。接受它：
+> `activity_id` 的外键保留（证据行总是随它的段一起增删，那才是真正需要的完整性），
+> 而 `event_id` 只用于 UI 展示与下钻，悬空引用只会让那一行的 id 查不到东西。
+> 覆盖写时先 `DELETE` 该段的旧证据再插新的，避免重算后残留。
 
 ### 8.1 写入策略
 
 - `PRAGMA journal_mode=WAL`、`synchronous=NORMAL`。
 - Event 进内存队列，**每 5s 或满 100 条**单事务批量插入（Batch Writer）。
 - 程序正常退出时 flush；崩溃允许丢失最后几秒 Event（个人统计可接受）。
+  正常退出的 flush 必须**显式**做：后台线程每 100ms 才醒一次，进程退出时它不保证跑得到，
+  所以要挂在 `RunEvent::Exit` 上同步刷一次。
 - 数据库文件：`%APPDATA%/time-scope/time-scope.db`。
+- 迁移按 `PRAGMA user_version` 顺序应用（有序的 `(目标版本, SQL)` 表），
+  每次启动只执行版本大于当前值的条目。不可写成"每次启动重跑全部 CREATE TABLE"。
+
+> **重放的范围**（2026-10-01 实施后补注）：启动时重放**当天**。
+> 但首次查看**其它**日期时也必须按需重放一次——否则上次崩溃留下的孤儿 Event
+> （在 `events` 表里、却从未被引擎处理过）永远不会变成 segment，
+> 用户翻到那一天会看到空白，以为那天没记录到自己。
+> 用一个"已重放日期"集合保证同一天只重放一次。
 
 ### 8.2 分桶（前端查询时，不落库）
 
@@ -312,6 +393,11 @@ function bucketStart(ts: number, intervalMs: number): number {
 | `get_config` / `set_config` | — | idle 阈值、脱敏规则开关等 |
 
 > 当日汇总也由前端从 `get_segments` 结果聚合，后端不提供单独的 summary 接口。
+
+> **刷新方式**（2026-10-01 实施后补注）：\`segment-updated\` 推送尚未实现，
+> Phase 1 先用前端每 5 秒轮询 \`get_segments\` 顶上。
+> 不轮询的话，常驻应用的时间线会一直停在启动那一刻的快照，
+> 看着像程序坏了——引擎明明在后台不断产出新段。
 
 ### Events（后端 → 前端推送）
 
@@ -367,8 +453,29 @@ function bucketStart(ts: number, intervalMs: number): number {
 | `SetWinEventHook` 无消息泵不触发 | 专用线程跑原生消息泵，已在 §5.1 明确 |
 | `GetLastInputInfo` 的 `cbSize` 坑 | 已列入 §5.3 实现注意事项 |
 | 无 URL 时浏览器只能粗分 `browsing` | 架构预留：Phase 2 浏览器扩展接入后规则升级即可，schema 不变 |
+| u32 tick 回绕（实施中新增） | `LASTINPUTINFO.dwTime` 是 **u32** 的 \`GetTickCount\`，约 49.7 天回绕一次。必须与 **32 位** \`GetTickCount\` 相减并用 \`wrapping_sub\`；拿它与 64 位 \`GetTickCount64\` 相减，回绕后会算出天文数字，表现为“永远不 idle”。已在 §7.3 落实并有单测 |
+| 段 id 冲突与写入顺序（实施中新增） | 段 id 形如 \`seg-{start_at}\`，落库走 \`INSERT OR REPLACE\`。当前实现下两个活着的段不会共享起点（grace 吸收是复活旧段、丢弃新段），重放又会先删当天，因此暂不冲突；若将来改变这一点，需改用包含计数器的 id |
 
-## 16. 调研来源（2026-10-01 验证）
+## 16. 实施后修订记录（2026-10-01）
+
+Phase 1 前两步（骨架、引擎）实施完成后，回头审了一遍本文与代码的每一处分歧。
+**不是所有分歧都是实现跑偏**——逐条判定如下：
+
+| spec 原文 | 判定 | 依据 | 已改动的位置 |
+|---|---|---|---|
+| §7.3 "视为短暂切换，**不切段**" | **spec 措辞不准** | "视为没发生"要求活下来的是**前一个** context；字面"不切段"会延长那个一闪而过的 context，`Code→chrome(2s)→Code` 留下 chrome 段，与语义自相矛盾 | §7.3 伪码 + 补注 |
+| §7.3 `min=30s` / `grace=60s` | **spec 参数自相矛盾** | 复活前一段要求它还没落库；30s 门槛下 40s 回来的段已落库，60s 宽限有一半空转。落库门槛必须 ≥ 宽限窗口 | §7.3 缓冲与落库门槛 |
+| §7.3 "短于此的 segment 并入相邻 segment" | **spec 正确，是实施漏了** | 方向没错，但"什么时候并、并给谁"未定义 | §7.3 短段合并 |
+| §7.1 "从 Event 流**维护**上下文" | **spec 正确，是计划写错了** | "维护"就是沿用再更新；每事件重建会让心跳把 application 冲成 None | §7.3 补注（原文不改） |
+| §8 `event_id REFERENCES events(id)` | **spec 错，已实测验证** | 段先于 Event 落库，外键必然违反 | §8 schema + 补注 |
+| §6 `Event.id // ULID` | **spec 略宽松** | 实现是时间戳+计数器的 32 字符定长值，字典序仍等于时间序 | §6 补注 |
+| §7.2 规则匹配语义 | **spec 未定义** | 大小写/路径/顺序/错误处理都没写，实施时不得不定 | §7.2 补注 |
+| §9 `segment-updated` 推迟 | **spec 正确，但推迟范围要收窄** | 推迟的是**推送**，不是**刷新**；完全不刷新会让常驻应用看着是坏的 | §9 补注 |
+
+未被改动的 spec 章节（已逐条核对与实现一致）：§3 架构、§4 crate 边界、§6 数据模型字段、
+§7.4 可重放、§8 三张表与索引、§10 前端、§11 脱敏、§12 常驻、§13 测试策略。
+
+## 17. 调研来源（2026-10-01 验证）
 
 - windows-rs 官方绑定：https://github.com/microsoft/windows-rs
 - SetWinEventHook 需消息循环：https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook
