@@ -18,6 +18,7 @@ mod engine_runtime;
 mod engine_thread;
 mod exit_flush;
 mod rules;
+mod single_instance;
 mod titles;
 
 use activity_collector::signals::RawSignal;
@@ -31,6 +32,10 @@ use titles::SegmentTitle;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
+
+/// 单实例：第二个实例启动时，把已有实例的窗口叫醒并置前（spec §12）
+/// 插件在 `run()` 里最先注册；这里只描述"应该做什么"，便于单测。
+pub use single_instance::{on_second_instance, SecondInstanceAction};
 
 struct AppState {
     writer: Arc<BatchWriter>,
@@ -91,6 +96,18 @@ fn get_segment_titles(
 
 pub fn run() {
     let app = tauri::Builder::default()
+        // 必须第一个注册（spec §12）：它靠抢全局锁判定"是不是第一个实例"，
+        // 而 webview 初始化发生在插件之后。顺序反了的话，第二个进程会先把
+        // webview 建起来、然后才发现自己是多余的 —— 实测会崩在
+        // WebView2 "HRESULT(0x800700AA) 请求的资源在使用中"。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // 第二个实例：把第一个叫醒，然后自己退出（`run` 返回即退出）
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .setup(|app| {
             let conn = open_file_shared(&rules::app_dir().join("time-scope.db"))
                 .expect("open db");
