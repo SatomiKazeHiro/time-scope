@@ -116,6 +116,7 @@ fn replay_day(
 pub fn bootstrap_today(
     conn: &SharedConn,
     replayed: &ReplayedDays,
+    app_config: &crate::config::AppConfig,
 ) -> (RuleSet, EngineConfig, crate::engine_runtime::EngineRuntime) {
     let (rules, source) = load_rules(&rules_path());
     match source {
@@ -129,7 +130,8 @@ pub fn bootstrap_today(
             eprintln!("[time-scope] 规则文件不可用，本次使用内置默认")
         }
     }
-    let config = EngineConfig::default();
+    // 引擎的分段参数来自 config.toml（spec §5.2）
+    let config = app_config.to_engine_config();
     let redactor = Redactor::new(&rules.redact);
     let offset = time::UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
     let today = today_string();

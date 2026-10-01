@@ -26,7 +26,7 @@ name = "time_scope_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-tauri = { version = "2.1", features = [] }
+tauri = { version = "2.1", features = ["tray-icon"] }
 # spec §12：单实例。不加它第二个进程会同时写同一个 SQLite，实测会崩在 WebView2
 tauri-plugin-single-instance = "2"
 # spec §4.3：开机自启，默认关，由用户在托盘菜单里主动打开
@@ -44,3 +44,9 @@ rusqlite.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
+
+# 关窗确认框用原生 MessageBoxW：Tauri 2 没有内置对话框，
+# 为一个模态确认框引入 dialog 插件不划算（spec §4.2）
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"]

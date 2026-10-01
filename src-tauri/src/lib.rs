@@ -18,6 +18,7 @@ mod config;
 mod date_range;
 mod day_replay;
 mod redact;
+mod residency;
 mod engine_runtime;
 mod engine_thread;
 mod exit_flush;
@@ -122,8 +123,13 @@ pub fn run() {
             // spec §8.1：每 5s 或满 100 条单事务批量插入
             let writer = Arc::new(BatchWriter::new(Arc::clone(&conn), 5_000, 100));
 
+            // spec §5：行为参数来自 %APPDATA%/time-scope/config.toml，
+            // 文件缺失时生成默认模板，坏了就用默认值（都不影响启动）。
+            let app_config = config::load_or_create(&config::config_path());
+
             let replayed = ReplayedDays::default();
-            let (rule_set, config, runtime) = day_replay::bootstrap_today(&conn, &replayed);
+            let (rule_set, config, runtime) =
+                day_replay::bootstrap_today(&conn, &replayed, &app_config);
             let engine = Arc::new(Mutex::new(runtime));
 
             // 脱敏器：app 层构造，注入 consumer。敏感标题在**入队前**就被替换，
@@ -149,8 +155,12 @@ pub fn run() {
             let (ev_tx, ev_rx) = channel::<activity_core::Event>();
 
             activity_collector::window::spawn_window_watcher(tx.clone());
-            // spec §5.3 默认：300s 判空闲，心跳窗口 10s
-            activity_collector::input::spawn_input_poller(tx.clone(), 300, 10);
+            // 空闲阈值与心跳窗口来自 config.toml（spec §5.2）
+            activity_collector::input::spawn_input_poller(
+                tx.clone(),
+                app_config.idle_threshold_s,
+                app_config.heartbeat_every_s,
+            );
             activity_collector::consumer::spawn_consumer_with(
                 rx,
                 Arc::clone(&writer),
@@ -159,7 +169,14 @@ pub fn run() {
             );
             engine_thread::spawn_engine_thread(ev_rx, Arc::clone(&conn), Arc::clone(&engine));
 
-            eprintln!("[time-scope] db: {}", rules::app_dir().join("time-scope.db").display());
+            // spec §4：托盘 + 关窗行为 + 自启同步。托盘建不起来时内部会退回
+            // "关窗即退出"，主链路不受影响（spec §7）。
+            let tray_ok = residency::install(app, app_config);
+            eprintln!(
+                "[time-scope] db: {}（托盘 {}）",
+                rules::app_dir().join("time-scope.db").display(),
+                if tray_ok { "已就绪" } else { "不可用，关窗即退出" }
+            );
             app.manage(AppState {
                 writer,
                 conn: Arc::clone(&conn),

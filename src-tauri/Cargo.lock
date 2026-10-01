@@ -3906,6 +3906,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "time",
  "toml 0.8.2",
+ "windows 0.58.0",
 ]
 
 [[package]]
