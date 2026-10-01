@@ -348,12 +348,235 @@ fn short_segments_stay_pending_until_min_duration_elapses() {
 
 #[test]
 fn pending_segments_are_released_once_old_enough() {
-    let (rs, cfg) = (rules(), EngineConfig::default().with_min_segment_duration_s(30));
+    // 落库门槛 = max(min, grace) = max(0, 5s) = 5s。
+    // min=0 表示不会被"太短"卡住，纯粹验证门槛本身。
+    let (rs, cfg) = (
+        rules(),
+        EngineConfig::default()
+            .with_min_segment_duration_s(0)
+            .with_grace_period_s(5),
+    );
     let mut st = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg).state;
-    st = reduce(&st, &focus(1_000, "chrome.exe"), &rs, &cfg).state;
+    let after_switch = reduce(&st, &focus(1_000, "chrome.exe"), &rs, &cfg);
+    assert!(
+        after_switch.closed_segments.is_empty(),
+        "刚切段还没到 5s 门槛，不该释放"
+    );
+    st = after_switch.state;
+
     let out = reduce(&st, &heartbeat(100_000, 3), &rs, &cfg);
     assert!(
         !out.closed_segments.is_empty(),
-        "超过 min_segment_duration 的 pending 段应被释放"
+        "超过 5s 落库门槛后应被释放"
+    );
+}
+
+// --- A. 无应用的事件不该开段 ---
+
+#[test]
+fn heartbeat_before_any_window_event_does_not_open_a_segment() {
+    // 应用刚启动时第一个事件通常是心跳，而心跳不携带 application。
+    // 这类事件无法归因，不该凭空开一个 "unknown / 无应用" 的段。
+    let cfg = EngineConfig::default()
+        .with_min_segment_duration_s(0)
+        .with_grace_period_s(0);
+    let (rs, cfg) = (rules(), cfg);
+    let mut st = EngineState::initial();
+    for ts in [1_000, 11_000, 21_000] {
+        st = reduce(&st, &heartbeat(ts, 1), &rs, &cfg).state;
+    }
+    assert!(
+        st.current_segment.is_none(),
+        "没有已知应用时不该开段，实际 {:?}",
+        st.current_segment
+    );
+    assert!(st.open_segment_snapshot(&rs, &cfg).is_none());
+}
+
+#[test]
+fn heartbeat_with_no_known_app_still_extends_an_existing_segment() {
+    // 已经有段之后，心跳（application 不变）应正常延长它
+    let cfg = EngineConfig::default()
+        .with_min_segment_duration_s(0)
+        .with_grace_period_s(0);
+    let (rs, cfg) = (rules(), cfg);
+    let mut st = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg).state;
+    st = reduce(&st, &heartbeat(5_000, 1), &rs, &cfg).state;
+    let snap = st.open_segment_snapshot(&rs, &cfg).unwrap();
+    assert_eq!(snap.application.as_deref(), Some("Code.exe"));
+    assert_eq!(snap.end_at, 5_000);
+}
+
+// --- B. min_segment_duration 真的要把短段并掉 ---
+
+/// 落库门槛 = max(min, grace)。这里 min=2s、grace=0 => 门槛 2s，
+/// 小时间线就能让段真正"就绪"，专心验证合并行为。
+fn merge_cfg() -> EngineConfig {
+    EngineConfig::default()
+        .with_min_segment_duration_s(2)
+        .with_grace_period_s(0)
+}
+
+/// 喂完所有事件，返回 (已释放的段, 最终状态)。
+fn run_cfg(events: &[Event], cfg: &EngineConfig) -> (Vec<crate::ActivitySegment>, EngineState) {
+    let rs = rules();
+    let mut st = EngineState::initial();
+    let mut closed = Vec::new();
+    for e in events {
+        let out = reduce(&st, e, &rs, cfg);
+        closed.extend(out.closed_segments);
+        st = out.state;
+    }
+    (closed, st)
+}
+
+fn apps_of(segs: &[crate::ActivitySegment]) -> Vec<Option<String>> {
+    segs.iter().map(|s| s.application.clone()).collect()
+}
+
+#[test]
+fn short_segment_merges_into_the_following_long_segment() {
+    // Code 只出现 1 秒（1s < 2s），后面是 4 秒的 explorer。
+    // Code 没有前驱长段，应并入后继 explorer，起点回延到 0。
+    let cfg = merge_cfg();
+    let (closed, _) = run_cfg(
+        &[
+            focus(0, "Code.exe"),
+            focus(1_000, "explorer.exe"),
+            focus(5_000, "QQ.exe"),
+            focus(9_000, "Code.exe"),
+        ],
+        &cfg,
+    );
+    let merged = closed
+        .iter()
+        .find(|s| s.application.as_deref() == Some("explorer.exe"))
+        .expect(&format!("explorer 段应被释放，实际 {:?}", apps_of(&closed)));
+    assert_eq!(merged.start_at, 0, "1 秒的 Code 前驱应并入 explorer");
+    assert_eq!(merged.end_at, 5_000);
+    assert!(
+        !apps_of(&closed).contains(&Some("Code.exe".into())),
+        "过短的 Code 段不该单独落库"
+    );
+}
+
+#[test]
+fn short_segment_merges_into_the_preceding_long_segment() {
+    // 20 秒的 msedge 之后一个 64ms 的 explorer 抖动，没有后继长段，应并入前驱
+    let cfg = merge_cfg();
+    let (closed, _) = run_cfg(
+        &[
+            focus(0, "msedge.exe"),
+            focus(20_000, "explorer.exe"),
+            focus(20_064, "QQ.exe"),
+            focus(40_000, "Code.exe"),
+        ],
+        &cfg,
+    );
+    let msedge = closed
+        .iter()
+        .find(|s| s.application.as_deref() == Some("msedge.exe"))
+        .expect(&format!("msedge 段应保留，实际 {:?}", apps_of(&closed)));
+    assert_eq!(msedge.end_at, 20_064, "64ms 的 explorer 应并入前驱 msedge");
+    assert!(
+        !apps_of(&closed).contains(&Some("explorer.exe".into())),
+        "64ms 的段不该单独落库"
+    );
+}
+
+#[test]
+fn long_segments_are_left_alone() {
+    let cfg = merge_cfg();
+    let (closed, _) = run_cfg(
+        &[
+            focus(0, "Code.exe"),
+            focus(20_000, "msedge.exe"),
+            focus(40_000, "QQ.exe"),
+            focus(60_000, "Code.exe"),
+            focus(80_000, "msedge.exe"),
+            focus(100_000, "QQ.exe"),
+        ],
+        &cfg,
+    );
+    let apps = apps_of(&closed);
+    assert!(apps.contains(&Some("Code.exe".into())), "{:?}", apps);
+    assert!(apps.contains(&Some("msedge.exe".into())), "{:?}", apps);
+    assert!(apps.contains(&Some("QQ.exe".into())), "{:?}", apps);
+    for s in &closed {
+        assert!(s.end_at - s.start_at >= 2_000, "长段不该被并短: {:?}", s);
+    }
+}
+
+#[test]
+fn merging_concatenates_evidence_of_both_segments() {
+    let cfg = merge_cfg();
+    let (closed, _) = run_cfg(
+        &[
+            focus(0, "Code.exe"),
+            focus(1_000, "msedge.exe"),
+            focus(5_000, "QQ.exe"),
+            focus(9_000, "Code.exe"),
+        ],
+        &cfg,
+    );
+    let merged = closed
+        .iter()
+        .find(|s| s.application.as_deref() == Some("msedge.exe"))
+        .expect("msedge 段");
+    assert_eq!(
+        merged.evidence_event_ids.len(),
+        2,
+        "被并掉的 Code 段的证据不该丢失，实际 {:?}",
+        merged.evidence_event_ids
+    );
+}
+
+#[test]
+fn a_short_segment_surrounded_by_two_long_ones_chooses_the_preceding() {
+    // msedge(长) -> explorer(0.5s 短) -> QQ(长)：explorer 并入前驱 msedge
+    let cfg = merge_cfg();
+    let (closed, _) = run_cfg(
+        &[
+            focus(0, "msedge.exe"),
+            focus(20_000, "explorer.exe"),
+            focus(20_500, "QQ.exe"),
+            focus(40_000, "Code.exe"),
+        ],
+        &cfg,
+    );
+    assert!(
+        !apps_of(&closed).contains(&Some("explorer.exe".into())),
+        "explorer 不该单独落库：{:?}",
+        apps_of(&closed)
+    );
+    let msedge = closed
+        .iter()
+        .find(|s| s.application.as_deref() == Some("msedge.exe"))
+        .unwrap();
+    assert_eq!(msedge.end_at, 20_500, "explorer 并入前驱 msedge");
+}
+
+#[test]
+fn a_lone_short_segment_is_held_rather_than_emitted() {
+    // 两侧都没有长邻居时，宁可先压着，也不要硬并进不相邻的段。
+    // 这正是 min_segment_duration 在起作用：宁可不落库，也不要留一段噪声。
+    let cfg = merge_cfg();
+    let (closed, st) = run_cfg(
+        &[
+            focus(0, "Code.exe"),
+            focus(1_000, "msedge.exe"),
+            focus(5_000, "QQ.exe"),
+        ],
+        &cfg,
+    );
+    assert!(
+        apps_of(&closed).is_empty(),
+        "孤立的 1s 短段不该被发出去，实际 {:?}",
+        apps_of(&closed)
+    );
+    assert!(
+        st.pending.iter().any(|s| s.application.as_deref() == Some("Code.exe")),
+        "它应留在 pending 里等一个长邻居出现，实际 {:?}",
+        apps_of(&st.pending)
     );
 }
