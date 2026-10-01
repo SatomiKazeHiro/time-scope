@@ -11,6 +11,7 @@
 //!                                            原始 Event       ActivitySegment
 //! ```
 
+mod config;
 mod date_range;
 mod day_replay;
 mod redact;
