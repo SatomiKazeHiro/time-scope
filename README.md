@@ -32,7 +32,20 @@ Windows 事件/输入 ─▶ collector ─▶ Event ─▶ SQLite(WAL)
 pattern = '客户\d+'
 ```
 
-**尚缺**：托盘常驻/自启/单实例、锁屏与睡眠唤醒采集——见文末"还没做什么"。
+托盘常驻、开机自启（默认关）、单实例、锁屏/合盖采集、行为参数配置化均已完成（spec §12）。
+
+行为参数在 `%APPDATA%/time-scope/config.toml`（首次启动自动生成；坏了会用默认值，且**不覆盖**你的文件）：
+
+```toml
+idle_threshold_s = 300   # 无输入多少秒算空闲（最小 10）
+heartbeat_every_s = 10   # 心跳聚合窗口
+close_behavior = "ask"  # ask = 问一次 / minimize = 最小化到托盘 / quit = 退出
+```
+
+点窗口的 ✕ 第一次会问一次（选什么就记住什么）；此后只隐藏到托盘，**托盘菜单的「退出」是唯一退出入口**。
+锁屏与合盖记成 idle，不再把 8 小时锁屏算成 8 小时活跃。
+
+**尚缺**：`segment-updated` 实时推送、规则热重载——见文末"还没做什么"。
 
 ## 环境要求
 
@@ -83,12 +96,14 @@ src-tauri/               Rust workspace
 
 | 优先级 | 缺什么 | 影响 |
 |---|---|---|
-| 🟠 | **托盘常驻 / 开机自启 / 单实例**（spec §12） | 关窗口即退出，一天要重开十几次；无单实例还可能两个进程同时写同一个库 |
-| 🟠 | **锁屏与睡眠唤醒采集**（spec §5.3） | 锁屏期间会继续记活跃，合盖后产生假 idle |
 | 🟡 | `segment-updated` 实时推送（spec §9） | 现用 5 秒轮询顶着，够用 |
 | 🟡 | 规则热重载（spec §7.2） | 改完 `rules.toml` 要重启 |
+| 🟡 | `config.toml` 热重载 | 改完要重启（`EngineConfig` 是构造注入的，热重载要重放当天，不值当） |
 
 完整进度、遗留问题与未来计划：`docs/superpowers/STATUS.md`
+
+本轮（Phase 1 第三步「打磨」）的人工验证清单：
+`docs/superpowers/plans/2026-10-02-phase1-polish-verification.md`
 
 ## 人工验证清单
 

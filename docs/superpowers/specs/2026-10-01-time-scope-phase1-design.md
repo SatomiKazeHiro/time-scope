@@ -440,6 +440,21 @@ function bucketStart(ts: number, intervalMs: number): number {
 - `tauri-plugin-single-instance`、`tauri-plugin-autostart`。
 - 预算：窗口采集事件驱动（0 轮询）、idle 轮询每 1s 一次结构体读取、无全局钩子 → 常驻 CPU ≈ 0，内存目标 <80MB。
 
+### 12.1 实现约定（2026-10-02 第三步「打磨」补充）
+
+| 事项 | 约定 |
+|---|---|
+| 托盘菜单 | 三项：**打开时间线 / 开机自启（勾选项） / 退出**。结构与菜单事件解释抽成纯数据（`app::tray::build_menu` / `on_menu_event`），可单测 |
+| 双击托盘 | 等同「打开时间线」（显示 + 置前） |
+| 关窗行为 | `config.toml` 的 `close_behavior`：`ask`（默认，仅初始状态）/ `minimize` / `quit`。`ask` 弹一次确认框（原生 `MessageBoxW`），答案覆写 config 就不再问；默认选项是「最小化」 |
+| 托盘不可用 | **必须退回「关窗即退出」**。否则用户会卡在一个打不开也关不掉的界面（这是常驻功能失败时唯一不可接受的降级） |
+| 开机自启 | `tauri-plugin-autostart`，**默认关**。同步方向不对称：config 与系统不一致时**让系统去匹配 config**（用户意图优先）；一致时把系统状态写回 config，使托盘勾选态反映真实系统状态 |
+| 锁屏/合盖 | `WTS_SESSION_LOCK/UNLOCK` 与 `PBT_APMSUSPEND/RESUME` → `EventType::SessionLock/SessionUnlock`，engine 视作 idle 边界（不是 `IdleStart`：重放时要能区分「没动鼠标」与「锁屏了」） |
+| 监听挂在哪 | **自建 message-only 窗口 + 自己的消息泵**（`collector::session::spawn_listener`）。原设想是挂主窗口 HWND，但 Tauri 2 的 `WindowEvent` 不透出原始窗口消息，拿不到 `WM_WTSSESSION_CHANGE` / `WM_POWERBROADCAST`；而这两类通知按 Win32 设计必须绑 HWND，所以托盘型应用自建隐藏窗口是标准做法。副作用：`setup()` 不需要窗口结构改动 |
+| 重复通知 | 锁屏与合盖可能各发一次。engine 侧对「已处于 idle 段」幂等：只延长，不重开段 |
+| 行为参数 | `config.toml`（见第三步 spec §5）。**不并入 `rules.toml`**：后者会派生 `classifier_version`，塞进行为参数会让「改一个阈值就换一版规则编号」失去意义 |
+| 配置容错 | 文件缺失→写默认模板；语法错→全默认 + stderr，**不覆盖文件**；单字段非法→该字段默认，其余照常生效；数值越界→夹到下限（`idle_threshold_s` 下限 10，否则一天几万段） |
+
 ## 13. 测试策略
 
 | 层 | 方式 | 覆盖重点 |
@@ -497,3 +512,15 @@ Phase 1 前两步（骨架、引擎）实施完成后，回头审了一遍本文
 - Tauri 托盘常驻模式：https://github.com/orgs/tauri-apps/discussions/11489
 - React 图表库对比（visx 适合自定义渲染）：https://blog.logrocket.com/best-react-chart-libraries-2026/
 - Tauri IPC 高频事件注意事项（低频 emit 无压力）：https://v2.tauri.app/ （event emit/listen 文档）
+
+---
+
+## 18. 实施后修订记录（2026-10-02，第三步「打磨」）
+
+| spec 原文 | 判定 | 依据 | 处理 |
+|---|---|---|---|
+| §3.2 "监听注册在主窗口上，`setup()` 拿到 hwnd 后启动" | **不可行，实现换法** | Tauri 2 的 `WindowEvent` 没有 `ReceivedMessage`，不透出原始窗口消息；WTS/Power 通知必须绑 HWND。改为监听自建 message-only 窗口 + 自己的消息泵 | §12.1「监听挂在哪」 |
+| §5.2 "任何字段缺失或类型不对 → 用默认值" | **spec 措辞不够强，实现收紧** | 整份 deserialize 时一个字段类型错会让整份文件失效，与"其余照常生效"矛盾。实现改为逐字段读 `toml::Table` | §12.1「配置容错」 |
+| §4.2 `close_behavior` 三态 | spec 正确，**plan 的实现写错了** | plan 的 `close_interception_when(tray_ok)` 硬编码 `Ask`，`minimize`/`quit` 形同虚设 | 实现按 spec，plan 的写法未采纳 |
+| §4.2 "退出仅走托盘菜单" | spec **过严**，实现放宽 | 托盘创建失败时若仍禁止其他退出路径，用户无法退出应用。降级为「关窗即退出」 | §12.1「托盘不可用」 |
+| §5.2 数值下限 `idle_threshold_s ≥ 10` | spec 正确，实现补了**上界** | spec 只给下限；上界（一天）防止 u32 极值把时间线切成几十万段 | `config.rs` 的 `MAX_SECONDS` |
