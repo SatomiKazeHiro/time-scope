@@ -2,8 +2,6 @@
 //!
 //! IO 全部在这一层；engine 只见到 `RuleSet` 这个值。
 //!
-//! Task 8 才会把它接进 `setup()`；在那之前这些公开项没有调用方。
-#![allow(dead_code)]
 
 use activity_engine::{RuleSet, DEFAULT_RULES_TOML};
 use std::path::{Path, PathBuf};
