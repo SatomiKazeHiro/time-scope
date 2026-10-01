@@ -10,6 +10,9 @@
 //! ```
 
 mod date_range;
+mod exit_flush;
+
+use exit_flush::flush_for_exit;
 
 use activity_collector::signals::RawSignal;
 use activity_storage::{open_file_shared, BatchWriter, StoredEvent};
@@ -48,7 +51,7 @@ fn get_db_path() -> String {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             let path = db_path();
             let conn = open_file_shared(&path).expect("open db");
@@ -66,6 +69,18 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_events, get_db_path])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // spec §8.1：正常退出时 flush。BatchWriter 的后台线程每 100ms 才醒一次，
+    // 而进程退出时它不保证跑得到——所以必须在这里显式同步刷一次，
+    // 否则每次干净关闭都会丢掉队列里最多 5s 的 Event。
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            let n = flush_for_exit(&app_handle.state::<AppState>().writer);
+            if n > 0 {
+                eprintln!("[time-scope] flushed {n} events on exit");
+            }
+        }
+    });
 }
