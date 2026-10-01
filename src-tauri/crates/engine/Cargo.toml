@@ -10,3 +10,4 @@ license.workspace = true
 activity-core = { path = "../core" }
 serde.workspace = true
 serde_json.workspace = true
+toml = "0.8"
