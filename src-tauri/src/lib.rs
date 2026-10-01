@@ -11,6 +11,7 @@
 //!                                            原始 Event       ActivitySegment
 //! ```
 
+mod autostart;
 mod close_behavior;
 mod tray;
 mod config;
@@ -111,6 +112,10 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             let conn = open_file_shared(&rules::app_dir().join("time-scope.db"))
                 .expect("open db");
