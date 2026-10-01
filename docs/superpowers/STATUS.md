@@ -1,7 +1,7 @@
 # Time Scope — 工作进展与遗留问题
 
 **记录时间**：2026-10-01
-**分支**：`feature/phase1-scaffold`（12 commits，**未合入 `master`**）
+**分支**：`feature/phase1-scaffold`（16 commits，**未合入 `master`**）
 **对应计划**：[`2026-10-01-phase1-scaffold.md`](superpowers/plans/2026-10-01-phase1-scaffold.md)（11 task，全部完成）
 **对应设计**：[`2026-10-01-time-scope-phase1-design.md`](../specs/2026-10-01-time-scope-phase1-design.md)
 
@@ -25,9 +25,9 @@ Phase 1 分为三步（设计文档 §14）。**第一步「骨架」已完成�
 ## 二、代码规模与状态
 
 ```
-Rust  22 文件 / 1832 行      TS  10 文件 / 564 行
-测试  54 Rust + 24 前端 = 78 条用例，全绿，0 warning
-提交  12 个（master..HEAD），工作区干净
+Rust  22 文件 / 1937 行      TS  10 文件 / 564 行
+测试  59 Rust + 24 前端 = 83 条用例，全绿，0 warning
+提交  16 个（master..HEAD），工作区干净
 ```
 
 依赖方向单向、无环：`core ← storage ← collector ← app`。
@@ -45,7 +45,7 @@ time-scope/
     ├── src/exit_flush.rs         正常退出时 flush 队列（3 个单测）
     └── crates/
         ├── core/                 Event / EventType / 序列化，零 IO
-        ├── storage/              schema、BatchWriter、按天范围查询
+        ├── storage/              版本化迁移、BatchWriter、按天范围查询
         └── collector/            window hook、input idle、consumer（事件总线）
 ```
 
@@ -56,7 +56,7 @@ time-scope/
 ### 自动化已覆盖（可随时重跑）
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 54 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 59 passed
 pnpm test                                                      # 24 passed
 pnpm build                                                     # 无 tsc 报错
 ```
