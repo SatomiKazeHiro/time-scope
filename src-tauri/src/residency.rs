@@ -64,6 +64,23 @@ mod tests {
         );
     }
 
+    /// 防回归：确认框的回车默认项必须是「最小化」而不是「退出」——
+    /// 随手一按回车就把常驻应用关掉，是最不该发生的那种误操作。
+    #[test]
+    fn the_close_prompt_defaults_to_minimizing_not_to_quitting() {
+        use windows::Win32::UI::WindowsAndMessaging::{MB_DEFBUTTON1, MB_DEFBUTTON2, MB_YESNO};
+        assert!(
+            CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON1.0 == MB_DEFBUTTON1.0,
+            "回车必须触发「是」= 最小化到托盘"
+        );
+        assert_ne!(
+            CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON2.0,
+            MB_DEFBUTTON2.0,
+            "不能把回车默认项指向「否」= 退出"
+        );
+        assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_YESNO.0, MB_YESNO.0);
+    }
+
     /// 防回归：写进 config.toml 的值必须原样到达各层，而不是又回到硬编码默认。
     #[test]
     fn collector_gets_the_configured_thresholds() {
@@ -276,20 +293,32 @@ fn remember_answer(app: &AppHandle, answered: CloseBehavior) {
     }
 }
 
+/// 关窗确认框的样式。抽成常量是为了能单测——`MB_DEFBUTTON*` 选错会把
+/// 「退出」变成回车默认项，用户随手一按就把常驻应用关了。
+#[cfg(windows)]
+const CLOSE_PROMPT_STYLE: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE =
+    windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE(
+        (windows::Win32::UI::WindowsAndMessaging::MB_YESNO.0
+            | windows::Win32::UI::WindowsAndMessaging::MB_ICONQUESTION.0
+            | windows::Win32::UI::WindowsAndMessaging::MB_DEFBUTTON1.0) as u32,
+    );
+
 #[cfg(windows)]
 fn ask_close_behavior(_app: &AppHandle) -> Option<CloseBehavior> {
     use windows::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, MB_DEFBUTTON2, MB_ICONQUESTION, MB_YESNO, IDNO, IDYES,
+        MessageBoxW, IDNO, IDYES, MB_DEFBUTTON1,
     };
     use windows::core::w;
+    debug_assert!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON1.0 == MB_DEFBUTTON1.0);
     let r = unsafe {
         MessageBoxW(
             None,
             w!("关闭窗口后 Time Scope 会继续在后台记录。\n\n要最小化到托盘吗？\n选择「否」将退出程序。"),
             w!("Time Scope"),
-            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
+            CLOSE_PROMPT_STYLE,
         )
     };
+    // IDYES = 最小化；IDNO = 退出；其余（关掉对话框）= 什么都不做
     match r {
         IDYES => Some(CloseBehavior::Minimize),
         IDNO => Some(CloseBehavior::Quit),
