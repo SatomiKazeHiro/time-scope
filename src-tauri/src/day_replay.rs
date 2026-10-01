@@ -278,6 +278,10 @@ mod replay_redaction_tests {
         RuleSet::from_toml(&body).unwrap()
     }
 
+    fn local_offset() -> UtcOffset {
+        UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC)
+    }
+
     fn config() -> EngineConfig {
         EngineConfig::default()
             .with_min_segment_duration_s(0)
@@ -310,7 +314,9 @@ mod replay_redaction_tests {
             &rule_set(&[]),
             &config(),
             &today_string(),
-            UtcOffset::UTC,
+            // 必须用本地偏移：today_string() 是本地日期，用 UTC 解析会在跨本地
+            // 午夜时把区间算错，导致刚插入的事件落在范围外
+            local_offset(),
             &Redactor::new(&["Alice".into(), r"订单 \d+".into()]),
         )
         .expect("应完成重放");
@@ -332,7 +338,7 @@ mod replay_redaction_tests {
             &rule_set(&[]),
             &config(),
             &today_string(),
-            UtcOffset::UTC,
+            local_offset(),
             &Redactor::default(),
         )
         .expect("应完成重放");
@@ -353,7 +359,7 @@ mod replay_redaction_tests {
             &rule_set(&[]),
             &config(),
             &today_string(),
-            UtcOffset::UTC,
+            local_offset(),
             &Redactor::new(&["Alice".into()]),
         );
 

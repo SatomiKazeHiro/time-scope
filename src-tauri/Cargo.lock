@@ -3446,6 +3446,7 @@ dependencies = [
  "activity-engine",
  "activity-storage",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",

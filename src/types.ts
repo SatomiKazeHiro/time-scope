@@ -43,6 +43,15 @@ export type Category =
   | "work" | "study" | "entertainment" | "communication"
   | "browsing" | "life" | "idle" | "unknown";
 
+/** 一条去重后的窗口标题。后端已判定 redacted，前端不硬编码占位符。 */
+export interface SegmentTitle {
+  title: string;
+  /** 该标题是否经过脱敏（含有占位符） */
+  redacted: boolean;
+  /** 在证据里出现了多少次 */
+  count: number;
+}
+
 /** ActivitySegment 的短别名，前端组件里用起来更顺。 */
 export type Segment = ActivitySegment;
 

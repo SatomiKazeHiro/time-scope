@@ -18,6 +18,7 @@ mod engine_runtime;
 mod engine_thread;
 mod exit_flush;
 mod rules;
+mod titles;
 
 use activity_collector::signals::RawSignal;
 use activity_storage::{open_file_shared, BatchWriter, StoredSegment};
@@ -26,6 +27,7 @@ use day_replay::{replay_day_once, ReplayedDays};
 use engine_runtime::EngineRuntime;
 use exit_flush::flush_for_exit;
 use redact::Redactor;
+use titles::SegmentTitle;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
@@ -73,6 +75,18 @@ fn get_segments(
     };
     let engine = state.engine.lock().map_err(|e| e.to_string())?;
     Ok(engine.segments_for_day(stored, start_ms, end_ms))
+}
+
+/// 取某个段的窗口标题（spec §10 的详情展示）。
+///
+/// 标题存在 events 表里，段本身不存——一个段可能对应几十个标题。
+/// 返回值已去重并带 `redacted` 标记，前端据此做视觉区分，不必硬编码占位符。
+#[tauri::command]
+fn get_segment_titles(
+    state: tauri::State<'_, AppState>,
+    event_ids: Vec<String>,
+) -> Result<Vec<SegmentTitle>, String> {
+    Ok(titles::titles_for(&state.conn, &event_ids))
 }
 
 pub fn run() {
@@ -132,7 +146,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_segments])
+        .invoke_handler(tauri::generate_handler![get_segments, get_segment_titles])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

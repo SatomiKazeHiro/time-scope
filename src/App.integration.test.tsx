@@ -6,6 +6,14 @@ import type { Segment } from "./types";
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
+// 时间必须基于"今天"：DateSummary 会把段截到 [今天 00:00, 次日 00:00)，
+// 硬编码日期的段在别的日子会算出空汇总。
+function dayAt(hour: number): number {
+  const d = new Date();
+  d.setHours(hour, 0, 0, 0);
+  return d.getTime();
+}
+
 function seg(
   id: string,
   startH: number,
@@ -15,8 +23,8 @@ function seg(
 ): Segment {
   return {
     id,
-    startAt: new Date(2026, 9, 1, startH).getTime(),
-    endAt: new Date(2026, 9, 1, endH).getTime(),
+    startAt: dayAt(startH),
+    endAt: dayAt(endH),
     category,
     application,
     confidence: 0.9,
@@ -63,12 +71,14 @@ describe("App integration (segments)", () => {
     render(<App />);
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
 
+    // 挑一个与"今天"不同的日期，否则日期输入框的值不变，change 不会触发重新查询
+    const other = "2019-01-02";
     fireEvent.change(screen.getByDisplayValue(/^\d{4}-\d{2}-\d{2}$/), {
-      target: { value: "2026-01-02" },
+      target: { value: other },
     });
 
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("get_segments", { date: "2026-01-02" }),
+      expect(invoke).toHaveBeenCalledWith("get_segments", { date: other }),
     );
   });
 
