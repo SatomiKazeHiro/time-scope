@@ -1,6 +1,10 @@
-// Rust `StoredEvent` 的 TS 镜像。
-// Rust 侧字段 `type_` 带 `#[serde(rename = "type")]`，所以 JSON 里是 `type`。
-
+/**
+ * 原始采集事件。
+ *
+ * **Task 10 会把 UI 换成 ActivitySegment，这条线届时退役。**
+ * 暂时保留是因为 Task 9 只加新东西，App 还在用它渲染旧时间线；
+ * 提前删会让构建挂掉。
+ */
 export interface StoredEvent {
   id: string;
   /** Unix 毫秒 */
@@ -25,6 +29,32 @@ export interface WindowFocusPayload {
   exe_path: string | null;
 }
 
+/** Rust `StoredSegment` 的镜像。Rust 侧是 camelCase 序列化。 */
+export interface ActivitySegment {
+  id: string;
+  startAt: number;
+  endAt: number;
+  category: Category;
+  application: string | null;
+  confidence: number;
+  classifier: string;
+  classifierVersion: string;
+  evidenceEventIds: string[];
+}
+
+export type Category =
+  | "work" | "study" | "entertainment" | "communication"
+  | "browsing" | "life" | "idle" | "unknown";
+
+/** ActivitySegment 的短别名，前端组件里用起来更顺。 */
+export type Segment = ActivitySegment;
+
+export async function getSegments(date: string): Promise<ActivitySegment[]> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<ActivitySegment[]>("get_segments", { date });
+}
+
+/** @deprecated Task 10 起 UI 改用 getSegments，这条线退役。 */
 export async function getEvents(date: string): Promise<StoredEvent[]> {
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<StoredEvent[]>("get_events", { date });
