@@ -20,6 +20,10 @@ pub enum RawSignal {
     InputActive,
     /// 一个 heartbeat 窗口内的活跃秒数（0..=heartbeat_every_s）
     Heartbeat(u8),
+    /// 会话锁屏（含合盖休眠）——与"无输入"等价
+    SessionLock,
+    /// 会话解锁/唤醒
+    SessionUnlock,
     /// 非 Windows 平台的占位，使枚举在所有平台可编译
     #[cfg(not(windows))]
     _Noop,

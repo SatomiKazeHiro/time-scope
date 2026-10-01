@@ -83,6 +83,8 @@ pub fn signal_to_event(sig: RawSignal, ts: i64) -> Option<Event> {
         RawSignal::IdleStart => Some(make_idle_event(ts)),
         RawSignal::InputActive => Some(make_resume_event(ts)),
         RawSignal::Heartbeat(active_seconds) => Some(make_heartbeat_event(active_seconds, ts)),
+        RawSignal::SessionLock => Some(Event::new(EventType::SessionLock, ts)),
+        RawSignal::SessionUnlock => Some(Event::new(EventType::SessionUnlock, ts)),
         #[cfg(not(windows))]
         RawSignal::_Noop => None,
     }

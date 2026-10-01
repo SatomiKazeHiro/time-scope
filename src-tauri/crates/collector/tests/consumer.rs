@@ -166,3 +166,28 @@ mod redaction {
         assert_eq!(redact_event(&raw, &fake_redactor), raw);
     }
 }
+
+// --- 锁屏/睡眠的信号映射（spec §3.1）---
+
+#[test]
+fn session_lock_signal_becomes_a_session_lock_event() {
+    let e = signal_to_event(RawSignal::SessionLock, 1_700_000_000_000).unwrap();
+    assert!(matches!(e.event_type, EventType::SessionLock));
+    assert_eq!(e.timestamp, 1_700_000_000_000);
+}
+
+#[test]
+fn session_unlock_signal_becomes_a_session_unlock_event() {
+    let e = signal_to_event(RawSignal::SessionUnlock, 42).unwrap();
+    assert!(matches!(e.event_type, EventType::SessionUnlock));
+    assert_eq!(e.timestamp, 42);
+}
+
+#[test]
+fn session_events_carry_no_application_or_title() {
+    // 锁屏时不该有"正在用哪个程序"的概念
+    match signal_to_event(RawSignal::SessionLock, 1).unwrap().event_type {
+        EventType::SessionLock => {}
+        other => panic!("variant 错误: {other:?}"),
+    }
+}
