@@ -1230,6 +1230,10 @@ reduce(state, event, rules, config):
 **裁定 A（min_segment_duration）:** 段不能"事后合并"——一旦落库就改不了。所以引擎内部维护
 `pending` 缓冲：只有当某段已经结束且**距今超过落库门槛**才交给上层落库。
 
+> ⚠️ **裁定 A 只做了一半，实施后补齐。** 它只把落库**往后推**，
+> 并没有实现 spec §7.3 的"并入相邻段"。初稿写"Task 6 负责合并"，
+> 但 Task 6 最后是纯 storage 层、什么也没合并。缺失的那一半是 **裁定 E**。
+
 **裁定 B（open segment 不落库）:** 正在生长的段不进 `closed_segments`。`get_segments` 时用
 `open_segment_snapshot` 单独取出来附在结果末尾，所以时间线是实时的。
 
@@ -1251,6 +1255,18 @@ Code -> chrome(2s) -> Code
 实现上用**独立的 `previous_application: Option<String>` 字段**记住"再前一个"，
 而不是拿 `pending` 末尾当记忆 —— `min_segment_duration = 0` 时 `pending` 会被立即清空，
 拿它当记忆会让 grace 判定永远失效。
+
+**裁定 E（短段要真的并掉）** — *实施后新增，补齐裁定 A 缺失的一半。*
+
+`fold_short_segments` 在释放前把短于 `min_segment_duration` 的段并进相邻长段：
+
+- 优先并入**前驱**长段；没有前驱则并入**后继**长段
+- 正在生长的当前段也可作后继，但**仅当**该短段是 ready 的最后一个且没有别的段
+  还卡在 pending 里——否则会跨过中间那段时间被并错（这是实现时踩到的一个真 bug）
+- 两侧都找不到长邻居时**放回 pending 等下一轮**，而不是硬并：宁可不并，不可并错
+- 等满 3 倍落库门槛仍无邻居，则原样放行，避免孤立短段永远卡在 pending 里
+
+合并会把两段的 `start_at`/`end_at` 取并集边界、`evidence_event_ids` 拼接。
 
 **裁定 D（落库门槛 = max(min_segment_duration, grace_period)）** — *实施后新增。*
 
@@ -3706,6 +3722,11 @@ vs 开 engine 线程），推荐后者；这是**实现选择**而非未决问�
 - **落库门槛应是 `max(min_segment_duration, grace_period)`。** 吸收只能复活未落库的段，
   门槛必须覆盖整个 grace 窗口。这也修掉了 spec 自身默认值
   （`min 30s < grace 60s`）导致的吸收不可靠。
+- **`min_segment_duration` 当时没实现"合并"。** 裁定 A 只把落库往后推，
+  spec §7.3 的"并入相邻段"实际由新写的 `fold_short_segments` 才实现（裁定 E）。
+  真实运行里跑出了一个 64ms 的 `explorer.exe` 段才暴露这一点。
+- **无应用的事件不该开段。** 应用启动后第一个事件通常是心跳，心跳不携带
+  `application`，之前会凭空开一个 "unknown / 无应用" 的幽灵段。
 
 **仍未验证的假设：**
 
