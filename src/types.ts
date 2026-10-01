@@ -1,9 +1,6 @@
 /**
- * 原始采集事件。
- *
- * **Task 10 会把 UI 换成 ActivitySegment，这条线届时退役。**
- * 暂时保留是因为 Task 9 只加新东西，App 还在用它渲染旧时间线；
- * 提前删会让构建挂掉。
+ * 原始采集事件。UI 已改用 ActivitySegment，这条线只供
+ * 事件表本身与诊断用途。
  */
 export interface StoredEvent {
   id: string;
@@ -54,7 +51,7 @@ export async function getSegments(date: string): Promise<ActivitySegment[]> {
   return await invoke<ActivitySegment[]>("get_segments", { date });
 }
 
-/** @deprecated Task 10 起 UI 改用 getSegments，这条线退役。 */
+/** @deprecated UI 改用 getSegments；后端也已移除 get_events。 */
 export async function getEvents(date: string): Promise<StoredEvent[]> {
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<StoredEvent[]>("get_events", { date });
