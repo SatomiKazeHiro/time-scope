@@ -84,7 +84,9 @@ impl AppConfig {
             .with_min_segment_duration_s(self.min_segment_duration_s as u64)
     }
 
-    /// 序列化成 TOML。写回 `close_behavior` / `autostart` 时用这个。
+    /// 序列化成 TOML。生产写回走 [`patch_line`]（保留用户注释），
+    /// 这个只在测试里用来验证往返。
+    #[cfg(test)]
     pub fn to_toml(&self) -> String {
         format!(
             "idle_threshold_s = {}\n\
@@ -171,12 +173,72 @@ pub fn load_or_create(path: &Path) -> AppConfig {
     }
 }
 
-/// 把配置写回磁盘。**调用方要容忍失败**（退出路径上尤其重要）。
-pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
+/// 改一个键并写回，**只动那一行**。
+///
+/// 为什么不整份重写：模板里的注释是给用户看的说明，整份重写会把它们全部抹掉；
+/// 而且文件一旦被用户改坏，整读再整写会用默认值**覆盖**他写的东西（spec §5.2）。
+///
+/// `rendered_value` 是已经渲染好的 TOML 值，例如 `true`、`"minimize"`。
+/// - 文件不存在：写默认模板 + 追加这一行
+/// - 文件存在但 TOML 语法错：**不写**，返回 Err（调用方提示“本次选择只在本进程内生效”）
+/// - 键不存在：追加到末尾
+pub fn patch_line(path: &Path, key: &str, rendered_value: &str) -> std::io::Result<()> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+
+    let mut text = match existing {
+        Some(t) => {
+            if t.parse::<toml::Table>().is_err() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("{key} 未写回：config.toml 已是无效 TOML，请手工修好（本次选择只在本进程内生效）"),
+                ));
+            }
+            t
+        }
+        None => DEFAULT_CONFIG_TOML.to_string(),
+    };
+
+    // 匹配整行的 `key = ...`（允许缩进），避免误伤 close_behavior_hint 这类前缀相同的键
+    let is_target = |line: &str| -> bool {
+        let l = line.trim_start();
+        match l.strip_prefix(key) {
+            Some(rest) => rest.starts_with(' ') || rest.starts_with('='),
+            None => false,
+        }
+    };
+    let replacement = format!("{key} = {rendered_value}");
+
+    let mut replaced = false;
+    text = text
+        .lines()
+        .map(|line| {
+            if is_target(line) {
+                replaced = true;
+                replacement.clone()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !replaced {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&replacement);
+        text.push('\n');
+    } else if !text.ends_with('\n') {
+        text.push('\n');
+    }
+
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, cfg.to_toml())
+    std::fs::write(path, text)
 }
 
 pub const DEFAULT_CONFIG_TOML: &str = r#"# Time Scope 行为参数
@@ -334,8 +396,7 @@ close_behavior = "minimize"
     }
 
     #[test]
-    fn a_broken_file_is_never_overwritten() {
-        // spec §5.2 / §7：文件坏了只读不写，那是用户自己的内容
+    fn a_broken_file_is_never_overwritten() {        // spec §5.2 / §7：文件坏了只读不写，那是用户自己的内容
         let dir = std::env::temp_dir().join(format!("ts-cfg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("config.toml");
@@ -356,6 +417,141 @@ close_behavior = "minimize"
         let c2 = load_or_create(&fresh);
         assert_eq!(c2, AppConfig::default());
         assert_eq!(std::fs::read_to_string(&fresh).unwrap(), DEFAULT_CONFIG_TOML);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- 写回单个键（行级）---
+
+    fn tmp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ts-cfg-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn patching_a_key_keeps_the_comments_and_the_other_keys() {
+        // 写回整份文件会把模板里的注释全部抹掉，用户就看不到每个参数的说明了
+        let dir = tmp_dir("patch-keep");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, DEFAULT_CONFIG_TOML).unwrap();
+
+        patch_line(&path, "close_behavior", "\"minimize\"").unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("close_behavior = \"minimize\""));
+        assert!(
+            after.contains("# 点窗口的 ✕ 时"),
+            "注释必须原样保留：\n{after}"
+        );
+        assert!(after.contains("idle_threshold_s = 300"), "别的键不能丢");
+        assert_eq!(parse(&after).close_behavior, CloseBehavior::Minimize);
+        // 往返：写回后的文件仍能被自己解析
+        assert_eq!(parse(&after).idle_threshold_s, 300);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patching_appends_a_key_that_is_not_there() {
+        let dir = tmp_dir("patch-append");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "idle_threshold_s = 42\n").unwrap();
+
+        patch_line(&path, "autostart", "true").unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("idle_threshold_s = 42"));
+        assert!(after.contains("autostart = true"));
+        assert!(parse(&after).autostart);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patching_a_file_with_duplicate_keys_reports_failure_and_keeps_the_file() {
+        // 重复键让整个文件解析失败 -> 属于"用户改坏了"，不碰
+        let dir = tmp_dir("patch-dup");
+        let path = dir.join("config.toml");
+        let original = "autostart = false\nidle_threshold_s = 42\nautostart = false\n";
+        std::fs::write(&path, original).unwrap();
+
+        let err = patch_line(&path, "autostart", "true").unwrap_err();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert!(err.to_string().contains("未写回"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patching_a_file_with_a_wrong_typed_value_still_works() {
+        // 值类型错（比如写成字符串）**仍是合法 TOML**，所以只改我们那一行，
+        // 不顺手"修"用户那一项——他在文件里写什么就留着什么
+        let dir = tmp_dir("patch-wrongtype");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "idle_threshold_s = \"soon\"\nautostart = false\n").unwrap();
+
+        patch_line(&path, "autostart", "true").unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("idle_threshold_s = \"soon\""), "内容：{after}");
+        assert!(after.contains("autostart = true"));
+        // 类型错的那项仍回退默认（spec §5.2）
+        assert_eq!(parse(&after).idle_threshold_s, 300);
+        assert!(parse(&after).autostart);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patching_a_broken_file_reports_failure_and_keeps_the_file() {
+        // spec §5.2：文件坏了是用户自己的内容，不能因为我们想写一个键就抹掉
+        let dir = tmp_dir("patch-broken");
+        let path = dir.join("config.toml");
+        let original = "idle_threshold_s = \"soon\n# 我改坏了\n";
+        std::fs::write(&path, original).unwrap();
+
+        let err = patch_line(&path, "autostart", "true").unwrap_err();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert!(
+            err.to_string().contains("未写回"),
+            "错误信息要告诉用户本次选择只在本进程内生效：{err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patching_a_missing_file_writes_the_template_plus_the_key() {
+        let dir = tmp_dir("patch-missing");
+        let path = dir.join("config.toml");
+
+        patch_line(&path, "autostart", "true").unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("autostart = true"));
+        let c = parse(&after);
+        assert!(c.autostart);
+        assert_eq!(c.idle_threshold_s, 300, "其余项应是默认值");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_key_prefix_is_not_mistaken_for_the_key_itself() {
+        // 改 close_behavior 不应该动到 close_behavior_hint
+        let dir = tmp_dir("patch-prefix");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "close_behavior_hint = 1\nclose_behavior = \"ask\"\n").unwrap();
+
+        patch_line(&path, "close_behavior", "\"quit\"").unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("close_behavior_hint = 1"), "内容：{after}");
+        assert!(after.contains("close_behavior = \"quit\""));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

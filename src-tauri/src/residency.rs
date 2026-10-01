@@ -212,11 +212,10 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
             if let Some(item) = state.autostart_item.lock().unwrap().as_ref() {
                 let _ = item.set_checked(on);
             }
-            // 写回 config；失败只提示——系统状态已经生效，不该因此回滚
-            let mut cfg = crate::config::load_or_create(&state.config_path);
-            cfg.autostart = on;
-            if let Err(e) = crate::config::save(&state.config_path, &cfg) {
-                eprintln!("[time-scope] 写回 config.toml 失败: {e}");
+            // 只改 config 里那一行；失败只提示——系统状态已经生效，不该因此回滚。
+            // 不整份重写：用户的注释与其他设置不该被我们抹掉。
+            if let Err(e) = crate::config::patch_line(&state.config_path, "autostart", &on.to_string()) {
+                eprintln!("[time-scope] {e}");
             }
         }
         MenuOutcome::Quit => app.exit(0),
@@ -267,10 +266,13 @@ fn remember_answer(app: &AppHandle, answered: CloseBehavior) {
             let _ = w.hide();
         }
     }
-    let mut cfg = crate::config::load_or_create(&state.config_path);
-    cfg.close_behavior = next;
-    if let Err(e) = crate::config::save(&state.config_path, &cfg) {
-        eprintln!("[time-scope] 写回 config.toml 失败: {e}");
+    // 写回只动一行；失败不阻止本次行为（Review Focus #2）
+    if let Err(e) = crate::config::patch_line(
+        &state.config_path,
+        "close_behavior",
+        &format!("\"{}\"", next.as_str()),
+    ) {
+        eprintln!("[time-scope] {e}");
     }
 }
 
