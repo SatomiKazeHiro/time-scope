@@ -10,6 +10,7 @@
 //! ```
 
 mod date_range;
+mod rules;
 mod exit_flush;
 
 use exit_flush::flush_for_exit;
@@ -27,8 +28,7 @@ struct AppState {
 }
 
 fn db_path() -> PathBuf {
-    let appdata = std::env::var("APPDATA").expect("APPDATA env var");
-    PathBuf::from(appdata).join("time-scope").join("time-scope.db")
+    rules::app_dir().join("time-scope.db")
 }
 
 /// 取某一天的全部原始事件（spec §9）。
