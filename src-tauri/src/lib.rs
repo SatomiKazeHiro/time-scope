@@ -44,11 +44,6 @@ fn get_events(
         .map_err(|e| e.to_string())
 }
 
-/// DB 绝对路径（诊断/手工查数据用）。
-#[tauri::command]
-fn get_db_path() -> String {
-    db_path().to_string_lossy().into_owned()
-}
 
 pub fn run() {
     let app = tauri::Builder::default()
@@ -68,7 +63,7 @@ pub fn run() {
             app.manage(AppState { writer });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_events, get_db_path])
+        .invoke_handler(tauri::generate_handler![get_events])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
