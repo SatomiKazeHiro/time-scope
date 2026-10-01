@@ -1,7 +1,11 @@
+pub mod activity;
 pub mod query;
 pub mod schema;
 pub mod writer;
 
+pub use activity::{
+    delete_segments_for_day, get_segments_in_range, insert_segments, StoredSegment,
+};
 pub use query::{get_events_in_range, insert_events, now_ms, StoredEvent};
 pub use schema::{apply_pragmas, current_version, migrate, SCHEMA_VERSION};
 pub use writer::BatchWriter;

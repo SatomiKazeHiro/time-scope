@@ -84,6 +84,11 @@ pnpm build                                                     # 无 tsc 报错
 
 ## 四、遗留问题清单
 
+> **Schema 变更（未发布期）**：`activity_evidence.event_id` 已从
+> `REFERENCES events(id)` 改为软引用。原因是采集链路会先落段、后落 Event，
+> 外键必然违反。详见 ledger Task 6。本机 `%APPDATA%/time-scope/` 下的开发数据
+> 需要删除重建（`rm -rf "$APPDATA/time-scope"`）。
+
 ### 4.1 代码问题（6 条 Minor，均未修）
 
 | # | 问题 | 位置 | 影响 | 修法 |

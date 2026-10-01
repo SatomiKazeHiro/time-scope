@@ -48,7 +48,12 @@ const MIGRATIONS: &[(i64, &str)] = &[
 
         CREATE TABLE IF NOT EXISTS activity_evidence (
             activity_id TEXT NOT NULL REFERENCES activities(id),
-            event_id TEXT NOT NULL REFERENCES events(id),
+            -- 软引用：刻意不 REFERENCES events(id)。
+            -- 采集链路是「先把 Event 压进内存队列（5s 后才落库）→ 同一时刻让 engine
+            -- ingest → 可能立即产出一个要落库的段」，段会先于它引用的 Event 落库。
+            -- 若加外键，这个顺序必然违反约束。
+            -- activity_id 的外键保留：证据行总是随它的段一起增删，那才是真正需要的完整性。
+            event_id TEXT NOT NULL,
             PRIMARY KEY (activity_id, event_id)
         );
         "#,
