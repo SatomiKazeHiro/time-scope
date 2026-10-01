@@ -1197,37 +1197,66 @@ git commit -m "feat(engine): add ContextBuilder deriving activity context from e
   - `EngineState::initial()`
   - `EngineState::open_segment_snapshot(&self, rules, config) -> Option<ActivitySegment>`（把正在生长的段投影成可展示的 Segment，供 `get_segments` 返回**当前**这一段）
 
-**状态机（spec §7.3 的直接翻译 + 两处明确裁定）:**
+**状态机（spec §7.3 的直接翻译 + 三处裁定）:**
+
+> ⚠️ **本节已在实施后修订。** 初稿的 grace 分支写的是"不切段，只延长"，实测是错的
+> （见下方裁定 C）。以下为最终实现。
 
 ```
 reduce(state, event, rules, config):
 
   1. 翻转 idle 状态：SystemIdle → is_idle = true；SystemResume → is_idle = false
-  2. 用新 is_idle + event 算出 new_ctx
+  2. new_ctx = **clone(current_context)** 置 is_idle，再 apply(event)
+     （不能从空 context 起算，否则心跳事件会把 application 冲成 None）
   3. classification = rules.classify(new_ctx.application)
   4. 若是 idle 相关（SystemIdle / SystemResume）→ 走 idle 分支
      否则走 context 分支
 
   context 分支:
     - 没有当前段            → 开新段（category = Idle if is_idle else classification）
-    - current 同 new_ctx    → 延长：end_at = event.ts, 追加 evidence
+    - current 同 new_ctx    → 延长：end_at = max(end_at, event.ts), 追加 evidence
     - 不同：
-        · 若 |event.ts - last_switch_at| < grace 且 new_ctx 与"再前一个"相同 → 不切段，只延长
-        · 否则关闭旧段（进 pending），开新段
+        · 若满足吸收条件（裁定 C）→ **复活前一段**，丢弃当前段，延长复活的那段
+        · 否则关闭旧段（进 pending），记 previous_application = 旧段 application，开新段
 
   idle 分支:
     - SystemIdle  → 关闭当前段，开一个 Category::Idle 的段
     - SystemResume→ 关闭 Idle 段，后续由 context 分支开新段
 
-  5. 把 pending 里 end_at 距 event.ts 超过 min_segment_duration 的段搬到 closed_segments
+  5. 把 pending 里 end_at 距 event.ts 超过 max(min_segment_duration, grace_period)
+     的段搬到 closed_segments
 ```
 
 **裁定 A（min_segment_duration）:** 段不能"事后合并"——一旦落库就改不了。所以引擎内部维护
-`pending` 缓冲：只有当某段已经结束且距今超过 `min_segment_duration_s` 才交给上层落库。
-这样上层有机会在落库前把过短的段并入相邻段（Task 6 负责合并）。
+`pending` 缓冲：只有当某段已经结束且**距今超过落库门槛**才交给上层落库。
 
 **裁定 B（open segment 不落库）:** 正在生长的段不进 `closed_segments`。`get_segments` 时用
 `open_segment_snapshot` 单独取出来附在结果末尾，所以时间线是实时的。
+
+**裁定 C（grace 吸收要"复活"前一段，不能只是"不切段"）** — *实施后新增，推翻了初稿设计。*
+
+spec §7.3 原文是"若距上次切换 < GRACE_PERIOD 且新 context 与**再前一个**相同 → 视为短暂切换，
+不切段"。初稿把它简化成一个 `returns_to_previous` 代理判定。**这是错的**：
+
+```
+Code -> chrome(2s) -> Code
+"不切段"的结果是留下 chrome 段 —— 但用户实际全程在 Code
+```
+
+正确语义是"抖动"：那个一闪而过的 context 从未真正发生。所以吸收时要
+
+1. 丢弃刚开的那段（一闪而过的错误 context）
+2. 从 `pending` 里**弹出并复活**前一段，把它延长到当前时间
+
+实现上用**独立的 `previous_application: Option<String>` 字段**记住"再前一个"，
+而不是拿 `pending` 末尾当记忆 —— `min_segment_duration = 0` 时 `pending` 会被立即清空，
+拿它当记忆会让 grace 判定永远失效。
+
+**裁定 D（落库门槛 = max(min_segment_duration, grace_period)）** — *实施后新增。*
+
+吸收只能复活"还没落库"的段，所以落库门槛必须覆盖整个 grace 窗口，
+否则宽限期内回来的段已经落库、改不了了。这也修掉了 spec 自身默认值的一个隐患：
+`min_segment_duration(30s) < grace_period(60s)`，按字面实现会让 grace 吸收不可靠。
 
 - [ ] **Step 1: 写失败测试 `src-tauri/crates/engine/src/tests/segmenter.rs`**
 
@@ -1257,20 +1286,7 @@ fn heartbeat(ts: i64, secs: u8) -> Event {
     )
 }
 
-/// 把一串事件喂给引擎，返回最终 closed_segments。
-fn run(events: &[Event]) -> (Vec<crate::ActivitySegment>, EngineState) {
-    let (rs, cfg) = (rules(), EngineConfig::default().with_min_segment_duration_s(0));
-    let mut st = EngineState::initial();
-    let mut all = Vec::new();
-    for e in events {
-        let out = reduce(&st, e, &rs, &cfg);
-        all.extend(out.closed_segments);
-        st = out.state;
-    }
-    (all, st)
-}
-
-/// 供"取全部段（含未关闭的当前段）"用。
+/// 取全部段：已关闭的 + 正在生长的当前段。
 fn all_segments(events: &[Event], rs: &RuleSet, cfg: &EngineConfig) -> Vec<crate::ActivitySegment> {
     let mut st = EngineState::initial();
     let mut all = Vec::new();
@@ -1292,16 +1308,21 @@ fn cats(events: &[Event]) -> Vec<String> {
         .collect()
 }
 
+/// 立即落库：min 和 grace 都设 0，落库门槛 max(0,0)=0。
+/// 只想验证"分段的形状"而不涉及抖动语义时用它。
+/// 涉及 grace 的测试必须保留默认 grace（见下面那几个）。
+fn emit_now() -> EngineConfig {
+    EngineConfig::default()
+        .with_min_segment_duration_s(0)
+        .with_grace_period_s(0)
+}
+
 // --- 基本：同应用延长 ---
 
 #[test]
 fn single_event_creates_one_segment() {
-    let segs = all_segments(
-        &[focus(1_000, "Code.exe")],
-        &rules(),
-        &EngineConfig::default().with_min_segment_duration_s(0),
-    );
-    assert_eq!(segs.len(), 1, "Review Focus #2：只有 1 条 Event 也要出 1 段");
+    let segs = all_segments(&[focus(1_000, "Code.exe")], &rules(), &emit_now());
+    assert_eq!(segs.len(), 1, "只有 1 条 Event 也要出 1 段");
     assert_eq!(segs[0].category.as_str(), "work");
     assert_eq!(segs[0].start_at, 1_000);
     assert_eq!(segs[0].application.as_deref(), Some("Code.exe"));
@@ -1316,7 +1337,7 @@ fn same_app_extends_one_segment() {
             focus(20_000, "Code.exe"),
         ],
         &rules(),
-        &EngineConfig::default().with_min_segment_duration_s(0),
+        &emit_now(),
     );
     assert_eq!(segs.len(), 1, "同一应用不应切段");
     assert_eq!(segs[0].start_at, 1_000);
@@ -1326,11 +1347,11 @@ fn same_app_extends_one_segment() {
 
 #[test]
 fn segment_end_is_always_at_or_after_start() {
-    // Review Focus #1：跨零点 / 乱序时间戳也不能产生负长度段
+    // 跨零点 / 乱序时间戳也不能产生负长度段
     let segs = all_segments(
         &[focus(5_000, "Code.exe"), focus(1_000, "Code.exe")],
         &rules(),
-        &EngineConfig::default().with_min_segment_duration_s(0),
+        &emit_now(),
     );
     for s in &segs {
         assert!(s.end_at >= s.start_at, "负长度段: {s:?}");
@@ -1343,12 +1364,9 @@ fn segment_end_is_always_at_or_after_start() {
 #[test]
 fn different_app_splits_segment() {
     let segs = all_segments(
-        &[
-            focus(1_000, "Code.exe"),
-            focus(600_000, "chrome.exe"), // 10 分钟后，超出 grace
-        ],
+        &[focus(1_000, "Code.exe"), focus(600_000, "chrome.exe")],
         &rules(),
-        &EngineConfig::default().with_min_segment_duration_s(0),
+        &emit_now(),
     );
     assert_eq!(segs.len(), 2);
     assert_eq!(segs[0].application.as_deref(), Some("Code.exe"));
@@ -1359,11 +1377,7 @@ fn different_app_splits_segment() {
 
 #[test]
 fn unknown_app_gets_unknown_category() {
-    let segs = all_segments(
-        &[focus(1_000, "MysteryApp.exe")],
-        &rules(),
-        &EngineConfig::default().with_min_segment_duration_s(0),
-    );
+    let segs = all_segments(&[focus(1_000, "MysteryApp.exe")], &rules(), &emit_now());
     assert_eq!(segs[0].category.as_str(), "unknown");
     assert_eq!(segs[0].confidence, 0.0);
 }
@@ -1376,11 +1390,7 @@ fn segments_are_ordered_and_non_overlapping() {
         focus(1_200_000, "Code.exe"),
         focus(1_800_000, "QQ.exe"),
     ];
-    let segs = all_segments(
-        &events,
-        &rules(),
-        &EngineConfig::default().with_min_segment_duration_s(0),
-    );
+    let segs = all_segments(&events, &rules(), &emit_now());
     for w in segs.windows(2) {
         assert!(w[0].end_at <= w[1].start_at, "段不应重叠: {:?} {:?}", w[0], w[1]);
     }
@@ -1390,7 +1400,8 @@ fn segments_are_ordered_and_non_overlapping() {
 
 #[test]
 fn grace_period_absorbs_a_quick_switch_back() {
-    // Code -> chrome（2s）-> Code，三段应合并成一段 Code
+    // Code -> chrome(2s) -> Code，三段应合并成一个 Code 段。
+    // 关键是"复活"前一个 Code 段，而不是把 chrome 段留下来。
     let cfg = EngineConfig::default()
         .with_min_segment_duration_s(0)
         .with_grace_period_s(60);
@@ -1403,8 +1414,12 @@ fn grace_period_absorbs_a_quick_switch_back() {
         &rules(),
         &cfg,
     );
-    assert_eq!(segs.len(), 1, "grace 内的往返切换不该切成三段");
+    assert_eq!(segs.len(), 1, "grace 内的往返切换不该留下多段，实际 {:?}", cats(&[
+        focus(0, "Code.exe"), focus(2_000, "chrome.exe"), focus(4_000, "Code.exe")
+    ]));
     assert_eq!(segs[0].application.as_deref(), Some("Code.exe"));
+    assert_eq!(segs[0].start_at, 0);
+    assert_eq!(segs[0].end_at, 4_000);
 }
 
 #[test]
@@ -1416,12 +1431,12 @@ fn grace_period_does_not_absorb_a_slow_switch_back() {
         &[
             focus(0, "Code.exe"),
             focus(10_000, "chrome.exe"),
-            focus(200_000, "Code.exe"), // 190s 后回来，超出 grace
+            focus(200_000, "Code.exe"),
         ],
         &rules(),
         &cfg,
     );
-    assert!(segs.len() >= 2, "超出 grace 的往返应保留为多段");
+    assert!(segs.len() >= 2, "超出 grace 的往返应保留为多段，实际 {}", segs.len());
 }
 
 #[test]
@@ -1437,11 +1452,28 @@ fn zero_grace_disables_absorption() {
     assert_eq!(segs.len(), 3, "grace=0 时每次切换都切段");
 }
 
+#[test]
+fn grace_absorbs_the_evidence_of_the_dropped_segment() {
+    // 被判为抖动的那个段，其证据应并回复活段，而不是凭空消失
+    let cfg = EngineConfig::default()
+        .with_min_segment_duration_s(0)
+        .with_grace_period_s(60);
+    let segs = all_segments(
+        &[
+            focus(0, "Code.exe"),
+            focus(2_000, "chrome.exe"),
+            focus(4_000, "Code.exe"),
+        ],
+        &rules(),
+        &cfg,
+    );
+    assert_eq!(segs[0].evidence_event_ids.len(), 3, "三个 Event 都应留下证据");
+}
+
 // --- idle ---
 
 #[test]
 fn idle_starts_an_idle_segment() {
-    let cfg = EngineConfig::default().with_min_segment_duration_s(0);
     let segs = all_segments(
         &[
             focus(0, "Code.exe"),
@@ -1449,10 +1481,10 @@ fn idle_starts_an_idle_segment() {
             Event::new(EventType::SystemResume, 700_000),
         ],
         &rules(),
-        &cfg,
+        &emit_now(),
     );
-    let cats: Vec<&str> = segs.iter().map(|s| s.category.as_str()).collect();
-    assert!(cats.contains(&"idle"), "应有 idle 段，实际={:?}", cats);
+    let c = segs.iter().map(|s| s.category.as_str()).collect::<Vec<_>>();
+    assert!(c.contains(&"idle"), "应有 idle 段，实际={:?}", c);
     let idle = segs.iter().find(|s| s.category.as_str() == "idle").unwrap();
     assert!(idle.start_at >= 400_000);
     assert!(idle.end_at >= idle.start_at);
@@ -1460,14 +1492,10 @@ fn idle_starts_an_idle_segment() {
 
 #[test]
 fn idle_closes_the_previous_work_segment() {
-    let cfg = EngineConfig::default().with_min_segment_duration_s(0);
     let segs = all_segments(
-        &[
-            focus(0, "Code.exe"),
-            Event::new(EventType::SystemIdle, 400_000),
-        ],
+        &[focus(0, "Code.exe"), Event::new(EventType::SystemIdle, 400_000)],
         &rules(),
-        &cfg,
+        &emit_now(),
     );
     assert_eq!(segs.len(), 2);
     assert_eq!(segs[0].category.as_str(), "work");
@@ -1478,7 +1506,6 @@ fn idle_closes_the_previous_work_segment() {
 #[test]
 fn heartbeats_during_idle_do_not_extend_the_work_segment() {
     // spec §7.3：idle 期间的心跳不计入活跃
-    let cfg = EngineConfig::default().with_min_segment_duration_s(0);
     let segs = all_segments(
         &[
             focus(0, "Code.exe"),
@@ -1488,7 +1515,7 @@ fn heartbeats_during_idle_do_not_extend_the_work_segment() {
             heartbeat(420_000, 0),
         ],
         &rules(),
-        &cfg,
+        &emit_now(),
     );
     let work = segs.iter().find(|s| s.category.as_str() == "work").unwrap();
     assert_eq!(work.end_at, 400_000, "工作段不应被 idle 期的心跳撑长");
@@ -1499,18 +1526,15 @@ fn heartbeats_during_idle_do_not_extend_the_work_segment() {
 #[test]
 fn reduce_is_pure_same_input_same_output() {
     let events = vec![focus(0, "Code.exe"), focus(600_000, "chrome.exe")];
-    let (rs, cfg) = (rules(), EngineConfig::default().with_min_segment_duration_s(0));
-    let a = {
+    let (rs, cfg) = (rules(), emit_now());
+    let run = || {
         let mut st = EngineState::initial();
-        for e in &events { st = reduce(&st, e, &rs, &cfg).state; }
+        for e in &events {
+            st = reduce(&st, e, &rs, &cfg).state;
+        }
         st
     };
-    let b = {
-        let mut st = EngineState::initial();
-        for e in &events { st = reduce(&st, e, &rs, &cfg).state; }
-        st
-    };
-    assert_eq!(a, b, "同一串事件必须得到同一状态");
+    assert_eq!(run(), run(), "同一串事件必须得到同一状态");
 }
 
 #[test]
@@ -1519,16 +1543,14 @@ fn reduce_does_not_mutate_input_state() {
     let cfg = EngineConfig::default();
     let st = EngineState::initial();
     let _ = reduce(&st, &focus(0, "Code.exe"), &rs, &cfg);
-    // 原始 state 必须还是 initial 的样子（reduce 签名是 &EngineState）
     assert!(st.current_segment.is_none());
     assert!(st.current_context.is_none());
 }
 
 #[test]
 fn replay_after_rules_change_produces_different_categories() {
-    // spec §7.4：换分类器重算历史，结果应不同
     let events = vec![focus(0, "Code.exe")];
-    let before = all_segments(&events, &rules(), &EngineConfig::default().with_min_segment_duration_s(0));
+    let before = all_segments(&events, &rules(), &emit_now());
     let other = RuleSet::from_toml(
         r#"
 [[rule]]
@@ -1537,8 +1559,9 @@ process = ["Code.exe"]
 category = "entertainment"
 confidence = 0.1
 "#,
-    ).unwrap();
-    let after = all_segments(&events, &other, &EngineConfig::default().with_min_segment_duration_s(0));
+    )
+    .unwrap();
+    let after = all_segments(&events, &other, &emit_now());
     assert_eq!(before[0].category.as_str(), "work");
     assert_eq!(after[0].category.as_str(), "entertainment");
     assert_ne!(before[0].classifier_version, after[0].classifier_version);
@@ -1548,8 +1571,7 @@ confidence = 0.1
 
 #[test]
 fn open_segment_is_not_in_closed_segments() {
-    let rs = rules();
-    let cfg = EngineConfig::default().with_min_segment_duration_s(0);
+    let (rs, cfg) = (rules(), emit_now());
     let out = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg);
     assert!(out.closed_segments.is_empty(), "未关闭的段不该出现在 closed 里");
     assert!(out.state.current_segment.is_some());
@@ -1557,8 +1579,7 @@ fn open_segment_is_not_in_closed_segments() {
 
 #[test]
 fn open_segment_snapshot_mirrors_the_growing_segment() {
-    let rs = rules();
-    let cfg = EngineConfig::default();
+    let (rs, cfg) = (rules(), EngineConfig::default());
     let mut st = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg).state;
     st = reduce(&st, &focus(5_000, "Code.exe"), &rs, &cfg).state;
     let snap = st.open_segment_snapshot(&rs, &cfg).expect("应有正在生长的段");
@@ -1570,8 +1591,7 @@ fn open_segment_snapshot_mirrors_the_growing_segment() {
 
 #[test]
 fn open_segment_snapshot_is_none_when_idle_and_empty() {
-    let rs = rules();
-    let cfg = EngineConfig::default();
+    let (rs, cfg) = (rules(), EngineConfig::default());
     assert!(EngineState::initial().open_segment_snapshot(&rs, &cfg).is_none());
 }
 
@@ -1579,31 +1599,22 @@ fn open_segment_snapshot_is_none_when_idle_and_empty() {
 
 #[test]
 fn short_segments_stay_pending_until_min_duration_elapses() {
-    // 裁定 A：过短的段先不进 closed_segments
-    let rs = rules();
-    let cfg = EngineConfig::default().with_min_segment_duration_s(30);
+    let (rs, cfg) = (rules(), EngineConfig::default().with_min_segment_duration_s(30));
     let mut st = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg).state;
     st = reduce(&st, &focus(1_000, "chrome.exe"), &rs, &cfg).state;
-    // 1s 的 Code 段刚被切掉，还没到 30s，不该出现在 closed 里
-    assert!(
-        st.current_segment.is_some(),
-        "应该有正在生长的 chrome 段"
-    );
+    assert!(st.current_segment.is_some(), "应该有正在生长的 chrome 段");
     let snapshot = st.open_segment_snapshot(&rs, &cfg).unwrap();
     assert_eq!(snapshot.application.as_deref(), Some("chrome.exe"));
-    // pending 里应该躺着那个 1s 的段
     assert_eq!(st.pending.len(), 1);
     assert_eq!(st.pending[0].application.as_deref(), Some("Code.exe"));
 }
 
 #[test]
 fn pending_segments_are_released_once_old_enough() {
-    let rs = rules();
-    let cfg = EngineConfig::default().with_min_segment_duration_s(30);
+    let (rs, cfg) = (rules(), EngineConfig::default().with_min_segment_duration_s(30));
     let mut st = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg).state;
     st = reduce(&st, &focus(1_000, "chrome.exe"), &rs, &cfg).state;
     let out = reduce(&st, &heartbeat(100_000, 3), &rs, &cfg);
-    // 100s 后，那个 1s 的段已经远超 30s，应该被释放
     assert!(
         !out.closed_segments.is_empty(),
         "超过 min_segment_duration 的 pending 段应被释放"
@@ -1621,7 +1632,7 @@ Expected: ERROR（`reduce` / `EngineState` 未定义）。
 ```rust
 use crate::classifier::RuleSet;
 use crate::config::EngineConfig;
-use crate::context::context_of;
+use crate::context::ContextBuilder;
 use crate::{ActivityContext, ActivitySegment, Category, OpenSegment, CLASSIFIER_RULE};
 use activity_core::{Event, EventType};
 
@@ -1631,9 +1642,15 @@ pub struct EngineState {
     pub current_segment: Option<OpenSegment>,
     pub current_context: Option<ActivityContext>,
     pub is_idle: bool,
-    /// 已切掉但还没到 min_segment_duration 的段，等待释放给上层落库（裁定 A）
+    /// 已切掉但还没到"可落库年龄"的段。
+    /// 同时是 grace 抖动时**可回溯复活**的来源——已落库的段无法复活。
     pub pending: Vec<ActivitySegment>,
-    /// 上一次真正切段的时刻，用于 grace period 判定
+    /// 上一次**真正**切段时离开的那个应用。spec §7.3 的"再前一个"就是它。
+    ///
+    /// 必须独立于 `pending`：`min_segment_duration = 0` 时 pending 会被立刻清空，
+    /// 若拿它当"再前一个"，grace 判定就永远失效。
+    pub previous_application: Option<String>,
+    /// 上一次**真正**切段的时刻。被判为抖动的吸收不更新它。
     pub last_switch_at: Option<i64>,
 }
 
@@ -1644,7 +1661,7 @@ impl EngineState {
 
     /// 把正在生长的段投影成一个可展示的 ActivitySegment。
     ///
-    /// **它还没落库**（裁定 B）——`get_segments` 用它把"当前这一段"附在结果末尾，
+    /// **它还没落库** —— `get_segments` 用它把"当前这一段"附在结果末尾，
     /// 时间线因此是实时的。
     pub fn open_segment_snapshot(
         &self,
@@ -1690,13 +1707,18 @@ pub fn reduce(
         _ => {}
     }
 
-    // 2. 新上下文
-    let new_ctx = context_of(event, st.is_idle, st.current_context.as_ref().map(|c| c.input_active).unwrap_or(false));
+    // 2. 新上下文：**沿用上一次的**再应用这个 Event。
+    //    不能每次从空 context 起算——心跳事件不携带 application，
+    //    重建会把 application 冲成 None，导致"同一应用"判定失败、每来一个心跳就切一段。
+    let mut new_ctx = st.current_context.clone().unwrap_or_default();
+    new_ctx.is_idle = st.is_idle;
+    ContextBuilder::apply(&mut new_ctx, event);
 
-    match &event.event_type {
+    match event.event_type {
+        // --- idle 分支 ---
         EventType::SystemIdle => {
             close_current(&mut st, rules, ts);
-            let mut open = new_open_segment(ts, Category::Idle, None, 0.0, rules);
+            let mut open = new_open_segment(ts, Category::Idle, None, 0.0);
             open.evidence_event_ids.push(event.id.clone());
             st.current_segment = Some(open);
             st.current_context = Some(new_ctx);
@@ -1707,37 +1729,46 @@ pub fn reduce(
             close_current(&mut st, rules, ts);
             st.current_context = Some(new_ctx);
         }
+        // --- context 分支 ---
         _ => {
             let cls = rules.classify(new_ctx.application.as_deref());
-            let category = if st.is_idle { Category::Idle } else { cls.category };
+            let category = if st.is_idle {
+                Category::Idle
+            } else {
+                cls.category
+            };
 
             match st.current_segment.clone() {
                 None => {
-                    let mut open = new_open_segment(ts, category, new_ctx.application.clone(), cls.confidence, rules);
+                    let mut open = new_open_segment(
+                        ts,
+                        category,
+                        new_ctx.application.clone(),
+                        cls.confidence,
+                    );
                     open.evidence_event_ids.push(event.id.clone());
                     st.current_segment = Some(open);
                     st.last_switch_at = Some(ts);
                 }
                 Some(cur) => {
-                    let same = new_ctx.same_app_and_category(&cur_ctx(&st, &cur))
+                    let same = cur.application == new_ctx.application
                         && cur.category == category;
                     if same {
                         extend(&mut st, cur, ts, event.id.clone());
+                    } else if is_absorption(&st, &new_ctx, ts, config) {
+                        absorb(&mut st, ts, event.id.clone());
                     } else {
-                        let within_grace = st
-                            .last_switch_at
-                            .map(|t| (ts - t).abs() < (config.grace_period_s as i64) * 1000)
-                            .unwrap_or(false);
-                        if within_grace && returns_to_previous(&st) {
-                            // 短暂切换：延长当前段，不切
-                            extend(&mut st, cur, ts, event.id.clone());
-                        } else {
-                            close_current(&mut st, rules, ts);
-                            let mut open = new_open_segment(ts, category, new_ctx.application.clone(), cls.confidence, rules);
-                            open.evidence_event_ids.push(event.id.clone());
-                            st.current_segment = Some(open);
-                            st.last_switch_at = Some(ts);
-                        }
+                        close_current(&mut st, rules, ts);
+                        st.previous_application = cur.application.clone();
+                        let mut open = new_open_segment(
+                            ts,
+                            category,
+                            new_ctx.application.clone(),
+                            cls.confidence,
+                        );
+                        open.evidence_event_ids.push(event.id.clone());
+                        st.current_segment = Some(open);
+                        st.last_switch_at = Some(ts);
                     }
                 }
             }
@@ -1746,11 +1777,14 @@ pub fn reduce(
     }
 
     // 3. 释放够老的 pending 段
-    let min_ms = (config.min_segment_duration_s as i64) * 1000;
+    let hold_ms = (config
+        .min_segment_duration_s
+        .max(config.grace_period_s) as i64)
+        * 1000;
     let mut closed = Vec::new();
     let mut still = Vec::new();
     for seg in st.pending.drain(..) {
-        if ts - seg.end_at >= min_ms {
+        if ts - seg.end_at >= hold_ms {
             closed.push(seg);
         } else {
             still.push(seg);
@@ -1764,29 +1798,59 @@ pub fn reduce(
     }
 }
 
-fn cur_ctx(st: &EngineState, open: &OpenSegment) -> ActivityContext {
-    ActivityContext {
-        application: open.application.clone(),
-        window_title: st
-            .current_context
-            .as_ref()
-            .and_then(|c| c.window_title.clone()),
-        input_active: st
-            .current_context
-            .as_ref()
-            .map(|c| c.input_active)
-            .unwrap_or(false),
-        is_idle: open.category == Category::Idle,
+/// spec §7.3 的 grace 判定：距上次切换在宽限窗口内，**且新 context 与"再前一个"相同**。
+///
+/// 附加条件：前一段还留在 `pending` 里（没落库）。已落库的段无法复活，
+/// 那时再判定为抖动也来不及了——落库门槛是 `max(min_segment_duration, grace_period)`，
+/// 正好覆盖整个宽限窗口，所以正常情况下这个条件恒成立。
+fn is_absorption(
+    st: &EngineState,
+    new_ctx: &ActivityContext,
+    ts: i64,
+    config: &EngineConfig,
+) -> bool {
+    if st.previous_application.as_deref() != new_ctx.application.as_deref() {
+        return false;
     }
+    let revisitable = st
+        .pending
+        .last()
+        .map(|p| p.application == st.previous_application)
+        .unwrap_or(false);
+    if !revisitable {
+        return false;
+    }
+    st.last_switch_at
+        .map(|t| (ts - t).abs() < (config.grace_period_s as i64) * 1000)
+        .unwrap_or(false)
 }
 
-/// grace 判定用：当前段的应用是否等于"再前一个"的应用。
-/// 引擎只记住当前段，所以简化为——**当前段与新 context 不同但类别相同**时，
-/// 若时间差在 grace 内就当作短暂抖动。这里用一个可测的近似，见下方注释。
-fn returns_to_previous(st: &EngineState) -> bool {
-    // 真正的"再前一个"需要额外缓存，这里用"刚切过段"作为代理：
-    // 距上次切换 < grace 时发生的切换，视为抖动。
-    st.last_switch_at.is_some()
+/// 抖动吸收：丢弃刚开的那段（错误的 context），**复活** pending 末尾的前一段并延长。
+///
+/// 关键：如果只是"不切段"而把当前段留着，活下来的会是那个一闪而过的错误 context
+/// （Code -> chrome(2s) -> Code 会留下一个 chrome 段），与用户实际经历不符。
+fn absorb(st: &mut EngineState, ts: i64, evidence_id: String) {
+    let Some(mut prev) = st.pending.pop() else {
+        return;
+    };
+    let dropped = st.current_segment.take();
+
+    prev.end_at = prev.end_at.max(ts);
+    prev.evidence_event_ids.push(evidence_id);
+    if let Some(d) = dropped {
+        // 被丢弃段的证据并回来，别凭空消失
+        prev.evidence_event_ids.extend(d.evidence_event_ids);
+    }
+    st.current_segment = Some(OpenSegment {
+        start_at: prev.start_at,
+        end_at: prev.end_at,
+        category: prev.category,
+        application: prev.application,
+        confidence: prev.confidence,
+        evidence_event_ids: prev.evidence_event_ids,
+        last_evidence_at: ts,
+    });
+    // 抖动不是真切换：last_switch_at 与 previous_application 都保持不动
 }
 
 fn new_open_segment(
@@ -1794,7 +1858,6 @@ fn new_open_segment(
     category: Category,
     application: Option<String>,
     confidence: f32,
-    _rules: &RuleSet,
 ) -> OpenSegment {
     OpenSegment {
         start_at: ts,
@@ -1838,6 +1901,270 @@ fn close_current(st: &mut EngineState, rules: &RuleSet, ts: i64) {
 `lib.rs`：
 
 ```rust
+use crate::classifier::RuleSet;
+use crate::config::EngineConfig;
+use crate::context::ContextBuilder;
+use crate::{ActivityContext, ActivitySegment, Category, OpenSegment, CLASSIFIER_RULE};
+use activity_core::{Event, EventType};
+
+/// 引擎的完整状态。**只有这个结构体是可变的**，其余全是纯函数。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EngineState {
+    pub current_segment: Option<OpenSegment>,
+    pub current_context: Option<ActivityContext>,
+    pub is_idle: bool,
+    /// 已切掉但还没到"可落库年龄"的段。
+    /// 同时是 grace 抖动时**可回溯复活**的来源——已落库的段无法复活。
+    pub pending: Vec<ActivitySegment>,
+    /// 上一次**真正**切段时离开的那个应用。spec §7.3 的"再前一个"就是它。
+    ///
+    /// 必须独立于 `pending`：`min_segment_duration = 0` 时 pending 会被立刻清空，
+    /// 若拿它当"再前一个"，grace 判定就永远失效。
+    pub previous_application: Option<String>,
+    /// 上一次**真正**切段的时刻。被判为抖动的吸收不更新它。
+    pub last_switch_at: Option<i64>,
+}
+
+impl EngineState {
+    pub fn initial() -> Self {
+        Self::default()
+    }
+
+    /// 把正在生长的段投影成一个可展示的 ActivitySegment。
+    ///
+    /// **它还没落库** —— `get_segments` 用它把"当前这一段"附在结果末尾，
+    /// 时间线因此是实时的。
+    pub fn open_segment_snapshot(
+        &self,
+        rules: &RuleSet,
+        _config: &EngineConfig,
+    ) -> Option<ActivitySegment> {
+        let open = self.current_segment.as_ref()?;
+        Some(ActivitySegment {
+            id: format!("open-{}", open.start_at),
+            start_at: open.start_at,
+            end_at: open.end_at,
+            category: open.category,
+            application: open.application.clone(),
+            confidence: open.confidence,
+            classifier: CLASSIFIER_RULE.to_string(),
+            classifier_version: rules.version.clone(),
+            evidence_event_ids: open.evidence_event_ids.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EngineOutput {
+    pub state: EngineState,
+    /// 已够老、可以落库的段
+    pub closed_segments: Vec<ActivitySegment>,
+}
+
+/// 逐个吞 Event，吐出可落库的 Segment。**无 IO、无副作用**（spec §7.4）。
+pub fn reduce(
+    state: &EngineState,
+    event: &Event,
+    rules: &RuleSet,
+    config: &EngineConfig,
+) -> EngineOutput {
+    let mut st = state.clone();
+    let ts = event.timestamp;
+
+    // 1. idle 状态翻转
+    match event.event_type {
+        EventType::SystemIdle => st.is_idle = true,
+        EventType::SystemResume => st.is_idle = false,
+        _ => {}
+    }
+
+    // 2. 新上下文：**沿用上一次的**再应用这个 Event。
+    //    不能每次从空 context 起算——心跳事件不携带 application，
+    //    重建会把 application 冲成 None，导致"同一应用"判定失败、每来一个心跳就切一段。
+    let mut new_ctx = st.current_context.clone().unwrap_or_default();
+    new_ctx.is_idle = st.is_idle;
+    ContextBuilder::apply(&mut new_ctx, event);
+
+    match event.event_type {
+        // --- idle 分支 ---
+        EventType::SystemIdle => {
+            close_current(&mut st, rules, ts);
+            let mut open = new_open_segment(ts, Category::Idle, None, 0.0);
+            open.evidence_event_ids.push(event.id.clone());
+            st.current_segment = Some(open);
+            st.current_context = Some(new_ctx);
+            st.last_switch_at = Some(ts);
+        }
+        EventType::SystemResume => {
+            // idle 段在 resume 时收尾；下一条事件会开新的 context 段
+            close_current(&mut st, rules, ts);
+            st.current_context = Some(new_ctx);
+        }
+        // --- context 分支 ---
+        _ => {
+            let cls = rules.classify(new_ctx.application.as_deref());
+            let category = if st.is_idle {
+                Category::Idle
+            } else {
+                cls.category
+            };
+
+            match st.current_segment.clone() {
+                None => {
+                    let mut open = new_open_segment(
+                        ts,
+                        category,
+                        new_ctx.application.clone(),
+                        cls.confidence,
+                    );
+                    open.evidence_event_ids.push(event.id.clone());
+                    st.current_segment = Some(open);
+                    st.last_switch_at = Some(ts);
+                }
+                Some(cur) => {
+                    let same = cur.application == new_ctx.application
+                        && cur.category == category;
+                    if same {
+                        extend(&mut st, cur, ts, event.id.clone());
+                    } else if is_absorption(&st, &new_ctx, ts, config) {
+                        absorb(&mut st, ts, event.id.clone());
+                    } else {
+                        close_current(&mut st, rules, ts);
+                        st.previous_application = cur.application.clone();
+                        let mut open = new_open_segment(
+                            ts,
+                            category,
+                            new_ctx.application.clone(),
+                            cls.confidence,
+                        );
+                        open.evidence_event_ids.push(event.id.clone());
+                        st.current_segment = Some(open);
+                        st.last_switch_at = Some(ts);
+                    }
+                }
+            }
+            st.current_context = Some(new_ctx);
+        }
+    }
+
+    // 3. 释放够老的 pending 段
+    let hold_ms = (config
+        .min_segment_duration_s
+        .max(config.grace_period_s) as i64)
+        * 1000;
+    let mut closed = Vec::new();
+    let mut still = Vec::new();
+    for seg in st.pending.drain(..) {
+        if ts - seg.end_at >= hold_ms {
+            closed.push(seg);
+        } else {
+            still.push(seg);
+        }
+    }
+    st.pending = still;
+
+    EngineOutput {
+        state: st,
+        closed_segments: closed,
+    }
+}
+
+/// spec §7.3 的 grace 判定：距上次切换在宽限窗口内，**且新 context 与"再前一个"相同**。
+///
+/// 附加条件：前一段还留在 `pending` 里（没落库）。已落库的段无法复活，
+/// 那时再判定为抖动也来不及了——落库门槛是 `max(min_segment_duration, grace_period)`，
+/// 正好覆盖整个宽限窗口，所以正常情况下这个条件恒成立。
+fn is_absorption(
+    st: &EngineState,
+    new_ctx: &ActivityContext,
+    ts: i64,
+    config: &EngineConfig,
+) -> bool {
+    if st.previous_application.as_deref() != new_ctx.application.as_deref() {
+        return false;
+    }
+    let revisitable = st
+        .pending
+        .last()
+        .map(|p| p.application == st.previous_application)
+        .unwrap_or(false);
+    if !revisitable {
+        return false;
+    }
+    st.last_switch_at
+        .map(|t| (ts - t).abs() < (config.grace_period_s as i64) * 1000)
+        .unwrap_or(false)
+}
+
+/// 抖动吸收：丢弃刚开的那段（错误的 context），**复活** pending 末尾的前一段并延长。
+///
+/// 关键：如果只是"不切段"而把当前段留着，活下来的会是那个一闪而过的错误 context
+/// （Code -> chrome(2s) -> Code 会留下一个 chrome 段），与用户实际经历不符。
+fn absorb(st: &mut EngineState, ts: i64, evidence_id: String) {
+    let Some(mut prev) = st.pending.pop() else {
+        return;
+    };
+    let dropped = st.current_segment.take();
+
+    prev.end_at = prev.end_at.max(ts);
+    prev.evidence_event_ids.push(evidence_id);
+    if let Some(d) = dropped {
+        // 被丢弃段的证据并回来，别凭空消失
+        prev.evidence_event_ids.extend(d.evidence_event_ids);
+    }
+    st.current_segment = Some(OpenSegment {
+        start_at: prev.start_at,
+        end_at: prev.end_at,
+        category: prev.category,
+        application: prev.application,
+        confidence: prev.confidence,
+        evidence_event_ids: prev.evidence_event_ids,
+        last_evidence_at: ts,
+    });
+    // 抖动不是真切换：last_switch_at 与 previous_application 都保持不动
+}
+
+fn new_open_segment(
+    ts: i64,
+    category: Category,
+    application: Option<String>,
+    confidence: f32,
+) -> OpenSegment {
+    OpenSegment {
+        start_at: ts,
+        end_at: ts,
+        category,
+        application,
+        confidence,
+        evidence_event_ids: Vec::new(),
+        last_evidence_at: ts,
+    }
+}
+
+fn extend(st: &mut EngineState, mut cur: OpenSegment, ts: i64, evidence_id: String) {
+    cur.end_at = cur.end_at.max(ts);
+    cur.last_evidence_at = ts;
+    cur.evidence_event_ids.push(evidence_id);
+    st.current_segment = Some(cur);
+}
+
+fn close_current(st: &mut EngineState, rules: &RuleSet, ts: i64) {
+    let Some(mut open) = st.current_segment.take() else {
+        return;
+    };
+    open.end_at = open.end_at.max(ts);
+    st.pending.push(ActivitySegment {
+        id: format!("seg-{}", open.start_at),
+        start_at: open.start_at,
+        end_at: open.end_at,
+        category: open.category,
+        application: open.application,
+        confidence: open.confidence,
+        classifier: CLASSIFIER_RULE.to_string(),
+        classifier_version: rules.version.clone(),
+        evidence_event_ids: open.evidence_event_ids,
+    });
+}
 pub mod classifier;
 pub mod config;
 pub mod context;
@@ -1864,8 +2191,10 @@ mod types;
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml -p activity-engine`
-Expected: PASS（约 50 tests）。**若 grace 相关测试失败，读 Self-Review §2 的"计划缺陷"说明**——
-`returns_to_previous` 的代理判定是本计划的已知弱点，测试会告诉你它到底够不够。
+Expected: PASS（53 tests）。
+
+> **已实施。** 计划初稿的 grace 代理判定被推翻了，理由与最终实现见 Task 5 开头的
+> 裁定 C / 裁定 D，以及 Self-Review 的"已修正的计划缺陷"。
 
 - [ ] **Step 6: 提交**
 
@@ -2390,7 +2719,7 @@ mod tests {
 
     fn runtime() -> EngineRuntime {
         let rules = activity_engine::RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
-        EngineRuntime::new(rules, EngineConfig::default().with_min_segment_duration_s(0))
+        EngineRuntime::new(rules, EngineConfig::default().with_min_segment_duration_s(0).with_grace_period_s(0))
     }
 
     #[test]
@@ -2413,7 +2742,7 @@ mod tests {
         ];
         insert_events(&conn.lock().unwrap(), &events).unwrap();
 
-        let rt = EngineRuntime::bootstrap(&conn, runtime().rules().clone(), EngineConfig::default().with_min_segment_duration_s(0), 0, 2_000_000).unwrap();
+        let rt = EngineRuntime::bootstrap(&conn, runtime().rules().clone(), EngineConfig::default().with_min_segment_duration_s(0).with_grace_period_s(0), 0, 2_000_000).unwrap();
 
         let segs = rt.segments_for_day(&conn, 0, 2_000_000).unwrap();
         assert!(segs.len() >= 2, "重放应产出多段，实际={}", segs.len());
@@ -2431,7 +2760,7 @@ mod tests {
             &[focus(0, "Code.exe"), focus(600_000, "chrome.exe")],
         )
         .unwrap();
-        let cfg = EngineConfig::default().with_min_segment_duration_s(0);
+        let cfg = EngineConfig::default().with_min_segment_duration_s(0).with_grace_period_s(0);
         for _ in 0..2 {
             let rt = EngineRuntime::bootstrap(
                 &conn,
@@ -2457,7 +2786,7 @@ mod tests {
         let rt = EngineRuntime::bootstrap(
             &conn,
             activity_engine::RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap(),
-            EngineConfig::default().with_min_segment_duration_s(0),
+            EngineConfig::default().with_min_segment_duration_s(0).with_grace_period_s(0),
             0,
             2_000_000,
         )
@@ -3333,10 +3662,8 @@ git commit -m "test(engine): assert the pure-library boundary; docs: engine veri
 - **托盘/自启/单实例（§12）** — 属 Phase 1 第三步"打磨"。
 - **SessionLock/Unlock 采集（§5.3）** — 仍只在 `EventType` 里预留。
 
-**2. 占位符扫描：** Task 5 的 `returns_to_previous` 有一段显式注释说明它是代理判定
-而非 spec 要求的"与再前一个相同"——这是**已知弱点**而非占位符，Step 5 的测试会验证它
-够不够用。Task 8 Step 5 给了两种实现方式（改 collector 签名 vs 开 engine 线程），
-推荐后者；这是**实现选择**而非未决问题。
+**2. 占位符扫描：** 无 TBD/TODO。Task 8 Step 5 给了两种 engine 接线方式（改 collector 签名
+vs 开 engine 线程），推荐后者；这是**实现选择**而非未决问题。
 
 **3. 类型一致性：**
 
@@ -3364,17 +3691,29 @@ git commit -m "test(engine): assert the pure-library boundary; docs: engine veri
 | 4 | min_segment 与落库不可回溯 | `short_segments_stay_pending_until_min_duration_elapses`、`pending_segments_are_released_once_old_enough` |
 | 5 | 规则文件坏掉 | `broken_user_file_falls_back_to_defaults_without_crashing`、`broken_file_is_not_overwritten` |
 
-**已知的计划缺陷（实施时会暴露）：**
+**已修正的计划缺陷（实施中实际触发，已同步回上文代码块）：**
 
-- `returns_to_previous` 用"最近切过段"代理 spec §7.3 的"新 context 与再前一个相同"。
-  若 `grace_period_absorbs_a_quick_switch_back` 失败，正确的实现需要在 `EngineState`
-  里多记一个 `previous_application: Option<String>`。**不要**去改测试迎合实现。
+- **grace 代理判定是错的。** 初稿用 `returns_to_previous`（= "最近切过段"）代理
+  spec §7.3 的"新 context 与再前一个相同"，并只做"不切段"。实测
+  `Code -> chrome(2s) -> Code` 会留下一个 **chrome** 段，而用户实际全程在 Code。
+  已改为：吸收时**丢弃**一闪而过的段、**复活** pending 里的前一段。
+- **`previous_application` 必须独立于 `pending`。** 初稿想拿 `pending` 末尾当"再前一个"，
+  但 `min_segment_duration = 0` 时 pending 立即被清空，grace 判定永远失效。
+  已加 `EngineState::previous_application`。
+- **上下文不能每事件重建。** 初稿用 `context_of()` 从空 context 起算，
+  而心跳事件不携带 `application`，会把它冲成 `None` → "同一应用"判定失败 →
+  **每来一个心跳就切一段**。已改为 clone `current_context` 再 apply 事件。
+- **落库门槛应是 `max(min_segment_duration, grace_period)`。** 吸收只能复活未落库的段，
+  门槛必须覆盖整个 grace 窗口。这也修掉了 spec 自身默认值
+  （`min 30s < grace 60s`）导致的吸收不可靠。
+
+**仍未验证的假设：**
+
 - `insert_segments` 里 `evidence_for` 的嵌套借用可能触发 borrow checker 冲突，
-  报错时把外层 `stmt` 提前 drop。
-
-**未验证的假设：** Task 5–8 的时间断言都建立在"Event 按时间升序送达"之上。
-collector 的 `mpsc::channel` 是 FIFO，实际满足；但如果将来有人改成多线程并发 ingest，
-Task 5 的时间不变量测试会失败——那正是这些测试的价值。
+  报错时把外层 `stmt` 提前 drop（Task 6）。
+- Task 5–8 的时间断言都建立在"Event 按时间升序送达"之上。
+  collector 的 `mpsc::channel` 是 FIFO，实际满足；但如果将来有人改成多线程并发 ingest，
+  Task 5 的时间不变量测试会失败——那正是这些测试的价值。
 
 ---
 
