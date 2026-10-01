@@ -580,3 +580,4 @@ fn a_lone_short_segment_is_held_rather_than_emitted() {
         apps_of(&st.pending)
     );
 }
+

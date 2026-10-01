@@ -50,6 +50,11 @@ impl EngineRuntime {
     /// 某天的全部段 = 已落库的 + 正在生长的当前段（裁定 B）。
     ///
     /// 当前段还**没有**落库，这里只是投影出来让时间线保持实时。
+    ///
+    /// 归属用**区间相交**而不是“end_at 落在当天”：一个 23:50 开始、次日 01:00
+    /// 结束的段，在它落库之前（也就是次日 01:00 之前）两天都查不到它，
+    /// 用户会看到“昨天最靠近午夜的一段凭空没了”。相交则两天都能看到它。
+    /// 结束于午夜的段（end_at == day_end）只算前一天，不重复。
     pub fn segments_for_day(
         &self,
         stored: Vec<StoredSegment>,
@@ -57,8 +62,11 @@ impl EngineRuntime {
         day_end_ms: i64,
     ) -> Vec<StoredSegment> {
         let mut segs = stored;
-        if let Some(open) = self.state.open_segment_snapshot(&self.rules, &self.config) {
-            if open.end_at >= day_start_ms && open.end_at < day_end_ms {
+        if let Some(open) = self
+            .state
+            .open_segment_snapshot(&self.rules, &self.config)
+        {
+            if open.end_at > day_start_ms && open.start_at < day_end_ms {
                 segs.push(segment_to_stored(&open));
             }
         }
@@ -281,5 +289,177 @@ mod tests {
         let (_r, _closed) = EngineRuntime::bootstrap(&events, rules(), cfg());
         let rows = get_events_in_range(&conn.lock().unwrap(), 0, 2_000_000).unwrap();
         assert_eq!(rows.len(), 2, "events 表不应被重放修改");
+    }
+}
+
+#[cfg(test)]
+mod day_replay_tests {
+    use super::*;
+    use activity_core::{Event, EventType, WindowFocusPayload};
+    use activity_engine::RuleSet;
+    use activity_storage::{
+        delete_segments_for_day, get_events_in_range, get_segments_in_range, insert_events,
+        open_in_memory_shared, SharedConn,
+    };
+
+    fn focus(ts: i64, app: &str) -> Event {
+        Event::new(
+            EventType::WindowFocus(WindowFocusPayload {
+                process_name: app.into(),
+                window_title: None,
+                exe_path: None,
+            }),
+            ts,
+        )
+    }
+
+    fn rules() -> RuleSet {
+        RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap()
+    }
+
+    fn cfg() -> EngineConfig {
+        EngineConfig::default()
+            .with_min_segment_duration_s(0)
+            .with_grace_period_s(0)
+    }
+
+    fn persist_segments(conn: &SharedConn, closed: &[activity_engine::ActivitySegment]) {
+        let c = conn.lock().unwrap();
+        activity_storage::insert_segments(&c, &to_stored(closed)).unwrap();
+    }
+
+    fn read_events(conn: &SharedConn, start: i64, end: i64) -> Vec<Event> {
+        let rows = get_events_in_range(&conn.lock().unwrap(), start, end).unwrap();
+        rows.iter()
+            .filter_map(|stored| {
+                serde_json::from_str::<EventType>(&stored.payload).ok().map(|event_type| Event {
+                    id: stored.id.clone(),
+                    timestamp: stored.timestamp,
+                    event_type,
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn replaying_a_day_is_idempotent_per_day() {
+        // 同一天重放两次不该累积段
+        let conn = open_in_memory_shared();
+        let events = vec![focus(0, "Code.exe"), focus(600_000, "chrome.exe")];
+        insert_events(&conn.lock().unwrap(), &events).unwrap();
+
+        for _ in 0..2 {
+            {
+                let c = conn.lock().unwrap();
+                delete_segments_for_day(&c, 0, 86_400_000).unwrap();
+            }
+            let (rt, closed) = EngineRuntime::bootstrap(&read_events(&conn, 0, 86_400_000), rules(), cfg());
+            persist_segments(&conn, &closed);
+            let _ = rt;
+        }
+        let rows = get_segments_in_range(&conn.lock().unwrap(), 0, 86_400_000).unwrap();
+        assert!(rows.len() <= 2, "重放两遍不该累积，拿到 {}", rows.len());
+    }
+
+    #[test]
+    fn replaying_today_does_not_disturb_yesterdays_segments() {
+        // 关键：按需重放"昨天"不能动"今天"已经算好的段
+        let conn = open_in_memory_shared();
+        insert_events(&conn.lock().unwrap(), &[focus(0, "Code.exe"), focus(600_000, "QQ.exe")]).unwrap();
+        {
+            let c = conn.lock().unwrap();
+            delete_segments_for_day(&c, 0, 86_400_000).unwrap();
+        }
+        let (_rt, closed) = EngineRuntime::bootstrap(&read_events(&conn, 0, 86_400_000), rules(), cfg());
+        persist_segments(&conn, &closed);
+        let today_count = get_segments_in_range(&conn.lock().unwrap(), 0, 86_400_000).unwrap().len();
+        assert!(today_count > 0);
+
+        // 重放昨天（该天没有 event）
+        {
+            let c = conn.lock().unwrap();
+            delete_segments_for_day(&c, -86_400_000, 0).unwrap();
+        }
+        let (_rt2, closed2) = EngineRuntime::bootstrap(&read_events(&conn, -86_400_000, 0), rules(), cfg());
+        persist_segments(&conn, &closed2);
+
+        let still_there = get_segments_in_range(&conn.lock().unwrap(), 0, 86_400_000).unwrap().len();
+        assert_eq!(still_there, today_count, "重放昨天不该动今天的段");
+    }
+}
+
+
+#[cfg(test)]
+mod midnight_tests {
+    use super::*;
+    use activity_core::{Event, EventType, WindowFocusPayload};
+    use activity_engine::RuleSet;
+
+    fn focus(ts: i64, app: &str) -> Event {
+        Event::new(
+            EventType::WindowFocus(WindowFocusPayload {
+                process_name: app.into(),
+                window_title: None,
+                exe_path: None,
+            }),
+            ts,
+        )
+    }
+
+    const DAY: i64 = 86_400_000;
+
+    #[test]
+    fn a_segment_spanning_midnight_shows_up_in_both_days() {
+        // 23:50 开始、次日 01:00 还在生长的段。用户翻到昨天或今天，都该看到它——
+        // 否则"缺了一块"看起来像数据丢了。
+        let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
+        let cfg = EngineConfig::default()
+            .with_min_segment_duration_s(0)
+            .with_grace_period_s(0);
+        let mut rt = EngineRuntime::new(rules, cfg);
+
+        // 前一天 23:50 开段
+        rt.ingest(&focus(DAY - 600_000, "Code.exe"));
+        // 跨过零点后又收到事件，把 open 段撑到次日 01:00
+        rt.ingest(&focus(DAY + 3_600_000, "Code.exe"));
+
+        let yesterday: Vec<StoredSegment> = rt.segments_for_day(vec![], DAY - DAY, DAY);
+        let today: Vec<StoredSegment> = rt.segments_for_day(vec![], DAY, DAY + DAY);
+        assert_eq!(yesterday.len(), 1, "昨天应看到跨零点的段");
+        assert_eq!(today.len(), 1, "今天也应看到同一个跨零点的段");
+    }
+
+    #[test]
+    fn a_segment_entirely_within_one_day_is_not_duplicated() {
+        let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
+        let cfg = EngineConfig::default()
+            .with_min_segment_duration_s(0)
+            .with_grace_period_s(0);
+        let mut rt = EngineRuntime::new(rules, cfg);
+        rt.ingest(&focus(DAY + 3_600_000, "Code.exe"));
+
+        assert!(rt.segments_for_day(vec![], DAY, DAY + DAY).len() == 1);
+        assert!(
+            rt.segments_for_day(vec![], DAY - DAY, DAY).is_empty(),
+            "今天的段不该出现在昨天"
+        );
+    }
+
+    #[test]
+    fn a_segment_ending_exactly_at_midnight_belongs_to_the_earlier_day_only() {
+        let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
+        let cfg = EngineConfig::default()
+            .with_min_segment_duration_s(0)
+            .with_grace_period_s(0);
+        let mut rt = EngineRuntime::new(rules, cfg);
+        // 昨天 23:00 开段，最后一个事件正好在 00:00:00
+        rt.ingest(&focus(DAY - 3_600_000, "Code.exe"));
+        rt.ingest(&focus(DAY, "Code.exe"));
+
+        assert!(rt.segments_for_day(vec![], DAY - DAY, DAY).len() == 1);
+        assert!(
+            rt.segments_for_day(vec![], DAY, DAY + DAY).is_empty(),
+            "结束于午夜的段不该重复算进今天"
+        );
     }
 }

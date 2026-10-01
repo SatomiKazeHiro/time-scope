@@ -12,15 +12,16 @@
 //! ```
 
 mod date_range;
+mod day_replay;
 mod engine_runtime;
 mod engine_thread;
 mod exit_flush;
 mod rules;
 
 use activity_collector::signals::RawSignal;
-use activity_engine::EngineConfig;
 use activity_storage::{open_file_shared, BatchWriter, StoredSegment};
 use date_range::{day_range_ms, local_offset};
+use day_replay::{replay_day_once, ReplayedDays};
 use engine_runtime::EngineRuntime;
 use exit_flush::flush_for_exit;
 use std::sync::mpsc::channel;
@@ -29,7 +30,14 @@ use tauri::Manager;
 
 struct AppState {
     writer: Arc<BatchWriter>,
+    /// 与 writer 共用同一个连接，供"按需重放历史日期"用。
+    conn: activity_storage::SharedConn,
     engine: Arc<Mutex<EngineRuntime>>,
+    /// 已重放过的日期。启动只重放"今天"；用户翻到别的日子时按需重放，
+    /// 把上次崩溃留下的孤儿事件补成分段（spec §7.4）。
+    replayed: ReplayedDays,
+    rules: activity_engine::RuleSet,
+    config: activity_engine::EngineConfig,
 }
 
 /// 取某天的全部 ActivitySegment（spec §9）。
@@ -40,7 +48,20 @@ fn get_segments(
     state: tauri::State<'_, AppState>,
     date: String,
 ) -> Result<Vec<StoredSegment>, String> {
-    let (start_ms, end_ms) = day_range_ms(&date, local_offset()?)?;
+    let offset = local_offset()?;
+    let (start_ms, end_ms) = day_range_ms(&date, offset)?;
+
+    // 首次查看某一天时按需重放：启动只做了"今天"，别的日子可能还留着
+    // 上次崩溃前没被引擎处理过的孤儿事件。
+    replay_day_once(
+        &state.conn,
+        &state.replayed,
+        &state.rules,
+        &state.config,
+        &date,
+        offset,
+    );
+
     let stored = {
         let c = state.writer.conn();
         activity_storage::get_segments_in_range(&c, start_ms, end_ms).map_err(|e| e.to_string())?
@@ -57,32 +78,8 @@ pub fn run() {
             // spec §8.1：每 5s 或满 100 条单事务批量插入
             let writer = Arc::new(BatchWriter::new(Arc::clone(&conn), 5_000, 100));
 
-            let rules_path = rules::rules_path();
-            let (rule_set, source) = rules::load_rules(&rules_path);
-            match source {
-                rules::RulesSource::Created => {
-                    eprintln!("[time-scope] 已生成默认规则 {}", rules_path.display())
-                }
-                rules::RulesSource::Loaded => {
-                    eprintln!("[time-scope] 已加载规则 {}", rules_path.display())
-                }
-                rules::RulesSource::FellBackToDefault => {
-                    eprintln!("[time-scope] 规则文件不可用，本次使用内置默认")
-                }
-            }
-
-            // 重放"今天"，让 UI 一启动就有历史可看（spec §7.4）
-            let today = today_string();
-            let (start_ms, end_ms) =
-                day_range_ms(&today, local_offset().unwrap_or(time::UtcOffset::UTC))
-                    .expect("today range");
-            let runtime = engine_thread::bootstrap_day(
-                &conn,
-                rule_set,
-                EngineConfig::default(),
-                start_ms,
-                end_ms,
-            );
+            let replayed = ReplayedDays::default();
+            let (rule_set, config, runtime) = day_replay::bootstrap_today(&conn, &replayed);
             let engine = Arc::new(Mutex::new(runtime));
 
             let (tx, rx) = channel::<RawSignal>();
@@ -95,7 +92,14 @@ pub fn run() {
             engine_thread::spawn_engine_thread(ev_rx, Arc::clone(&conn), Arc::clone(&engine));
 
             eprintln!("[time-scope] db: {}", rules::app_dir().join("time-scope.db").display());
-            app.manage(AppState { writer, engine });
+            app.manage(AppState {
+                writer,
+                conn: Arc::clone(&conn),
+                engine,
+                replayed,
+                rules: rule_set,
+                config,
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_segments])
@@ -114,13 +118,3 @@ pub fn run() {
     });
 }
 
-fn today_string() -> String {
-    let d = time::OffsetDateTime::now_local()
-        .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
-    format!(
-        "{:04}-{:02}-{:02}",
-        d.year(),
-        u8::from(d.month()),
-        d.day()
-    )
-}

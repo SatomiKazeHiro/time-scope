@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import App from "./App";
 import type { Segment } from "./types";
 
@@ -28,6 +28,11 @@ function seg(
 
 beforeEach(() => {
   invoke.mockReset();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("App integration (segments)", () => {
@@ -109,5 +114,32 @@ describe("App integration (segments)", () => {
     await waitFor(() => expect(screen.getByLabelText("当日汇总")).toBeTruthy());
     expect(screen.getByText("2 时")).toBeTruthy();
     expect(screen.getByText("1 时")).toBeTruthy();
+  });
+});
+
+describe("App auto-refresh", () => {
+  it("polls the backend so a running app does not look frozen", async () => {
+    // 后台引擎一直在产出新段，不轮询的话界面就是一张静止的图，看着像程序坏了。
+    invoke.mockResolvedValue([seg("s1", 9, 10)]);
+    render(<App />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(invoke.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("stops polling after unmount", async () => {
+    invoke.mockResolvedValue([]);
+    const { unmount } = render(<App />);
+    await waitFor(() => expect(invoke).toHaveBeenCalled());
+    const before = invoke.mock.calls.length;
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    expect(invoke.mock.calls.length).toBe(before);
   });
 });

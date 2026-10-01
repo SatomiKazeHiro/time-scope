@@ -8,6 +8,9 @@ import { getSegments, shiftDate, todayString, type Segment } from "./types";
 
 type Status = "loading" | "ok" | "error";
 
+/** 自动刷新间隔。spec §9 的 `segment-updated` 推送尚未实现，先用轮询顶上。 */
+const REFRESH_MS = 5_000;
+
 export default function App() {
   const [date, setDate] = useState(todayString());
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -18,18 +21,27 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     setStatus("loading");
-    getSegments(date)
-      .then((segs) => {
-        if (cancelled) return;
-        setSegments(segs);
-        setSelected(null);
-        setStatus("ok");
-      })
-      .catch(() => {
-        if (!cancelled) setStatus("error");
-      });
+
+    const load = () => {
+      getSegments(date)
+        .then((segs) => {
+          if (cancelled) return;
+          setSegments(segs);
+          setStatus("ok");
+        })
+        .catch(() => {
+          if (!cancelled) setStatus("error");
+        });
+    };
+
+    load();
+    // 后台引擎一直在产出新段，不轮询的话界面就是一张静止的图——
+    // 看着像程序坏了。5s 足够跟手，又不至于给 DB 和 IPC 添压力。
+    const timer = setInterval(load, REFRESH_MS);
+
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, [date]);
 
