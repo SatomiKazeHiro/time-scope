@@ -103,24 +103,42 @@ fn real_foreground_window_yields_a_usable_event() {
 }
 
 #[test]
-fn title_event_filters_out_non_foreground_windows() {
-    // spec §5.2：EVENT_OBJECT_NAMECHANGE 会为子控件等一切对象派发，
-    // 引擎只应看到当前前台窗口的标题变化。
+fn title_event_no_longer_refilters_in_the_consumer() {
+    // 过滤已移到 hook 回调（`event_hook_callback`），在事件发生的那一瞬间完成。
+    // 如果 consumer 再拿"当前"前台窗口比一次，用户切走后就会把合法事件误删。
+    // 这里的职责是：拿到什么 HWND 就如实构造事件，不做时序相关的判断。
     let fg = unsafe { GetForegroundWindow() };
     let shell = unsafe { GetShellWindow() };
 
-    // 前台窗口自己当然应该通过
-    assert!(
-        make_title_event(fg, 0).is_some(),
-        "当前前台窗口应能构造 title 事件"
-    );
-
-    // 非前台窗口必须被过滤掉
-    if !shell.0.is_null() && shell != fg {
-        assert!(
-            make_title_event(shell, 0).is_none(),
-            "非前台窗口（shell={:?}）不应产生 title 事件",
-            shell
-        );
+    let e = make_title_event(fg, 0).expect("前台窗口应能构造 title 事件");
+    match e.event_type {
+        activity_core::EventType::WindowTitleChange(p) => {
+            assert!(!p.process_name.is_empty());
+        }
+        other => panic!("variant 错误: {other:?}"),
     }
+
+    // 非前台窗口也能构造出事件——consumer 不再关心它是不是前台。
+    // 不在前台这件事由回调里的 should_capture_title_change 拦掉。
+    if !shell.0.is_null() && shell != fg {
+        let _ = make_title_event(shell, 0);
+    }
+}
+
+#[test]
+fn title_filter_keeps_only_the_window_that_was_foreground_at_event_time() {
+    use activity_collector::window::should_capture_title_change;
+
+    const FG: u64 = 0x1234;
+    const OTHER: u64 = 0x5678;
+    const NULL: u64 = 0;
+
+    // 前台窗口自己：保留
+    assert!(should_capture_title_change(FG, FG));
+    // 非前台窗口（子控件、滚动条等）：丢弃
+    assert!(!should_capture_title_change(OTHER, FG));
+    // 空 HWND：丢弃，绝不能去查一个空窗口
+    assert!(!should_capture_title_change(NULL, FG));
+    // 没有前台窗口时一切都不匹配
+    assert!(!should_capture_title_change(FG, NULL));
 }

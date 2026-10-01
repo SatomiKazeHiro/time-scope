@@ -4,8 +4,6 @@
 //! 否则注册成功但回调永不触发。所以这里用 `std::thread::spawn` 起专用线程跑原生
 //! `GetMessageW` / `DispatchMessageW` 消息泵，**不要**放进 tokio task。
 //!
-//! 回调内只做最轻的事：把 HWND 塞进 channel。取标题/进程名由 consumer 线程完成。
-//!
 //! windows-rs 0.58 的几个签名注意点（写错了编译不过，见 §15 风险表）：
 //! - `SetWinEventHook` / `UnhookWinEvent` 在 **`Win32::UI::Accessibility`**，不在 WindowsAndMessaging
 //! - `SetWinEventHook` 返回裸 `HWINEVENTHOOK`，不是 Result
@@ -32,6 +30,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_SYSTEM_FOREGROUND, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT,
 };
 
+/// `QueryFullProcessImageNameW` 的缓冲大小（UTF-16 code unit）。
+/// MAX_PATH 是 260，但长路径可远超它；4096 足够且只有 8 KB。
+const EXE_PATH_BUF: usize = 4096;
+
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// watcher 线程的 id；`stop_window_watcher` 用它把 `WM_QUIT` 投递到**正确**的线程。
@@ -40,6 +42,14 @@ static WATCHER_TID: AtomicU32 = AtomicU32::new(0);
 /// 回调里要用的 sender。回调签名是裸 `extern "system" fn`，不能捕获环境，
 /// 所以用全局 `OnceLock`（进程内只 spawn 一次，够用）。
 static SENDER: OnceLock<Sender<RawSignal>> = OnceLock::new();
+
+/// `EVENT_OBJECT_NAMECHANGE` 不区分对象类型，会对子控件、滚动条等一切对象派发。
+/// spec §5.2 要求只保留**当前前台窗口**的标题变化。
+///
+/// 抽成纯函数以便单测。
+pub fn should_capture_title_change(hwnd: u64, current_foreground: u64) -> bool {
+    hwnd != 0 && hwnd == current_foreground
+}
 
 unsafe extern "system" fn event_hook_callback(
     _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
@@ -55,7 +65,16 @@ unsafe extern "system" fn event_hook_callback(
 
     let signal = match event {
         x if x == EVENT_SYSTEM_FOREGROUND => RawSignal::WindowFocus(hwnd),
-        x if x == EVENT_OBJECT_NAMECHANGE => RawSignal::WindowTitleChange(hwnd),
+        x if x == EVENT_OBJECT_NAMECHANGE => {
+            // 在**回调里**过滤：此刻的前台窗口就是事件发生时的前台窗口。
+            // 若拖到 consumer 侧再过滤，用的是"当前"前台窗口，窗口切换快于
+            // consumer 排空队列时会误删合法的标题变化。
+            let fg = GetForegroundWindow();
+            if !should_capture_title_change(hwnd.0 as u64, fg.0 as u64) {
+                return;
+            }
+            RawSignal::WindowTitleChange(hwnd)
+        }
         _ => return,
     };
     let _ = sender.send(signal);
@@ -142,7 +161,8 @@ pub fn window_info(hwnd: HWND) -> Option<(String, Option<String>, Option<String>
 
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
 
-    let mut buf = [0u16; 32768];
+    // 放堆上而不是栈上：栈只有 2 MB，没必要为一次查询占掉一大块。
+    let mut buf = vec![0u16; EXE_PATH_BUF];
     let mut len = buf.len() as u32;
     let queried = unsafe {
         QueryFullProcessImageNameW(
@@ -193,13 +213,10 @@ pub fn make_focus_event(hwnd: HWND, ts: i64) -> Option<Event> {
 
 /// 构造 `WindowTitleChange` 事件。
 ///
-/// **只接受当前前台窗口**（spec §5.2）：`EVENT_OBJECT_NAMECHANGE` 不区分对象类型，
-/// 会对子控件、滚动条等一切对象派发。过滤放在 consumer 侧而非 hook 回调里，
-/// 是为了保持回调只做“塞 HWND”这一件事（spec §5.1）。
+/// **不再做前台过滤**——过滤已移到 hook 回调（见 `event_hook_callback`），
+/// 在事件发生的瞬间完成。这里再过滤一次反而会误删：等 consumer 跑到这一行时，
+/// 用户可能已经切到别的窗口了。
 pub fn make_title_event(hwnd: HWND, ts: i64) -> Option<Event> {
-    if unsafe { GetForegroundWindow() } != hwnd {
-        return None;
-    }
     let (process_name, window_title, _exe) = window_info(hwnd)?;
     Some(Event::new(
         EventType::WindowTitleChange(WindowTitleChangePayload {
