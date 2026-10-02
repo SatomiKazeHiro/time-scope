@@ -71,7 +71,7 @@ fn payload_json_roundtrips_and_keeps_process_name_verbatim() {
         }),
         1234,
     );
-    insert_events(&conn, &[e.clone()]).unwrap();
+    insert_events(&conn, std::slice::from_ref(&e)).unwrap();
     let rows = get_events_in_range(&conn, 0, 2000).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].id, e.id);

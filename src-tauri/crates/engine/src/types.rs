@@ -49,6 +49,7 @@ impl Category {
 
     /// 解析用户手写 rules.toml 里的 category。**大小写不敏感**：
     /// 用户写 `Work` / `WORK` / `work` 都应该认。
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Category> {
         let lower = s.trim().to_ascii_lowercase();
         Category::all().into_iter().find(|c| c.as_str() == lower)

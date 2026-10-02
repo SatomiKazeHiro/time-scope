@@ -181,7 +181,7 @@ mod tests {
     fn unknown_event_ids_are_skipped_silently() {
         let conn = open_in_memory_shared();
         seed(&conn, vec![focus_event("e1", 1, "known")]);
-        let out = titles_for(&conn, &["e1".to_string(), "nope".to_string()].to_vec());
+        let out = titles_for(&conn, ["e1".to_string(), "nope".to_string()].as_ref());
         assert_eq!(out.len(), 1, "查不到的 id 不该让整体失败");
         assert_eq!(out[0].title, "known");
     }

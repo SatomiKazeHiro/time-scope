@@ -451,7 +451,7 @@ fn short_segment_merges_into_the_following_long_segment() {
     let merged = closed
         .iter()
         .find(|s| s.application.as_deref() == Some("explorer.exe"))
-        .expect(&format!("explorer 段应被释放，实际 {:?}", apps_of(&closed)));
+        .unwrap_or_else(|| panic!("explorer 段应被释放，实际 {:?}", apps_of(&closed)));
     assert_eq!(merged.start_at, 0, "1 秒的 Code 前驱应并入 explorer");
     assert_eq!(merged.end_at, 5_000);
     assert!(
@@ -476,7 +476,7 @@ fn short_segment_merges_into_the_preceding_long_segment() {
     let msedge = closed
         .iter()
         .find(|s| s.application.as_deref() == Some("msedge.exe"))
-        .expect(&format!("msedge 段应保留，实际 {:?}", apps_of(&closed)));
+        .unwrap_or_else(|| panic!("msedge 段应保留，实际 {:?}", apps_of(&closed)));
     assert_eq!(msedge.end_at, 20_064, "64ms 的 explorer 应并入前驱 msedge");
     assert!(
         !apps_of(&closed).contains(&Some("explorer.exe".into())),

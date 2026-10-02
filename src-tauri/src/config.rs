@@ -77,7 +77,7 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn to_engine_config(&self) -> EngineConfig {
+    pub fn to_engine_config(self) -> EngineConfig {
         EngineConfig::default()
             .with_idle_threshold_s(self.idle_threshold_s as u64)
             .with_grace_period_s(self.grace_period_s as u64)
@@ -87,7 +87,7 @@ impl AppConfig {
     /// 序列化成 TOML。生产写回走 [`patch_line`]（保留用户注释），
     /// 这个只在测试里用来验证往返。
     #[cfg(test)]
-    pub fn to_toml(&self) -> String {
+    pub fn to_toml(self) -> String {
         format!(
             "idle_threshold_s = {}\n\
              grace_period_s = {}\n\
@@ -371,7 +371,7 @@ close_behavior = "minimize"
         };
         let text = c.to_toml();
         let back = parse(&text);
-        assert_eq!(back.autostart, true);
+        assert!(back.autostart);
         assert_eq!(back.idle_threshold_s, c.idle_threshold_s);
     }
 

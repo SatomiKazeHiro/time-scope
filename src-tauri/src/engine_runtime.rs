@@ -221,7 +221,7 @@ mod tests {
             .map(|(s, _)| s)
             .collect();
         let with_open = r.segments_for_day(stored, 0, 2_000_000);
-        assert!(with_open.len() > 0, "应附上正在生长的当前段");
+        assert!(!with_open.is_empty(), "应附上正在生长的当前段");
         for w in with_open.windows(2) {
             assert!(
                 w[0].start_at <= w[1].start_at,

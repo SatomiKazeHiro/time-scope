@@ -22,7 +22,7 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 /// 方式，回绕后仍然正确。
 pub fn idle_seconds(now_tick: u32, last_input_tick: u32) -> u32 {
     let delta_ms = now_tick.wrapping_sub(last_input_tick);
-    (delta_ms / 1000) as u32
+    delta_ms / 1000
 }
 
 /// 是否应该进入 idle。阈值语义是 `>=`（spec §5.3）。

@@ -1,0 +1,83 @@
+# CI：每次 push / PR 验证。
+#
+# 两个 job 是分开跑的，因为它们的运行平台不同、耗时也不同：
+# - `frontend`：纯 JS，可以跑在 ubuntu（更快更便宜）
+# - `rust`：依赖 Tauri + Win32（SetWinEventHook / WTS / Power 通知），
+#   **在 Linux 上装不全**，必须用 windows-latest（见 STATUS §4.2）
+#
+# 故意不 gate `cargo fmt --check`：本仓库的 Rust 代码不是 rustfmt 排版过的
+# （`cargo fmt --check` 会报 132 处 / 35 个文件）。全仓重排版是独立的一次改动，
+# 不该混在功能提交里；等有人愿意单独做一次再把它加进 gate。
+
+name: CI
+
+on:
+  # 不限定分支：这个仓库只有一两条开发分支（`main` + 当期的 `phase1-*`），
+  # 写白名单会在分支合入删除后静默失效
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # 同一分支的新 push 取消上一次还没跑完的运行
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: frontend (test + typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # 本机开发用 12；pnpm 10+ 的 lockfileVersion 9 兼容
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: install
+        # 锁文件必须一致：--frozen-lockfile 会在 lock 与 package.json 不符时失败
+        run: pnpm install --frozen-lockfile
+
+      - name: test
+        run: pnpm test
+
+      - name: build
+        # tsc --noEmit + vite build（package.json 的 build 脚本）
+        run: pnpm build
+
+  rust:
+    name: rust (clippy + test, Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          # 本仓库只支持 Windows（spec §1），显式钉住 target 以免 runner 默认值变化
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # 只编 tauri 应用包（不打包），windows-latest 的 VS 2022 + Windows SDK
+      # 足够，不需要额外的 SDK 安装步骤。WebView2 runtime runner 自带。
+      - name: prefetch crates
+        run: cargo fetch --manifest-path src-tauri/Cargo.toml
+
+      - name: clippy
+        # -D warnings：clippy 警告当作失败。engine 是纯库，边界守卫
+        # (crates/engine/tests/boundaries.rs) 由下面 cargo test 一并跑。
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+
+      - name: test
+        # --workspace 不能省：src-tauri/Cargo.toml 既是 workspace 根又是应用包，
+        # 不带的话只跑根包（0 个测试）并显示绿色（见 README「测试」）
+        run: cargo test --manifest-path src-tauri/Cargo.toml --workspace

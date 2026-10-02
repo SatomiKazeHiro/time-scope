@@ -127,7 +127,7 @@ fn run_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        if let Some(sig) = translate(msg, wparam.0 as usize) {
+        if let Some(sig) = translate(msg, wparam.0) {
             SENDER.with(|s| {
                 if let Some(tx) = s.borrow().as_ref() {
                     // 通道断了（consumer 已退出）不该让窗口过程 panic

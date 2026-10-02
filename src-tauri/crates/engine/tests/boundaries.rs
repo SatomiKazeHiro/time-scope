@@ -70,7 +70,8 @@ fn engine_source_never_touches_io() {
 #[test]
 fn engine_does_not_depend_on_the_app_crate() {
     // engine 位于 workspace 之下，不能反过来认识 app 层
-    for f in ["src/lib.rs"] {
+    {
+        let f = "src/lib.rs";
         let text = std::fs::read_to_string(crate_root().join(f)).expect("read");
         assert!(
             !text.contains("time_scope"),

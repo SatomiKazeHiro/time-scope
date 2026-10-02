@@ -17,7 +17,7 @@ fn seg(category: Category, start: i64, end: i64) -> ActivitySegment {
 #[test]
 fn category_roundtrips_through_str() {
     for c in Category::all() {
-        assert_eq!(Category::from_str(c.as_str()), Some(c.clone()), "{c:?}");
+        assert_eq!(Category::from_str(c.as_str()), Some(c), "{c:?}");
     }
 }
 

@@ -30,78 +30,6 @@ pub fn close_interception_when(behavior: CloseBehavior, tray_ok: bool) -> CloseD
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_failing_tray_must_not_leave_the_app_unclosable() {
-        // Review Focus #4：托盘建不起来时若仍拦截关窗，用户就再也打不开界面
-        assert_eq!(
-            close_interception_when(CloseBehavior::Ask, false),
-            CloseDecision::Quit,
-            "托盘不可用时关窗必须直接退出"
-        );
-        assert_eq!(
-            close_interception_when(CloseBehavior::Minimize, false),
-            CloseDecision::Quit,
-            "连「最小化到托盘」也不能用——没有托盘可停"
-        );
-    }
-
-    #[test]
-    fn a_working_tray_follows_the_configured_close_behavior() {        assert_eq!(
-            close_interception_when(CloseBehavior::Ask, true),
-            CloseDecision::Ask
-        );
-        assert_eq!(
-            close_interception_when(CloseBehavior::Minimize, true),
-            CloseDecision::HideToTray
-        );
-        assert_eq!(
-            close_interception_when(CloseBehavior::Quit, true),
-            CloseDecision::Quit
-        );
-    }
-
-    /// 防回归：确认框的回车默认项必须是「最小化」而不是「退出」——
-    /// 随手一按回车就把常驻应用关掉，是最不该发生的那种误操作。
-    #[test]
-    fn the_close_prompt_defaults_to_minimizing_not_to_quitting() {
-        use windows::Win32::UI::WindowsAndMessaging::{MB_DEFBUTTON1, MB_DEFBUTTON2, MB_YESNO};
-        assert!(
-            CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON1.0 == MB_DEFBUTTON1.0,
-            "回车必须触发「是」= 最小化到托盘"
-        );
-        assert_ne!(
-            CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON2.0,
-            MB_DEFBUTTON2.0,
-            "不能把回车默认项指向「否」= 退出"
-        );
-        assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_YESNO.0, MB_YESNO.0);
-    }
-
-    /// 防回归：写进 config.toml 的值必须原样到达各层，而不是又回到硬编码默认。
-    #[test]
-    fn collector_gets_the_configured_thresholds() {
-        use crate::config::AppConfig;
-        // idle_threshold < MIN 时应被夹住，而不是原样传下去
-        let cfg = AppConfig {
-            idle_threshold_s: 0,
-            heartbeat_every_s: 1,
-            ..AppConfig::default()
-        };
-        let parsed = crate::config::parse(&cfg.to_toml());
-        assert!(parsed.idle_threshold_s >= crate::config::MIN_IDLE_THRESHOLD_S);
-        assert_eq!(parsed.heartbeat_every_s, 1);
-        // 引擎侧拿到的是同一组值
-        assert_eq!(
-            parsed.to_engine_config().idle_threshold_s,
-            parsed.idle_threshold_s as u64
-        );
-    }
-}
-
 /// 建托盘 + 装关窗拦截。返回托盘是否可用。
 pub fn install(app: &mut tauri::App, cfg: crate::config::AppConfig) -> bool {
     let handle = app.handle().clone();
@@ -293,23 +221,22 @@ fn remember_answer(app: &AppHandle, answered: CloseBehavior) {
     }
 }
 
-/// 关窗确认框的样式。抽成常量是为了能单测——`MB_DEFBUTTON*` 选错会把
-/// 「退出」变成回车默认项，用户随手一按就把常驻应用关了。
+/// 关窗确认框的样式。抽成常量是为了能单测。
+///
+/// **故意不加 `MB_DEFBUTTON2`**（clippy 会因此报 `bad_bit_mask`）：
+/// button 1「是」本来就是默认项，一旦加上 `MB_DEFBUTTON2`，回车就会变成
+/// 「退出」——用户随手一按就把常驻应用关了。
 #[cfg(windows)]
 const CLOSE_PROMPT_STYLE: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE =
     windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE(
-        (windows::Win32::UI::WindowsAndMessaging::MB_YESNO.0
-            | windows::Win32::UI::WindowsAndMessaging::MB_ICONQUESTION.0
-            | windows::Win32::UI::WindowsAndMessaging::MB_DEFBUTTON1.0) as u32,
+        windows::Win32::UI::WindowsAndMessaging::MB_YESNO.0
+            | windows::Win32::UI::WindowsAndMessaging::MB_ICONQUESTION.0,
     );
 
 #[cfg(windows)]
 fn ask_close_behavior(_app: &AppHandle) -> Option<CloseBehavior> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, IDNO, IDYES, MB_DEFBUTTON1,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDNO, IDYES};
     use windows::core::w;
-    debug_assert!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON1.0 == MB_DEFBUTTON1.0);
     let r = unsafe {
         MessageBoxW(
             None,
@@ -336,5 +263,82 @@ pub fn focus_window(app: &AppHandle) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failing_tray_must_not_leave_the_app_unclosable() {
+        // Review Focus #4：托盘建不起来时若仍拦截关窗，用户就再也打不开界面
+        assert_eq!(
+            close_interception_when(CloseBehavior::Ask, false),
+            CloseDecision::Quit,
+            "托盘不可用时关窗必须直接退出"
+        );
+        assert_eq!(
+            close_interception_when(CloseBehavior::Minimize, false),
+            CloseDecision::Quit,
+            "连「最小化到托盘」也不能用——没有托盘可停"
+        );
+    }
+
+    #[test]
+    fn a_working_tray_follows_the_configured_close_behavior() {
+        assert_eq!(
+            close_interception_when(CloseBehavior::Ask, true),
+            CloseDecision::Ask
+        );
+        assert_eq!(
+            close_interception_when(CloseBehavior::Minimize, true),
+            CloseDecision::HideToTray
+        );
+        assert_eq!(
+            close_interception_when(CloseBehavior::Quit, true),
+            CloseDecision::Quit
+        );
+    }
+
+    /// 防回归：确认框的回车默认项必须是「最小化」而不是「退出」——
+    /// 随手一按回车就把常驻应用关掉，是最不该发生的那种误操作。
+    ///
+    /// 注意 `MB_DEFBUTTON1 == 0`（它是"什么都不加"的默认），所以**不能**断言
+    /// "含有 MB_DEFBUTTON1"——那是个恒真断言，测不出任何东西。真正的判据是
+    /// 样式里**没有** `MB_DEFBUTTON2`。
+    #[test]
+    fn the_close_prompt_defaults_to_minimizing_not_to_quitting() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            MB_DEFBUTTON2, MB_DEFBUTTON3, MB_DEFBUTTON4, MB_YESNO,
+        };
+        assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_YESNO.0, MB_YESNO.0);
+        assert_eq!(
+            CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON2.0,
+            0,
+            "回车必须触发「是」= 最小化到托盘；加上 MB_DEFBUTTON2 就变成退出"
+        );
+        assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON3.0, 0);
+        assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON4.0, 0);
+    }
+
+    /// 防回归：写进 config.toml 的值必须原样到达各层，而不是又回到硬编码默认。
+    #[test]
+    fn collector_gets_the_configured_thresholds() {
+        use crate::config::AppConfig;
+        // idle_threshold < MIN 时应被夹住，而不是原样传下去
+        let cfg = AppConfig {
+            idle_threshold_s: 0,
+            heartbeat_every_s: 1,
+            ..AppConfig::default()
+        };
+        let parsed = crate::config::parse(&cfg.to_toml());
+        assert!(parsed.idle_threshold_s >= crate::config::MIN_IDLE_THRESHOLD_S);
+        assert_eq!(parsed.heartbeat_every_s, 1);
+        // 引擎侧拿到的是同一组值
+        assert_eq!(
+            parsed.to_engine_config().idle_threshold_s,
+            parsed.idle_threshold_s as u64
+        );
     }
 }
