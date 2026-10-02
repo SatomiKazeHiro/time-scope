@@ -2,7 +2,9 @@
 
 **记录时间**：2026-10-02（第三步「打磨」完成，在 `phase1-polish` 分支）
 **分支**：`main`（43 commits）→ `git@github.com:SatomiKazeHiro/time-scope.git`
-**状态**：基本可用。人工验证清单见 [打磨验证清单](plans/2026-10-02-phase1-polish-verification.md)。
+**状态**：基本可用。第三步「打磨」已实现并通过人工验证清单
+（[清单](plans/2026-10-02-phase1-polish-verification.md)），**尚未合并进 `main`**——
+按计划等本阶段功能开发完再合。
 **对应计划**：
 - [`2026-10-01-phase1-scaffold.md`](superpowers/plans/2026-10-01-phase1-scaffold.md)（骨架，11 task ✓）
 - [`2026-10-01-phase1-engine.md`](superpowers/plans/2026-10-01-phase1-engine.md)（引擎，11 task ✓）
@@ -39,9 +41,9 @@ Phase 1 分三步。**前两步已完成并合入 `main`**，第三步未开始�
 ## 二、代码规模与状态
 
 ```
-Rust  34 文件 / 3350 行      TS  13 文件 / 907 行
-测试  253 Rust + 69 前端 = 322 条用例，全绿，0 warning
-提交  9 个（main..HEAD），工作区干净
+Rust  35 文件 / 5494 行（不含测试）  TS  8 文件 / 713 行（不含测试）
+测试  261 Rust + 69 前端 = 330 条用例，全绿，0 warning
+提交  12 个（main..phase1-polish），**未合并**；工作区干净
 ```
 
 ```

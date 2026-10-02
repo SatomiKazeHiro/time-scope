@@ -1,3 +1,92 @@
+## 执行结果
+
+**状态**：10 个 task 全部完成，执行于分支 `phase1-polish`（`main`..HEAD 共 12 个 commit，未合并）。
+**测试**：Rust 203 → 261、前端 69，全绿，0 warning。
+**人工验证**：`.superpowers` 工作区已按约定删除；验证清单见
+[2026-10-02-phase1-polish-verification.md](2026-10-02-phase1-polish-verification.md)，**已由作者跑过并确认无问题**。
+**终审**：自审（harness 无 subagent 工具），发现并修复 2 处 Important，见下。
+
+### 与计划的出入（全部是有意裁定，不是跑偏）
+
+1. **Task 1 —— `config::parse` 改为逐字段读取。** 计划用整份 `toml::from_str::<RawConfig>`，
+   实测一个字段类型错会让整份文件失效（`a_wrongly_typed_field_falls_back…` 与
+   `a_broken_file_is_never_overwritten` 两条 FAILED），违反 spec §5.2「单个字段值非法 →
+   其余照常生效」。改为逐字段读 `toml::Table`。
+2. **Task 1 —— 计划漏了 app crate 的 `toml` 依赖**，已加 `toml = "0.8"`。
+3. **Task 1 —— 补一条计划没有的测试** `a_broken_file_is_never_overwritten`（spec §5.2/§7
+   要求「文件坏了不覆盖」，计划的测试集没覆盖）。
+4. **Task 2/8 —— `close_interception_when` 多一个参数。** 计划写成
+   `close_interception_when(tray_ok: bool)` 并硬编码 `CloseBehavior::Ask`，那样
+   `minimize`/`quit` 形同虚设，与 spec §4.2 矛盾。改为
+   `(behavior: CloseBehavior, tray_ok: bool)`。
+   *TDD 诚实说明：这两条测试与实现在同一次编辑里写出，没单独见证 RED*（计划版本对
+   `tray_ok=false` 同样返回 Quit，测不出差别）。
+5. **Task 3 —— 计划里 `heartbeats_during_a_lock_do_not_produce_active_time` 的断言自相矛盾**：
+   它要求"所有段都不是 work"，而同一条用例的 `focus(0,"Code.exe")` 本身就会产出真实的
+   work 段。改为只检查 `start_at >= 锁屏时刻` 的段。
+6. **Task 3 —— 计划只加两处 match 匹配不够。** 那样锁屏期间的心跳会把 idle 段切碎
+   （context 仍带着锁屏前的 application，`same` 判定不成立 → 关闭并重开一段带
+   application 的 idle），实测「心跳应延长 idle 段」失败。补两点：①已在 idle 段时
+   `SystemIdle/SessionLock` 只 extend 不重开（锁屏 + 合盖会各发一次通知）；
+   ②context 分支的 `same` 在 `is_idle && cur 是 Idle` 时只看 category。
+7. **Task 4 —— 计划的 `RawSignal::SessionLock/Unlock` 与映射照原样实现**，无出入。
+8. **Task 5 —— `translate` 去掉计划里的第三参 `power_message`。** 那是虚构的：PBT_APM*
+   事件码就在 `wparam` 里，计划里 Task 8 要调的 `power_message_of(&msg)` 同样不存在。
+   改为两参 `translate(msg, wparam)`。
+9. **Task 5 —— 计划 `register` 成功路径里 spawn 了一个空线程**（`(sender, handle)` 丢弃），
+   且 import 了不存在的 `windows::Win32::UI::Wry`。删掉空线程与该 import。
+10. **Task 5 —— windows 0.58 的 `PowerRegisterSuspendResumeNotification` 返回 `WIN32_ERROR`**
+    而非 HANDLE（计划按 HANDLE 写 `power != 0`），`DEVICE_NOTIFY_WINDOW_HANDLE` 在
+    `UI::WindowsAndMessaging` 而非 `System::Power`。均以编译器/头文件为准。
+11. **Task 5 —— 补 5 条计划没有的 `translate` 测试**，含一条把自写消息常量钉在 Win32
+    真值上的测试（计划自己说 translate 是 app 层真正要用的东西，却只测了
+    `registration_outcome`）。
+12. **Task 7 —— 计划的 `manager(app) -> plugin::Result<Manager>` 是猜的签名。**
+    `tauri-plugin-autostart` 2.7.0 的实际 API 是
+    `ManagerExt::autolaunch() -> State<AutoLaunchManager>`（不返回 Result）。
+    另需在 `run()` 里 `.plugin(tauri_plugin_autostart::init(…))`，**计划漏了这一步**——
+    不注册插件时 `autolaunch()` 取 state 会 panic。
+13. **Task 8 —— 锁屏通路换实现。** 计划假设 Tauri 的 `WindowEvent` 有
+    `ReceivedMessage`，实际 2.11.5 没有（只有 Resized/Moved/CloseRequested/Destroyed/
+    Focused/ScaleFactorChanged/DragDrop/ThemeChanged），拿不到原始窗口消息。
+    改为**自建 message-only 窗口 + 自己的消息泵**（`collector::session::spawn_listener`）。
+    依据：`WTSRegisterSessionNotification` + `WM_POWERBROADCAST` 是 Win32 里唯一被支持的
+    机制——`WTSQuerySessionInformation` 只是"读当前状态"、靠墙钟跳变推断睡眠是启发式，
+    都不是事件源。副作用：`setup()` 不再需要主窗口 hwnd，spec §3.2 说的"唯一一处结构性
+    变化"因此取消（已回写进 spec §12.1 与 §18）。
+14. **Task 8 —— `Residency` 的可变字段改用 `AtomicBool`**（`tauri::State` 的解引用是只读的）。
+    另：`TrayMenuItem`/`build_menu`/`menu_item_id` 起初没有被生产代码消费（id 又写了一遍，
+    3 个 dead_code 警告），已改为 `build_tray_menu` 直接由 `build_menu` 驱动，它们现在
+    是真正被测试保护的数据。
+15. **Task 8 —— 关窗确认框用原生 `MessageBoxW`** 而非 `tauri-plugin-dialog`：Tauri 2 无内置
+    对话框，为一个模态框引入插件不划算，且 `blocking_show` 有阻塞事件循环的风险。
+    托盘"退出"用普通 `MenuItem` 而非 `PredefinedMenuItem::quit`，以确保走
+    `app.exit(0)` → `RunEvent::Exit` → flush 这条确定路径。
+16. **Task 9 —— 计划未提 `tray-icon` feature**，已加。
+
+### 终审（自审，无 subagent 工具）发现并修复
+
+- **写回 config 用的是"整读再整写"**（`load_or_create` + `save`）：用户文件若 TOML 语法坏，
+  会被默认值覆盖（违反 spec §5.2）；即使文件正常，模板里解释每个参数的注释也会在用户
+  第一次点 ✕ / 切自启后全部消失。改为 `config::patch_line(path, key, value)`——只动那一行，
+  保留注释与其他设置；文件语法坏则不写并提示"本次选择只在本进程内生效"；文件不存在才写
+  模板 + 该行。6 条新测试 RED→GREEN，其中 2 条最初写错了前提（以为"重复键/值类型错"是
+  无效 TOML，实际都合法）——改测试而不是改实现。
+- **关窗确认框的回车默认项是「退出」**（`MB_DEBUTTON2`）：随手一按回车就关掉常驻应用，
+  与 spec §4.2「默认选项是最小化」相反。改为 `MB_DEFBUTTON1`，并把样式抽成
+  `CLOSE_PROMPT_STYLE` 常量 + 单测钉住。
+
+### 已知限制（自动化覆盖不到，只能人工验）
+
+- 合盖唤醒事件**晚于**实际开盖时刻（spec §3.3 已记录）。
+- 锁屏一段时间后 Windows 可能挂起/终止进程，解锁事件可能收不到——engine 侧已保证
+  "那段时间只算 idle、绝不凭空多出 active"（`a_missing_unlock_does_not_invent_extra_time`）。
+- 托盘/自启/锁屏的真实行为不经过任何 Rust 单测覆盖的代码路径，全靠上面那份人工清单。
+
+---
+
+## 原计划（存档）
+
 # Time Scope Phase 1 第三步「打磨」实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -1702,6 +1791,3 @@ git commit -m "docs: write back polish-step implementation notes and verificatio
 
 ---
 
-## 执行交接
-
-计划已保存到 `docs/superpowers/plans/2026-10-02-phase1-polish.md`。请审阅。
