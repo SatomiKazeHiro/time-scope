@@ -76,22 +76,24 @@ beforeAll(() => {
 });
 
 describe("preview", () => {
-  it.skipIf(!CSS_BUNDLE)("dumps the real UI to .preview/preview.html", async () => {
+  it.skipIf(!CSS_BUNDLE)("dumps the real UI to .preview/ for both themes", async () => {
     const { container } = render(<App />);
     await waitFor(() => expect(container.querySelectorAll("svg[role='img']").length).toBeGreaterThan(0));
 
     // 选中一段，让详情面板也进画面
     const svg = screen.getByRole("img", { name: "24h 活动时间线" });
-    const rects = svg.querySelectorAll("rect");
-    fireEvent.click(rects[5]);
+    fireEvent.click(svg.querySelectorAll("rect")[5]);
 
-    const html = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
+    mkdirSync(".preview", { recursive: true });
+    for (const theme of ["dark", "light"]) {
+      // data-theme 落在 <html> 上（useTheme 写的是 documentElement），
+      // 静态页面里得手动带上，否则截出来两张都是默认的深色。
+      const html = `<!doctype html>
+<html lang="zh-CN" data-theme="${theme}"><head><meta charset="utf-8">
 <link rel="stylesheet" href="../dist/assets/${CSS_BUNDLE}">
 <style>body{width:1200px;height:700px;overflow:hidden}</style>
 </head><body>${container.innerHTML}</body></html>`;
-
-    mkdirSync(".preview", { recursive: true });
-    writeFileSync(join(".preview", "preview.html"), html);
+      writeFileSync(join(".preview", `preview-${theme}.html`), html);
+    }
   });
 });

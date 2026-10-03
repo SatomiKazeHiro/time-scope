@@ -4,6 +4,8 @@ import SegmentTimeline from "./components/SegmentTimeline";
 import GranularityPicker from "./components/GranularityPicker";
 import DaySummary from "./components/DaySummary";
 import SegmentDetail from "./components/EventDetail";
+import ThemeToggle from "./components/ThemeToggle";
+import { useTheme } from "./design/useTheme";
 import { bucketSegments, DEFAULT_GRANULARITY } from "./lib/bucket";
 import { getSegments, shiftDate, todayString, type Segment } from "./types";
 
@@ -18,6 +20,7 @@ export default function App() {
   const [selected, setSelected] = useState<Segment | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [granularity, setGranularity] = useState<number>(DEFAULT_GRANULARITY);
+  const { theme, cycle } = useTheme();
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +68,7 @@ export default function App() {
       <header className="flex items-center gap-3">
         <h1 className="m-0 text-lg font-semibold tracking-tight text-ink">Time Scope</h1>
         <LiveBadge status={status} />
+        <ThemeToggle theme={theme} onCycle={cycle} />
         <span className="ml-auto tnum text-sm text-ink-faint">
           {status === "ok" && `${segments.length} 段 · ${buckets.length} 桶（${granularity} 分）`}
         </span>

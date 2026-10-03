@@ -30,77 +30,47 @@ export interface CategoryMeta {
   /** 指向 theme.css 里的 CSS 变量（不含 var() 包裹） */
   varName: string;
   tier: CategoryTier;
-  /** 同色相内的明度级：亮 = 该层级的"主"活动，暗 = 次要变体 */
-  step: "bright" | "dim";
+  /** 同色相内的明度级：主 = 该层级里更显眼的那个，次 = 退后档 */
+  step: "primary" | "secondary" | null;
   /**
-   * 段内直标的文字颜色；null = 这档色块上打不了标签。
+   * 段内能不能打直标。**这是结构决策，与配色无关** —— 标签颜色由 CSS 的
+   * `--on-cat-*` 随主题走，不在这里决定。
    *
-   * 亮档配深字（5.27–5.64:1），暗档理论上配浅字，但 study / life 两档的浅字
-   * 只有 4.47 / 4.41:1，压在 4.5 线下；而为了拉高浅字对比把它们调深，对底色的
-   * 标记对比又会跌破 3:1。蓝相在这条窄区间里无解。
-   * 所以这两档不直标，身份交给悬停浮层、常驻图例和选中读数 ——
-   * 这就是 dataviz 说的 selective direct labels。
+   * study / life 在两个主题下都是 false：深色底下它们的浅字只有 4.47 /
+   * 4.41:1，压在 4.5 线下；调深则对底色的标记对比跌破 3:1（蓝相无解）。
+   * 让它随主题变化会导致"某些主题下多出标签"的界面结构漂移，所以一刀切。
+   * 身份交给悬停浮层、常驻图例和选中读数三条通道。
    */
-  labelInk: "dark" | "light" | null;
+  inlineLabel: boolean;
 }
 
 export const CATEGORY_META: Record<Category, CategoryMeta> = {
-  work: {
-    label: "工作",
-    varName: "--color-cat-work",
-    tier: "focused",
-    step: "bright",
-    labelInk: "dark",
-  },
-  study: {
-    label: "学习",
-    varName: "--color-cat-study",
-    tier: "focused",
-    step: "dim",
-    labelInk: null,
-  },
+  work: { label: "工作", varName: "--color-cat-work", tier: "focused", step: "primary", inlineLabel: true },
+  study: { label: "学习", varName: "--color-cat-study", tier: "focused", step: "secondary", inlineLabel: false },
   browsing: {
     label: "浏览",
     varName: "--color-cat-browsing",
     tier: "consuming",
-    step: "bright",
-    labelInk: "dark",
+    step: "primary",
+    inlineLabel: true,
   },
   entertainment: {
     label: "娱乐",
     varName: "--color-cat-entertainment",
     tier: "consuming",
-    step: "dim",
-    labelInk: "light",
+    step: "secondary",
+    inlineLabel: true,
   },
   communication: {
     label: "沟通",
     varName: "--color-cat-communication",
     tier: "social",
-    step: "bright",
-    labelInk: "dark",
+    step: "primary",
+    inlineLabel: true,
   },
-  life: {
-    label: "生活",
-    varName: "--color-cat-life",
-    tier: "social",
-    step: "dim",
-    labelInk: null,
-  },
-  idle: {
-    label: "空闲",
-    varName: "--color-cat-idle",
-    tier: "absent",
-    step: "bright",
-    labelInk: "light",
-  },
-  unknown: {
-    label: "未分类",
-    varName: "--color-cat-unknown",
-    tier: "absent",
-    step: "dim",
-    labelInk: "light",
-  },
+  life: { label: "生活", varName: "--color-cat-life", tier: "social", step: "secondary", inlineLabel: false },
+  idle: { label: "空闲", varName: "--color-cat-idle", tier: "absent", step: null, inlineLabel: true },
+  unknown: { label: "未分类", varName: "--color-cat-unknown", tier: "absent", step: null, inlineLabel: true },
 };
 
 /** 后端新增了 category 而前端没跟上时的兜底样式。 */
@@ -108,8 +78,8 @@ const FALLBACK: CategoryMeta = {
   label: "未分类",
   varName: "--color-cat-unknown",
   tier: "absent",
-  step: "dim",
-  labelInk: "light",
+  step: null,
+  inlineLabel: true,
 };
 
 export function metaForCategory(c: string): CategoryMeta {
@@ -122,6 +92,11 @@ export function metaForCategory(c: string): CategoryMeta {
  */
 export function colorForCategory(c: string): string {
   return `var(${metaForCategory(c).varName})`;
+}
+
+/** 段内直标压在色块上的文字色。由 CSS 随主题决定，这里只给变量名。 */
+export function labelInkFor(c: string): string {
+  return `var(--on-cat-${metaForCategory(c).varName.replace("--color-cat-", "")})`;
 }
 
 export function labelForCategory(c: string): string {

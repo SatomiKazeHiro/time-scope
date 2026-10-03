@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { formatDuration } from "../lib/bucket";
-import { colorForCategory, labelForCategory, metaForCategory } from "../design/categories";
+import { colorForCategory, labelForCategory, labelInkFor, metaForCategory } from "../design/categories";
 import type { Category, Segment } from "../types";
 
 const DAY_MS = 86_400_000;
@@ -162,21 +162,20 @@ export default function SegmentTimeline({
           })}
         </svg>
 
-        {/* 段内直标：只在这一档色块的配字过 4.5:1 时才打 */}
+        {/* 段内直标：能不能打是结构决策（inlineLabel），什么颜色由 CSS 随主题决定 */}
         {placed.map((p) => {
           const meta = metaForCategory(p.seg.category);
-          if (!meta.labelInk || p.w < LABEL_MIN_W) return null;
+          if (!meta.inlineLabel || p.w < LABEL_MIN_W) return null;
           return (
             <span
               key={`l-${p.seg.id}`}
               aria-hidden
-              className={`pointer-events-none absolute top-1/2 -translate-y-1/2 truncate text-[11px] leading-none font-medium ${
-                meta.labelInk === "dark" ? "text-surface-0" : "text-ink"
-              }`}
+              className="pointer-events-none absolute top-1/2 -translate-y-1/2 truncate text-[11px] leading-none font-medium"
               style={{
                 left: `${p.leftPct + (p.widthPct - (GAP / WIDTH) * 100) / 2}%`,
                 width: `${p.widthPct}%`,
                 textAlign: "center",
+                color: labelInkFor(p.seg.category),
                 opacity: 0.85,
               }}
             >

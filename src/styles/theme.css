@@ -3,16 +3,20 @@
 /*
  * Time Scope 设计基调：仪表盘（instrument panel）。
  *
- * 两条硬规则，破坏其中任何一条都会让整个界面失掉"数据优先"的性格：
+ * 三条硬规则，破坏其中任何一条都会让整个界面失掉"数据优先"的性格：
  *
- *  1. **UI 强调色是中性亮色，不是色相。** 选中、聚焦、主按钮一律用明度表达。
+ *  1. **UI 强调色是中性色，不是色相。** 选中、聚焦、主按钮一律用明度表达。
  *     三个数据色相（蓝/橙/青）全部让给类别，界面层不许借用 —— 一旦按钮用了
  *     蓝色，用户在时间线上看到蓝色就会犹豫"这是类别还是这里被选中了"。
  *
  *  2. **idle / unknown 不是类别，是"无"。** 它们走中性灰且刻意压到 3:1 以下，
  *     让长段空白在视觉上退到背景后面。空闲的时长应当"看起来就是空的"。
  *
- * 类别色经过色觉安全校验，改动前先跑：
+ *  3. **段内标签的颜色由主题决定，标签该不该打由 TS 决定。**
+ *     `--on-cat-*` 随主题走；`categories.ts` 的 `labelInk: null` 是结构决策，
+ *     与配色无关。两者分开，切换主题才不会让界面结构跟着变。
+ *
+ * 类别色经过色觉安全校验，**两个主题各选一套步进**（见 §2）。改动前先跑：
  *   node design-system/time-scope/verify-palette.mjs
  * 详见 design-system/time-scope/MASTER.md §2。
  */
@@ -23,46 +27,62 @@
   --color-*: initial;
 }
 
-/* ── 表面：由深到浅四级，深色界面用明度而非阴影表达层级 ────────────── */
+/* ══ 深色 = 默认值 ══════════════════════════════════════════════
+   Tailwind 把 @theme 的变量发在 :root 上，工具类编译成 var(--color-x)，
+   所以下面两个浅色覆盖块只要重定义同名变量，整套工具类自动跟着换。 */
 @theme {
+  /* 表面：由深到浅四级。深色界面用明度而非阴影表达层级 */
   --color-surface-0: #0c0f14; /* 页面底 */
   --color-surface-1: #151920; /* 面板 / 时间线底（类别色就是对着它校验的） */
-  --color-surface-2: #1c222c; /* 悬浮 / 输入框 */
+  --color-surface-2: #1c222c; /* 悬浮 / 输入框 / 轨道 */
   --color-surface-3: #232a36; /* 浮层 / 提示条 */
 
-  /* ── 文字：四级，对 surface-1 的对比度分别是
-        14.59 / 7.07 / 4.86 :1，ink-faint 只用于非文字元素 ─────────── */
+  /* 文字：四级，对 surface-1 的对比度 14.59 / 7.07 / 4.86 :1 */
   --color-ink: #e6eaf0; /* 14.59:1 正文 */
   --color-ink-muted: #9aa5b6; /*  7.07:1 次要说明 */
   --color-ink-faint: #7d8798; /*  4.86:1 刻度、微标签 */
   --color-ink-ghost: #6b7688; /*  3.84:1 仅网格线等非文字（需 ≥3:1） */
 
-  /* ── 分隔线：深色下用半透明白，比实色灰更稳 ───────────────────── */
+  /* 分隔线：深色下用半透明白，比实色灰更稳 */
   --color-line: rgb(255 255 255 / 0.08);
   --color-line-strong: rgb(255 255 255 / 0.14);
 
-  /* ── 中性交互色：界面层唯一的"高亮"手段就是它 ─────────────────── */
+  /* 中性交互色：界面层唯一的"高亮"手段 */
   --color-neutral-solid: #d7dde6; /* 主按钮底 */
   --color-on-neutral: #0c0f14; /* 主按钮文字，14.05:1 */
 
-  /* ── 状态色：语义保留，永不当作第 4 个类别色用 ─────────────────── */
+  /* 状态色：语义保留，永不当作第 4 个类别色用 */
   --color-state-good: #0ca30c; /* 5.25:1 采集中 */
   --color-state-warning: #fab219; /* 9.60:1 脱敏提示 */
   --color-state-critical: #d03b3b; /* 3.67:1 错误（非文字配图标） */
 
-  /* ── 类别色：3 色相（专注/消耗/社交）+ 层级内明度阶 + 2 中性 ──────
-     all-pairs 校验：最差 CVD ΔE 9.4 / 常色 ΔE 20.9，三个色相互相都站得住。
-     同一色相内的两级靠明度区分（ΔL ≥ 0.06，单色相），属 ordinal 结构。 */
-  --color-cat-work: #3987e5; /* 专注 · 亮  4.84:1 */
-  --color-cat-study: #256abf; /* 专注 · 暗  3.27:1 */
-  --color-cat-browsing: #d95926; /* 消耗 · 亮  4.54:1 */
-  --color-cat-entertainment: #b0471c; /* 消耗 · 暗  3.16:1 */
-  --color-cat-communication: #199e70; /* 社交 · 亮  5.17:1 */
-  --color-cat-life: #107a56; /* 社交 · 暗  3.31:1 */
+  /* 类别色 —— 深色底的一套步进。
+     三个层级色相 all-pairs：CVD ΔE 9.4 / 常色 ΔE 20.9。
+     层级内两级是明度阶（ΔL ≥ 0.06，单色相）：亮档=主类别，暗档=次类别。 */
+  --color-cat-work: #3987e5; /* 专注 · 主  4.84:1 */
+  --color-cat-study: #256abf; /* 专注 · 次  3.27:1 */
+  --color-cat-browsing: #d95926; /* 消耗 · 主  4.54:1 */
+  --color-cat-entertainment: #b0471c; /* 消耗 · 次  3.16:1 */
+  --color-cat-communication: #199e70; /* 社交 · 主  5.17:1 */
+  --color-cat-life: #107a56; /* 社交 · 次  3.31:1 */
   --color-cat-idle: #3f4756; /* 空闲：1.89:1，刻意退后 */
   --color-cat-unknown: #2b313b; /* 未分类：1.35:1，刻意退后 */
 
-  /* ── 字族：系统字体，不下载 webfont ──────────────────────────────
+  /* 段内直标压在色块上的文字色。
+     study / life 这两档低于 4.5:1，所以 categories.ts 里 labelInk 是 null
+     —— 那里不打标签，不是颜色问题。 */
+  --on-cat-work: #0c0f14; /* 5.27:1 */
+  --on-cat-study: #e6eaf0; /* 4.47:1（不用于直标，仅占位保持 8 个齐全） */
+  --on-cat-browsing: #0c0f14; /* 4.94:1 */
+  --on-cat-entertainment: #e6eaf0; /* 4.62:1 */
+  --on-cat-communication: #0c0f14; /* 5.64:1 */
+  --on-cat-life: #e6eaf0; /* 4.41:1（同上，不用于直标） */
+  --on-cat-idle: #e6eaf0; /* 7.74:1 */
+  --on-cat-unknown: #e6eaf0; /* 10.83:1 */
+
+  --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45);
+
+  /* 字族：系统字体，不下载 webfont。
      离线桌面应用，且常驻内存预算 < 80MB（STATUS §3）。中文走雅黑，
      时间码用 Cascadia/Consolas 并开等宽数字，避免读数跳动。 */
   --font-sans:
@@ -94,13 +114,111 @@
   --radius-md: 6px;
   --radius-lg: 10px;
 
-  /* 层级：深色下几乎不用阴影，靠明度差；这一档只给浮层用 */
-  --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45);
-
-  /* 动效：只有两档，且退场比入场快 */
+  /* 动效：只有两档，退场比入场快 */
   --duration-fast: 120ms;
   --duration-base: 180ms;
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* ══ 浅色覆盖 ══════════════════════════════════════════════════
+   浅色底的类别色**不是深色那套反过来的**，是另选的一套步进：
+   深色底上"更显眼"= 变亮，浅色底上"更显眼"= 变深，所以主类别在浅色底下
+   反而是更深的那一档。浅色底对白底的对比度余量也比深色底小，
+   次类别被 3:1 的标记线卡得很紧。
+   全部经 verify-palette.mjs 校验：all-pairs CVD ΔE 8.9 / 常色 16.6。 */
+
+@media (prefers-color-scheme: light) {
+  /* 未显式选深色时跟随系统。:not() 的特异性高于 :root，压得住 @theme */
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --color-surface-0: #eef0f3;
+    --color-surface-1: #ffffff;
+    --color-surface-2: #f4f5f7;
+    --color-surface-3: #ffffff;
+
+    --color-ink: #12151a; /* 18.29:1 */
+    --color-ink-muted: #4d5866; /*  7.23:1 */
+    --color-ink-faint: #6b7688; /*  4.59:1 */
+    --color-ink-ghost: #8a94a2; /*  3.07:1 仅非文字 */
+
+    --color-line: rgb(10 15 25 / 0.1);
+    --color-line-strong: rgb(10 15 25 / 0.16);
+
+    --color-neutral-solid: #1c222c;
+    --color-on-neutral: #ffffff; /* 15.97:1 */
+
+    --color-state-good: #0a8a0a; /* 4.51:1 */
+    --color-state-warning: #8a5a00; /* 5.93:1 */
+    --color-state-critical: #d03b3b; /* 4.80:1 */
+
+    --color-cat-work: #3082ce; /* 专注 · 主  4.03:1 */
+    --color-cat-study: #3d98ed; /* 专注 · 次  3.04:1 */
+    --color-cat-browsing: #c8622f; /* 消耗 · 主  4.00:1 */
+    --color-cat-entertainment: #ea7235; /* 消耗 · 次  3.02:1 */
+    --color-cat-communication: #338f6d; /* 社交 · 主  3.97:1 */
+    --color-cat-life: #3aa57e; /* 社交 · 次  3.06:1 */
+    --color-cat-idle: #b8bec7; /* 1.75:1，刻意退后 */
+    --color-cat-unknown: #d5d9df; /* 1.35:1，刻意退后 */
+
+    /* 浅色底上六档色块都够浅，深字是唯一可行的直标配色 */
+    --on-cat-work: #12151a;
+    --on-cat-study: #12151a;
+    --on-cat-browsing: #12151a;
+    --on-cat-entertainment: #12151a;
+    --on-cat-communication: #12151a;
+    --on-cat-life: #12151a;
+    --on-cat-idle: #12151a;
+    --on-cat-unknown: #12151a;
+
+    --shadow-pop: 0 8px 24px rgb(10 15 25 / 0.12);
+  }
+}
+
+/* 显式选浅色：特异性与上面的媒体查询块相同，靠源码顺序保证后者覆盖前者。
+   两条路径都要写：媒体查询管"跟随系统"，这个管用户点按钮选死浅色。 */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-surface-0: #eef0f3;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f4f5f7;
+  --color-surface-3: #ffffff;
+
+  --color-ink: #12151a;
+  --color-ink-muted: #4d5866;
+  --color-ink-faint: #6b7688;
+  --color-ink-ghost: #8a94a2;
+
+  --color-line: rgb(10 15 25 / 0.1);
+  --color-line-strong: rgb(10 15 25 / 0.16);
+
+  --color-neutral-solid: #1c222c;
+  --color-on-neutral: #ffffff;
+
+  --color-state-good: #0a8a0a;
+  --color-state-warning: #8a5a00;
+  --color-state-critical: #d03b3b;
+
+  --color-cat-work: #3082ce;
+  --color-cat-study: #3d98ed;
+  --color-cat-browsing: #c8622f;
+  --color-cat-entertainment: #ea7235;
+  --color-cat-communication: #338f6d;
+  --color-cat-life: #3aa57e;
+  --color-cat-idle: #b8bec7;
+  --color-cat-unknown: #d5d9df;
+
+  --on-cat-work: #12151a;
+  --on-cat-study: #12151a;
+  --on-cat-browsing: #12151a;
+  --on-cat-entertainment: #12151a;
+  --on-cat-communication: #12151a;
+  --on-cat-life: #12151a;
+  --on-cat-idle: #12151a;
+  --on-cat-unknown: #12151a;
+
+  --shadow-pop: 0 8px 24px rgb(10 15 25 / 0.12);
 }
 
 @layer base {
@@ -130,7 +248,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* 键盘焦点：深色下用亮色环，而不是浏览器默认的蓝环（蓝是 work 的色相） */
+  /* 键盘焦点：中性亮色，不借用任何数据色相（蓝是 work） */
   :focus-visible {
     outline: 2px solid var(--color-neutral-solid);
     outline-offset: 2px;

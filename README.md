@@ -44,6 +44,7 @@ close_behavior = "ask"  # ask = 问一次 / minimize = 最小化到托盘 / quit
 
 点窗口的 ✕ 第一次会问一次（选什么就记住什么）；此后只隐藏到托盘，**托盘菜单的「退出」是唯一退出入口**。
 锁屏与合盖记成 idle，不再把 8 小时锁屏算成 8 小时活跃。
+页头「采集中」右边的按钮切换主题：跟随系统 → 浅色 → 深色，选择会被记住。
 
 **尚缺**：`segment-updated` 实时推送、规则热重载——见文末"还没做什么"。
 
@@ -80,8 +81,9 @@ pnpm test
 
 ```
 src/                     React 前端
-  styles/theme.css       设计 token（色板 / 字阶 / 间距 / 圆角），Tailwind v4 @theme
+  styles/theme.css       设计 token（色板 / 字阶 / 间距 / 圆角）+ 深浅两套主题
   design/categories.ts   类别元数据：中文名、层级、CSS 变量引用
+  design/useTheme.ts     跟随系统 / 浅色 / 深色 三态
   components/SegmentTimeline  24h 横向时间线（SVG）
   components/EventDetail 选中段的详情
   types.ts               StoredEvent 的 TS 镜像 + IPC 封装 + 日期工具
