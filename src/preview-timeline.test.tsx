@@ -11,6 +11,7 @@ import { render } from "@testing-library/react";
 import { writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import SegmentTimeline from "./components/SegmentTimeline";
+import { GRANULARITIES, sliceSegments } from "./lib/bucket";
 import type { Category, Segment } from "./types";
 
 const CSS_BUNDLE = existsSync("dist/assets")
@@ -72,24 +73,89 @@ describe("timeline preview", () => {
       return d.getTime();
     })();
 
+    /** 长时段对照：碎片日看不出粒度的差别，这一段才看得出。 */
+    const at = (h: number) => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d.getTime() + h * 3_600_000;
+    };
+    const longRun: Segment[] = [
+      {
+        id: "L1",
+        startAt: at(9),
+        endAt: at(15), // 连续 6 小时
+        category: "work",
+        application: "Code.exe",
+        confidence: 0.95,
+        classifier: "rule",
+        classifierVersion: "rules:15",
+        evidenceEventIds: ["e1"],
+      },
+      {
+        id: "L2",
+        startAt: at(16),
+        endAt: at(17.5), // 90 分钟
+        category: "browsing",
+        application: "chrome.exe",
+        confidence: 0.8,
+        classifier: "rule",
+        classifierVersion: "rules:15",
+        evidenceEventIds: ["e2"],
+      },
+    ];
+
     const { container } = render(
       <div style={{ background: "var(--color-surface-0)", padding: 16 }}>
-        <SegmentTimeline
-          segments={segs}
-          dayStartMs={dayStartMs}
-          onSelect={() => {}}
-          showNow
-        />
-        <p style={{ color: "var(--color-ink-muted)", fontSize: 13 }}>
-          {segs.length} 个段 · 最短{" "}
-          {Math.round(
-            Math.min(...segs.map((s) => s.endAt - s.startAt)) / 60000,
-          )}{" "}
-          分钟
+        {/* 顺序是有意的，而且 headless 截图只截首屏：
+            ① 默认视图（碎片日 + 30 分）—— 用户每天真正看到的那一张
+            ② 长时段四档对照 —— 粒度的差别只有在长时段上才看得出来 */}
+
+        <p style={{ color: "var(--color-ink)", fontSize: 13, fontWeight: 600 }}>
+          ① 默认视图：碎片日（{segs.length} 段，最短{" "}
+          {Math.round(Math.min(...segs.map((s) => s.endAt - s.startAt)) / 60000)} 分钟）· 30 分粒度
         </p>
+        <div style={{ marginTop: 12 }}>
+          <SegmentTimeline
+            segments={segs}
+            dayStartMs={dayStartMs}
+            onSelect={() => {}}
+            showNow
+            intervalMs={30 * 60_000}
+          />
+        </div>
+        <p style={{ color: "var(--color-ink-muted)", fontSize: 12 }}>
+          切出 {sliceSegments(segs, 30 * 60_000).length} 块。
+          碎片日在四档粒度下差别不大 —— 段本来就短，切不切都那样。
+        </p>
+
+        <p
+          style={{
+            color: "var(--color-ink)",
+            fontSize: 13,
+            fontWeight: 600,
+            marginTop: 40,
+            borderTop: "1px solid var(--color-line)",
+            paddingTop: 24,
+          }}
+        >
+          ② 长时段对照：一段连续 6 小时的工作 + 一次 90 分钟的浏览
+        </p>
+        {GRANULARITIES.map((m) => (
+          <div key={`long-${m}`} style={{ marginTop: 20 }}>
+            <SegmentTimeline
+              segments={longRun}
+              dayStartMs={dayStartMs}
+              onSelect={() => {}}
+              intervalMs={m * 60_000}
+            />
+            <p style={{ color: "var(--color-ink-muted)", fontSize: 12 }}>
+              {m} 分粒度 · 2 段 → {sliceSegments(longRun, m * 60_000).length} 块
+            </p>
+          </div>
+        ))}
       </div>,
     );
-    expect(container.querySelectorAll("rect").length).toBe(segs.length);
+    expect(container.querySelectorAll("rect").length).toBeGreaterThan(segs.length);
 
     // 悬停提示是 React state 触发的，静态页面里出不来。但"被 overflow-hidden
     // 裁掉"本来就是 CSS 布局问题，所以照着组件里的 class 手工塞一个进去，

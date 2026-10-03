@@ -6,7 +6,7 @@ import DaySummary from "./components/DaySummary";
 import SegmentDetail from "./components/EventDetail";
 import ThemeToggle from "./components/ThemeToggle";
 import { useTheme } from "./design/useTheme";
-import { bucketSegments, DEFAULT_GRANULARITY } from "./lib/bucket";
+import { sliceSegments, DEFAULT_GRANULARITY } from "./lib/bucket";
 import { getSegments, shiftDate, todayString, type Segment } from "./types";
 
 type Status = "loading" | "ok" | "error";
@@ -56,9 +56,11 @@ export default function App() {
   }, [date]);
 
   // spec §8.2：分桶在前端做，切换粒度不重查后端
-  const buckets = useMemo(
-    () => bucketSegments(segments, granularity * 60_000),
-    [segments, granularity],
+  const intervalMs = granularity * 60_000;
+  // 与时间线内部同一套切片，头部读数说的就是屏幕上真的画了几块
+  const pieceCount = useMemo(
+    () => sliceSegments(segments, intervalMs).length,
+    [segments, intervalMs],
   );
 
   const isToday = date === todayString();
@@ -70,7 +72,10 @@ export default function App() {
         <LiveBadge status={status} />
         <ThemeToggle theme={theme} onCycle={cycle} />
         <span className="ml-auto tnum text-sm text-ink-faint">
-          {status === "ok" && `${segments.length} 段 · ${buckets.length} 桶（${granularity} 分）`}
+          {status === "ok" &&
+            (pieceCount > segments.length
+              ? `${segments.length} 段 → ${pieceCount} 块（${granularity} 分）`
+              : `${segments.length} 段（${granularity} 分）`)}
         </span>
       </header>
 
@@ -113,6 +118,7 @@ export default function App() {
               onSelect={(s) => setSelected((cur) => (cur?.id === s.id ? null : s))}
               selectedId={selected?.id ?? null}
               showNow={isToday}
+              intervalMs={intervalMs}
             />
           </section>
 

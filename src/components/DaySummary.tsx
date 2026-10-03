@@ -18,11 +18,39 @@ export default function DaySummary({ segments, dayStartMs }: Props) {
   const rows = summarize(segments, dayStartMs);
   if (rows.length === 0) return null;
 
+  // spec §10：「各 category 时长条形 + 活跃/空闲比」。
+  // 活跃 = 非 idle 的时长。`unknown` 算活跃 —— 它是"没分类出是什么"，
+  // 不是"没在做事"，把未分类的时间算成空闲会低估人实际在用电脑。
+  const idleMs = rows.find((r) => r.category === "idle")?.durationMs ?? 0;
+  const activeMs = rows.reduce((sum, r) => sum + r.durationMs, 0) - idleMs;
+  const total = activeMs + idleMs;
+  const activePct = total > 0 ? Math.round((activeMs / total) * 100) : 0;
+
   return (
     <section aria-label="当日汇总" className="panel p-4">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="panel-title">当日汇总</h2>
         <span className="tnum text-micro text-ink-ghost">{rows.length} 个类别</span>
+      </div>
+
+      <div
+        aria-label="活跃与空闲占比"
+        className="mb-4 flex items-center gap-3 rounded-md bg-surface-2 px-3 py-2"
+      >
+        <span className="tnum w-9 text-sm font-semibold text-ink">{activePct}%</span>
+        <div className="flex h-2.5 flex-1 overflow-hidden rounded-full">
+          <div
+            className="h-full bg-ink"
+            style={{ width: `${Math.max(activePct, activePct > 0 ? 1 : 0)}%` }}
+          />
+          <div
+            className="h-full bg-ink-ghost"
+            style={{ width: `${Math.max(100 - activePct, idleMs > 0 ? 1 : 0)}%` }}
+          />
+        </div>
+        <span className="tnum shrink-0 text-micro text-ink-faint">
+          活跃 {formatDuration(activeMs)} · 空闲 {formatDuration(idleMs)}
+        </span>
       </div>
 
       <ul className="m-0 flex list-none flex-col gap-2 p-0">

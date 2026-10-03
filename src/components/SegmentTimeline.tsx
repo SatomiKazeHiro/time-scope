@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { formatDuration } from "../lib/bucket";
+import { useMemo, useState } from "react";
+import { formatDuration, sliceSegments, type SegmentSlice } from "../lib/bucket";
 import { colorForCategory, labelForCategory, labelInkFor, metaForCategory } from "../design/categories";
 import type { Category, Segment } from "../types";
 
@@ -11,6 +11,7 @@ const TRACK_H = 64;
 const RULER_H = 8;
 const SVG_H = TRACK_H + RULER_H;
 const MINUTES_PER_DAY = 24 * 60;
+const MINUTE_MS = 60_000;
 
 /**
  * 极短段也要看得见：0 宽的 rect 等于没画，用户会以为数据丢了。
@@ -21,15 +22,20 @@ const MINUTES_PER_DAY = 24 * 60;
  */
 const MIN_WIDTH = 2.5;
 /**
- * 相邻填充之间留 1.5 单位底色缝，让两段不同类别的边界能读出来。
- * 碎片多的时候 2 单位的缝太宽，会把一段连续活动切成条。
+ * 两种缝，分得很要紧：
+ *
+ *  - `GAP` 不同活动段之间。1.5 单位，让"这里结束、那里开始"读得出来。
+ *  - `SPLIT_GAP` 同一段被桶边界切开之间。1 单位，更细 —— 它只是时间网格线，
+ *    不是活动边界。如果两者一样粗，30 分钟一切会把一段连续工作切成条形码，
+ *    正好把碎片可读性那轮修掉的问题又请回来。
  */
 const GAP = 1.5;
+const SPLIT_GAP = 1;
 /** 窄于此宽度不直标：文字放不下，硬塞会盖住相邻段。 */
 const LABEL_MIN_W = 46;
-/** 刻度尺：每 10 分钟一根小刻度，每 60 分钟一根大刻度。 */
+/** 小刻度固定 10 分钟（当参考尺）；大刻度跟随当前粒度。 */
 const MINOR_STEP_MIN = 10;
-const MAJOR_STEP_MIN = 60;
+const DEFAULT_MAJOR_STEP_MIN = 60;
 /** 3 小时一格太密、6 小时一格对不齐小数；这里只标 0/6/12/18/24。 */
 const AXIS_LABELS = [0, 6, 12, 18, 24];
 
@@ -51,16 +57,26 @@ interface Props {
   selectedId?: string | null;
   /** 正在看今天时画「此刻」游标。历史日期上没有"现在"，画了是错的。 */
   showNow?: boolean;
+  /**
+   * 粒度（毫秒）。段按这个间隔切分，刻度尺的大刻度也跟着它走。
+   * 传 0 / 不传 = 不切。spec §8.2：切换粒度只改前端参数，不重查后端。
+   */
+  intervalMs?: number;
 }
 
 interface Placed {
-  seg: Segment;
+  slice: SegmentSlice;
   /** viewBox 单位 */
   x: number;
   w: number;
   /** 占全天的百分比，HTML 覆盖层按它定位 */
   leftPct: number;
   widthPct: number;
+  /** 这次扣掉的缝宽，直标的居中要用它回补 */
+  gap: number;
+  /** 整段（未切片）在轨道上的横向范围。直标按整段判宽、贴整段开头。 */
+  segLeftPct: number;
+  segWidthPct: number;
 }
 
 function clockOf(ms: number): string {
@@ -80,6 +96,9 @@ function clockOf(ms: number): string {
  * **轨道是可见的。** 之前轨道背景与面板同色，浅色下三者是同一个白 ——
  * 于是"这段没活动"和"这里什么都没画"读起来一模一样，整条时间线没有边框可依。
  * 现在轨道用 surface-2 + 描边 + 圆角，空白时段明确读作"无活动"。
+ *
+ * **粒度是真的在切。** spec §8.2 要求"跨桶的 segment 按桶边界切成多段"，
+ * 但这个控件之前只改了个桶计数，视图纹丝不动。
  */
 export default function SegmentTimeline({
   segments,
@@ -87,8 +106,11 @@ export default function SegmentTimeline({
   onSelect,
   selectedId,
   showNow = false,
+  intervalMs = 0,
 }: Props) {
   const [hover, setHover] = useState<{ placed: Placed; xPct: number } | null>(null);
+
+  const slices = useMemo(() => sliceSegments(segments, intervalMs), [segments, intervalMs]);
 
   if (segments.length === 0) {
     return (
@@ -104,17 +126,25 @@ export default function SegmentTimeline({
   const dayEnd = dayStartMs + DAY_MS;
 
   // 跨零点或时区差可能让段越出当天，不夹会画出负 x 或超 viewBox
-  const placed: Placed[] = segments.map((s) => {
-    const start = Math.max(s.startAt, dayStartMs);
-    const end = Math.min(s.endAt, dayEnd);
+  const placed: Placed[] = slices.map((sl, i) => {
+    const start = Math.max(sl.startAt, dayStartMs);
+    const end = Math.min(sl.endAt, dayEnd);
+    // 下一块是不是同一段的延续 —— 是的话缝细一档，那是时间网格不是活动边界
+    const next = slices[i + 1];
+    const continues = next !== undefined && next.segmentId === sl.segmentId;
+    const gap = continues ? SPLIT_GAP : GAP;
     const rawW = Math.max(((end - start) / DAY_MS) * WIDTH, MIN_WIDTH);
-    const w = Math.max(rawW - GAP, MIN_WIDTH);
+    const segStart = Math.max(sl.segment.startAt, dayStartMs);
+    const segEnd = Math.min(sl.segment.endAt, dayEnd);
     return {
-      seg: s,
+      slice: sl,
       x: ((start - dayStartMs) / DAY_MS) * WIDTH,
-      w,
+      w: Math.max(rawW - gap, MIN_WIDTH),
       leftPct: ((start - dayStartMs) / DAY_MS) * 100,
-      widthPct: (w / WIDTH) * 100,
+      widthPct: (Math.max(rawW - gap, MIN_WIDTH) / WIDTH) * 100,
+      gap,
+      segLeftPct: ((segStart - dayStartMs) / DAY_MS) * 100,
+      segWidthPct: (((segEnd - segStart) / DAY_MS) * 100),
     };
   });
 
@@ -125,9 +155,15 @@ export default function SegmentTimeline({
 
   // 刻度全在轨道下方那条带上，不压数据 —— 之前那条 22% 透明竖线穿过了
   // 整个色块区，碎片一多就成了噪声，读时间反而要眯眼。
+  // 大刻度跟随当前粒度，于是这个控件在刻度尺上也看得见反应。
+  const majorStepMin = intervalMs >= MINUTE_MS ? intervalMs / MINUTE_MS : DEFAULT_MAJOR_STEP_MIN;
   const ticks: { x: number; major: boolean }[] = [];
-  for (let m = 0; m < MINUTES_PER_DAY; m += MINOR_STEP_MIN) {
-    ticks.push({ x: (m / MINUTES_PER_DAY) * WIDTH, major: m % MAJOR_STEP_MIN === 0 });
+  const step = Math.max(1, Math.min(MINOR_STEP_MIN, majorStepMin));
+  for (let m = 0; m < MINUTES_PER_DAY; m += step) {
+    const major = m % majorStepMin === 0;
+    // 粒度比 10 分钟还细时，大刻度和这一步重合，只画一根
+    if (!major && step >= majorStepMin) continue;
+    ticks.push({ x: (m / MINUTES_PER_DAY) * WIDTH, major });
   }
 
   return (
@@ -144,17 +180,18 @@ export default function SegmentTimeline({
           className="block h-18 w-full"
         >
           {placed.map((p) => {
-            const selected = selectedId === p.seg.id;
+            const seg = p.slice.segment;
+            const selected = selectedId === p.slice.segmentId;
             return (
               <rect
-                key={p.seg.id}
-                data-id={p.seg.id}
+                key={p.slice.id}
+                data-id={p.slice.segmentId}
                 x={p.x}
                 y={4}
                 width={p.w}
                 height={TRACK_H - 8}
                 rx={1.5}
-                fill={colorForCategory(p.seg.category)}
+                fill={colorForCategory(seg.category)}
                 vectorEffect="non-scaling-stroke"
                 className="cursor-pointer"
                 /* 描边兼两职：选中时是 2px 亮环（选中用明度表达，不占用类别色相）；
@@ -165,7 +202,8 @@ export default function SegmentTimeline({
                   stroke: selected ? "var(--color-ink)" : "transparent",
                   strokeWidth: selected ? 2 : 8,
                 }}
-                onClick={() => onSelect(p.seg)}
+                /* 点任意一块都选中整段活动，不是只选中这一片 */
+                onClick={() => onSelect(seg)}
                 onMouseMove={(e) => {
                   const box = e.currentTarget.ownerSVGElement!.getBoundingClientRect();
                   const xPct = ((e.clientX - box.left) / box.width) * 100;
@@ -175,14 +213,14 @@ export default function SegmentTimeline({
               >
                 {/* 原生 title 兜底：浮层还没渲染出来前也有提示 */}
                 <title>
-                  {`${clockOf(p.seg.startAt)} – ${clockOf(p.seg.endAt)} · ${p.seg.category} · ${formatDuration(p.seg.endAt - p.seg.startAt)}`}
+                  {`${clockOf(seg.startAt)} – ${clockOf(seg.endAt)} · ${seg.category} · ${formatDuration(seg.endAt - seg.startAt)}`}
                 </title>
               </rect>
             );
           })}
 
-          {/* 刻度尺：10 分钟一根小刻度、60 分钟一根大刻度，底端对齐。
-              一天 144 根，用 stroke 而非 DOM 节点，省得为装饰铺 144 个元素。 */}
+          {/* 刻度尺：小刻度固定 10 分钟作参考，大刻度跟随当前粒度。
+              一天一百多根，用 stroke 而非 DOM 节点，省得为装饰铺这么多元素。 */}
           <g
             data-ruler="ticks"
             pointerEvents="none"
@@ -222,22 +260,26 @@ export default function SegmentTimeline({
         </svg>
 
         {/* 段内直标：能不能打是结构决策（inlineLabel），什么颜色由 CSS 随主题决定。
-            这层覆盖层只盖住轨道那 64px —— 直接相对整个容器 top-1/2 会把标签
+            **按整段判宽、贴整段开头** —— 30 分粒度下一段连切六刀，每块只有约 21 单位，
+            按块判宽等于默认视图下一个标签都打不出来，而直标是 §2.3 的无障碍兜底通道。
+            只在第一块上标一次，否则一段会连着标六次。
+            这层覆盖层只盖轨道那 64px，直接相对整个容器 top-1/2 会把标签
             推到轨道底边去蹭刻度尺。 */}
         <div className="pointer-events-none absolute inset-x-0 top-0 h-16">
           {placed.map((p) => {
-            const meta = metaForCategory(p.seg.category);
-            if (!meta.inlineLabel || p.w < LABEL_MIN_W) return null;
+            const meta = metaForCategory(p.slice.segment.category);
+            if (!p.slice.isFirst || !meta.inlineLabel) return null;
+            const segW = (p.segWidthPct / 100) * WIDTH;
+            if (segW < LABEL_MIN_W) return null;
             return (
               <span
-                key={`l-${p.seg.id}`}
+                key={`l-${p.slice.segmentId}`}
                 aria-hidden
-                className="absolute top-1/2 -translate-y-1/2 truncate text-[11px] leading-none font-medium"
+                className="absolute top-1/2 max-w-full -translate-y-1/2 truncate pr-1 text-[11px] leading-none font-medium"
                 style={{
-                  left: `${p.leftPct + (p.widthPct - (GAP / WIDTH) * 100) / 2}%`,
-                  width: `${p.widthPct}%`,
-                  textAlign: "center",
-                  color: labelInkFor(p.seg.category),
+                  left: `${p.segLeftPct}%`,
+                  width: `${p.segWidthPct}%`,
+                  color: labelInkFor(p.slice.segment.category),
                   opacity: 0.85,
                 }}
               >
@@ -256,15 +298,23 @@ export default function SegmentTimeline({
         >
           <span
             className="mr-1.5 inline-block size-2 rounded-[2px] align-middle"
-            style={{ background: colorForCategory(hover.placed.seg.category) }}
+            style={{ background: colorForCategory(hover.placed.slice.segment.category) }}
             aria-hidden
           />
-          <span className="font-medium">{labelForCategory(hover.placed.seg.category)}</span>
-          <span className="text-ink-muted"> · {hover.placed.seg.application ?? "未知应用"}</span>
+          <span className="font-medium">
+            {labelForCategory(hover.placed.slice.segment.category)}
+          </span>
+          <span className="text-ink-muted">
+            {" "}
+            · {hover.placed.slice.segment.application ?? "未知应用"}
+          </span>
           <div className="tnum mt-0.5 text-ink-muted">
-            {clockOf(hover.placed.seg.startAt)} – {clockOf(hover.placed.seg.endAt)}
+            {clockOf(hover.placed.slice.segment.startAt)} –{" "}
+            {clockOf(hover.placed.slice.segment.endAt)}
             <span className="mx-1 text-ink-ghost">|</span>
-            {formatDuration(hover.placed.seg.endAt - hover.placed.seg.startAt)}
+            {formatDuration(
+              hover.placed.slice.segment.endAt - hover.placed.slice.segment.startAt,
+            )}
           </div>
         </div>
       )}

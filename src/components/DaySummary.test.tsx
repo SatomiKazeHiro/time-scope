@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import DaySummary from "./DaySummary";
 import GranularityPicker from "./GranularityPicker";
 import type { Segment } from "../types";
@@ -45,6 +45,52 @@ describe("DaySummary", () => {
   it("labels the section for screen readers", () => {
     render(<DaySummary segments={[seg("a", 0, HOUR, "work")]} dayStartMs={0} />);
     expect(screen.getByLabelText("当日汇总")).toBeTruthy();
+  });
+});
+
+describe("DaySummary 活跃/空闲比（spec §10）", () => {
+  // 同一个百分比在「活跃/空闲比」和下方「分类占比列」里都会出现，
+  // 所以按 aria-label 限定到比值块里查。
+  const ratio = () => screen.getByLabelText("活跃与空闲占比");
+
+  it("splits the day into active and idle", () => {
+    render(
+      <DaySummary
+        segments={[
+          seg("a", 0, 6 * HOUR, "work"),
+          seg("b", 6 * HOUR, 8 * HOUR, "idle"),
+        ]}
+        dayStartMs={0}
+      />,
+    );
+    expect(within(ratio()).getByText("75%")).toBeTruthy();
+    expect(within(ratio()).getByText("活跃 6 时 · 空闲 2 时")).toBeTruthy();
+  });
+
+  it("counts unknown as active, not idle", () => {
+    // unknown 是「没分类出是什么」，不是「没在做事」。
+    // 把它算成空闲会低估人实际在用电脑的时间。
+    render(
+      <DaySummary
+        segments={[
+          seg("a", 0, 3 * HOUR, "unknown"),
+          seg("b", 3 * HOUR, 4 * HOUR, "idle"),
+        ]}
+        dayStartMs={0}
+      />,
+    );
+    expect(within(ratio()).getByText("75%")).toBeTruthy();
+  });
+
+  it("reports 100% rather than NaN on a day with no idle at all", () => {
+    render(<DaySummary segments={[seg("a", 0, HOUR, "work")]} dayStartMs={0} />);
+    expect(within(ratio()).getByText("100%")).toBeTruthy();
+    expect(within(ratio()).getByText("活跃 1 时 · 空闲 0 分")).toBeTruthy();
+  });
+
+  it("reports 0% on a day that is entirely idle", () => {
+    render(<DaySummary segments={[seg("a", 0, 4 * HOUR, "idle")]} dayStartMs={0} />);
+    expect(within(ratio()).getByText("0%")).toBeTruthy();
   });
 });
 

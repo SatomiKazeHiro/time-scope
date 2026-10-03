@@ -18,6 +18,82 @@ export function bucketStart(ts: number, intervalMs: number): number {
   return Math.floor(ts / intervalMs) * intervalMs;
 }
 
+/**
+ * 一段被桶边界切出来的碎片。
+ *
+ * 与 `bucketSegments` 的区别：那个把**整段**塞进它跨越的每个桶（聚合用），
+ * 这个按 spec §8.2 的原话「一个跨桶的 segment 按桶边界切成多段，按落入时长分配」
+ * 真正把时间切开 —— 每块只覆盖自己那段时间。
+ */
+export interface SegmentSlice {
+  /** 切片后唯一。`${segmentId}#${序号}` */
+  id: string;
+  /** 原段 id。点任意一块都要选中整段活动，不是选一片。 */
+  segmentId: string;
+  startAt: number;
+  endAt: number;
+  /** 原始段对象，悬停详情直接用它的字段 */
+  segment: Segment;
+  /** 是不是原段的第一块 —— 段内直标只标第一块，否则一段连着切三刀会标三次 */
+  isFirst: boolean;
+}
+
+/**
+ * 按桶边界把段切成碎片。
+ *
+ * `intervalMs` 非法（0 / NaN）时不切，原样返回 —— 静默返回空数组会让整条
+ * 时间线消失，而不是"退回不切"。
+ */
+export function sliceSegments(segments: Segment[], intervalMs: number): SegmentSlice[] {
+  const unsplit = (): SegmentSlice[] =>
+    segments.map((s) => ({
+      id: `${s.id}#0`,
+      segmentId: s.id,
+      startAt: s.startAt,
+      endAt: s.endAt,
+      segment: s,
+      isFirst: true,
+    }));
+
+  if (!intervalMs || !Number.isFinite(intervalMs) || intervalMs < 0) return unsplit();
+
+  const out: SegmentSlice[] = [];
+  for (const s of segments) {
+    // 零长或倒挂的段：切不出碎片，原样保留一块，否则它会在界面上彻底消失
+    if (s.endAt <= s.startAt) {
+      out.push({
+        id: `${s.id}#0`,
+        segmentId: s.id,
+        startAt: s.startAt,
+        endAt: s.endAt,
+        segment: s,
+        isFirst: true,
+      });
+      continue;
+    }
+
+    let cursor = s.startAt;
+    let n = 0;
+    while (cursor < s.endAt) {
+      // 用 ceil 且从 cursor+1 起算：正好落在边界上的点不能再切一刀，
+      // 否则每段末尾都会多出一个 0 宽的碎片。
+      const boundary = Math.ceil((cursor + 1) / intervalMs) * intervalMs;
+      const pieceEnd = boundary > cursor && boundary < s.endAt ? boundary : s.endAt;
+      out.push({
+        id: `${s.id}#${n}`,
+        segmentId: s.id,
+        startAt: cursor,
+        endAt: pieceEnd,
+        segment: s,
+        isFirst: n === 0,
+      });
+      cursor = pieceEnd;
+      n++;
+    }
+  }
+  return out;
+}
+
 export interface Bucket {
   start: number;
   end: number;

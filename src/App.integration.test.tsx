@@ -46,9 +46,14 @@ afterEach(() => {
 /**
  * 只取时间线里的 rect。
  *
- * 以前页面里只有时间线一个 svg，`container.querySelectorAll("rect")` 恰好等于段数。
- * 引入 lucide 图标后不成立了 —— CalendarDays 自带一个 <rect>，会被数进去，
- * 点到的也是它而不是段。按无障碍名定位到时间线本身，断言才是它本来要断的东西。
+ * 两个坑叠在一起，所以必须按无障碍名定位到时间线本身：
+ *  1. 页面里现在不止时间线一个 svg —— lucide 的 CalendarDays 自带一个 <rect>，
+ *     `container.querySelectorAll("rect")` 会把它数进去。
+ *  2. 时间线默认 30 分钟粒度，一个跨边界的段会被切成多块 ——
+ *     **rect 数量是"块"数，不再是"段"数**。
+ *
+ * 「一个段 = 一个 rect」的精确对应关系在 SegmentTimeline 的单测里锁
+ * （那里传 intervalMs=0，不切片）。
  */
 function timelineRects(): SVGRectElement[] {
   const svg = screen.getByRole("img", { name: "24h 活动时间线" });
@@ -60,10 +65,30 @@ describe("App integration (segments)", () => {
     invoke.mockResolvedValue([seg("s1", 9, 10)]);
     render(<App />);
 
-    await waitFor(() => expect(timelineRects().length).toBe(1));
+    // 9:00–10:00 整一小时，默认 30 分粒度切成两块
+    await waitFor(() => expect(timelineRects().length).toBe(2));
     expect(invoke).toHaveBeenCalledWith("get_segments", {
       date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     });
+  });
+
+  it("reports how many pieces the current granularity cuts the day into", async () => {
+    invoke.mockResolvedValue([seg("s1", 9, 10)]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBe(2));
+    // 粒度控制必须真的对视图有反应，头部读数就是证据
+    expect(screen.getByText("1 段 → 2 块（30 分）")).toBeTruthy();
+  });
+
+  it("a finer granularity cuts the same day into more pieces", async () => {
+    invoke.mockResolvedValue([seg("s1", 9, 10)]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBe(2));
+
+    fireEvent.click(screen.getByText("10分"));
+    // 1 小时按 10 分钟切 = 6 块
+    await waitFor(() => expect(timelineRects().length).toBe(6));
+    expect(screen.getByText("1 段 → 6 块（10 分）")).toBeTruthy();
   });
 
   it("shows an error state instead of throwing when the backend rejects", async () => {
@@ -97,7 +122,7 @@ describe("App integration (segments)", () => {
   it("renders segment details when a block is clicked", async () => {
     invoke.mockResolvedValue([seg("s1", 9, 10)]);
     render(<App />);
-    await waitFor(() => expect(timelineRects().length).toBe(1));
+    await waitFor(() => expect(timelineRects().length).toBe(2));
 
     fireEvent.click(timelineRects()[0]);
 
@@ -111,7 +136,7 @@ describe("App integration (segments)", () => {
   it("shows an unknown application as a placeholder, not a blank", async () => {
     invoke.mockResolvedValue([seg("s1", 9, 10, "idle", null)]);
     render(<App />);
-    await waitFor(() => expect(timelineRects().length).toBe(1));
+    await waitFor(() => expect(timelineRects().length).toBe(2));
     fireEvent.click(timelineRects()[0]);
     await waitFor(() => expect(screen.getByText("（未知）")).toBeTruthy());
   });
