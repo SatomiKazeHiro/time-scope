@@ -106,9 +106,15 @@ design-system/           UI 基调与组件规范
 
 | 优先级 | 缺什么 | 影响 |
 |---|---|---|
+| 🟠 | **设置界面** | spec §9 的 `get_config` / `set_config` 未实现，改 `config.toml` 只能手改文件 |
 | 🟡 | `segment-updated` 实时推送（spec §9） | 现用 5 秒轮询顶着，够用 |
 | 🟡 | 规则热重载（spec §7.2） | 改完 `rules.toml` 要重启 |
 | 🟡 | `config.toml` 热重载 | 改完要重启（`EngineConfig` 是构造注入的，热重载要重放当天，不值当） |
+
+> **接手前先读 [`docs/superpowers/STATUS.md`](docs/superpowers/STATUS.md) 开头的
+> 「⛔ 别动这里」一节** —— 那里列了十条看起来像 bug 但是故意的地方，
+> 以及待重构清单。改 UI 另读
+> [`design-system/time-scope/MASTER.md`](design-system/time-scope/MASTER.md)。
 
 完整进度、遗留问题与未来计划：`docs/superpowers/STATUS.md`
 
