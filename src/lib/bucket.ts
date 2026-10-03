@@ -21,9 +21,11 @@ export function bucketStart(ts: number, intervalMs: number): number {
 /**
  * 一段被桶边界切出来的碎片。
  *
- * 与 `bucketSegments` 的区别：那个把**整段**塞进它跨越的每个桶（聚合用），
- * 这个按 spec §8.2 的原话「一个跨桶的 segment 按桶边界切成多段，按落入时长分配」
- * 真正把时间切开 —— 每块只覆盖自己那段时间。
+ * spec §8.2 原话：「一个跨桶的 segment 按桶边界切成多段，按落入时长分配」——
+ * 每块只覆盖自己那段时间。
+ *
+ * （曾经还有一个 `bucketSegments` 做的是相反的事：把**整段**塞进它跨越的
+ * 每个桶。那是聚合不是切片，而且没有任何调用方，已连测试一起删掉。）
  */
 export interface SegmentSlice {
   /** 切片后唯一。`${segmentId}#${序号}` */
@@ -94,43 +96,6 @@ export function sliceSegments(segments: Segment[], intervalMs: number): SegmentS
   return out;
 }
 
-export interface Bucket {
-  start: number;
-  end: number;
-  segments: Segment[];
-}
-
-/**
- * 把段切进它跨越的各个桶。跨桶的段会在多个桶里各出现一次。
- *
- * 桶的下界取到 [0, DAY_MS)：跨零点的段、或时区差导致的越界，
- * 不夹的话会算出负下标的桶。
- */
-export function bucketSegments(segments: Segment[], intervalMs: number): Bucket[] {
-  const byStart = new Map<number, Segment[]>();
-  for (const s of segments) {
-    const clampedStart = Math.max(s.startAt, 0);
-    const clampedEnd = Math.min(s.endAt, DAY_MS);
-    if (clampedEnd <= clampedStart) {
-      // 零长或完全在一天之外的段：仍归入起点所在桶，免得静默丢失
-      const only = bucketStart(clampedStart, intervalMs);
-      const arr = byStart.get(only);
-      if (arr) arr.push(s);
-      else byStart.set(only, [s]);
-      continue;
-    }
-    const first = bucketStart(clampedStart, intervalMs);
-    const last = bucketStart(clampedEnd - 1, intervalMs);
-    for (let b = first; b <= last; b += intervalMs) {
-      const arr = byStart.get(b);
-      if (arr) arr.push(s);
-      else byStart.set(b, [s]);
-    }
-  }
-  return Array.from(byStart.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([start, segs]) => ({ start, end: start + intervalMs, segments: segs }));
-}
 
 export interface SummaryRow {
   category: Category;

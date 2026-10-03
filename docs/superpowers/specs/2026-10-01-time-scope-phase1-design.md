@@ -37,7 +37,7 @@
 | 输入强度采集 | GetLastInputInfo 心跳近似 | 避开 WH_KEYBOARD_LL 全局钩子的杀软误报风险与高频回调开销（ActivityWatch 同款方案） |
 | 窗口采集方式 | SetWinEventHook 事件驱动 | 零轮询，只在状态变化时产生 Event |
 | 时间粒度 | 不落库，查询时切桶 | `floor(ts/interval)*interval`，改显示粒度不用重算历史 |
-| 前端 | React 19 + Vite + visx | 时间块为自定义 SVG/div 渲染，不引入重型图表库 |
+| 前端 | React 19 + Vite + Tailwind v4 | 时间块为自定义 SVG/div 渲染，不引入重型图表库（原稿写的是 visx，实际没用，见 §19） |
 
 ## 3. 总体架构
 
@@ -72,16 +72,21 @@ Windows OS
 ```
 time-scope/
 ├── package.json              # 前端（pnpm）
-├── src/                      # React 前端（Vite + TS）
+├── design-system/            # UI 规范（MASTER.md）+ 色板校验脚本
+├── src/                      # React 前端（Vite + TS + Tailwind v4）
+│   ├── styles/theme.css      # 设计 token，色值唯一真相
+│   ├── design/               # categories.ts 类别元数据 / useTheme.ts 三态主题
 │   ├── components/
-│   │   ├── Timeline.tsx      # 24h 时间条
-│   │   ├── TimelineBlock.tsx # 单个 segment 色块
+│   │   ├── SegmentTimeline.tsx   # 24h 时间条（类别/专注度/切换次数三态）
 │   │   ├── GranularityPicker.tsx
-│   │   └── DaySummary.tsx
+│   │   ├── MetricPicker.tsx      # 指标切换 + 顺序色阶图例
+│   │   ├── DaySummary.tsx        # 分类时长 + 活跃/空闲比
+│   │   ├── EventDetail.tsx       # 选中段的详情
+│   │   └── ThemeToggle.tsx
 │   ├── lib/
-│   │   ├── bucket.ts         # 分桶纯函数
-│   │   └── ipc.ts            # Tauri invoke/listen 封装
-│   └── App.tsx
+│   │   ├── bucket.ts         # 分桶切片 / 汇总纯函数
+│   │   └── metrics.ts        # 每桶的专注度、切换次数
+│   └── App.tsx               # IPC 封装内联在 types.ts，原计划的 ipc.ts 没建
 └── src-tauri/
     ├── Cargo.toml            # workspace root
     ├── tauri.conf.json
@@ -92,6 +97,9 @@ time-scope/
         ├── engine/           # 纯库：Event → Context → Segment，无 IO 无 Tauri 依赖
         └── storage/          # rusqlite：schema 迁移、batch writer、查询
 ```
+
+> 上面的树按 2026-10-04 的实际结构更新（原稿的 `Timeline.tsx` / `TimelineBlock.tsx`
+> / `ipc.ts` 都没建；IPC 封装最终放进了 `types.ts`）。
 
 约束：
 
@@ -409,12 +417,32 @@ function bucketStart(ts: number, intervalMs: number): number {
 
 ## 10. 前端设计（React）
 
-- **主视图**：当日 24h 时间线横条，segment 按 category 着色（visx scale 计算布局，手写 SVG rect 渲染；一天几百段，无需重型图表库）。
-- **粒度切换器**：10 / 30（默认）/ 60 / 120 分钟。
-- **hover/点击 segment**：显示起止时间、应用、类别、置信度、evidence 摘要（"依据：VS Code 前台 × 23 次心跳活跃"）。
-- **当日汇总**：各 category 时长条形 + 活跃/空闲比。
+> 本节在 2026-10-03/04 的 UI 轮次后按实现重写。原稿假定用 `@visx/scale`，
+> 实际没有引入 —— 理由与新增能力见 §19。
+
+- **主视图**：当日 24h 时间线横条，segment 按 category 着色。手写 SVG rect +
+  `viewBox`（不用 visx：布局只是"起点→x、时长→宽"两个线性映射，
+  引入 scale 库换不来任何东西，却多一个依赖和一层抽象）。
+- **时间线三态指标**：`类别` / `专注度` / `切换次数`。同一行轨道，不加第二行。
+  指标模式画的是**桶**（粒度即桶宽）而不是段，用一条顺序色阶（紫）着色。
+  - 专注度 = 桶内主导类别的时长占比
+  - 切换次数 = 桶内相邻段之间**应用变了**的次数（不是段数减一：引擎会把同一次
+    活动按标题变化切成多段，那些不是用户自己在跳）
+  - 两者都由 `get_segments` 的结果算出，**不需要新后端接口**
+- **粒度切换器**：10 / 30（默认）/ 60 / 120 分钟。类别模式下按它切分段落；
+  指标模式下它就是桶宽。
+- **主题**：深 / 浅 / 跟随系统三态，选择记在 `localStorage`。两套色板各自
+  独立选步进，不是互为反色（深色底上"更显眼"= 更亮，浅色底上 = 更深）。
+- **hover/点击**：悬停出浮层，点击出详情面板 —— 起止时间、时长、应用、类别、
+  置信度、分类依据、证据条数、窗口标题（限高自滚）。
+- **当日汇总**：各 category 时长条形 + **活跃/空闲比**。
 - **日期切换**：上一日/下一日/回到今天。
-- 技术：React 19 + Vite + TypeScript + `@visx/scale` + `@visx/shape`；无重型状态管理库（组件 state + 一个 config context 足够）。
+- **设计 token**：`src/styles/theme.css` 是色值唯一真相，组件通过
+  `var(--color-cat-*)` 引用。类别色经过色觉安全校验（时间线上任意两类都可能
+  相邻，必须按 all-pairs 判）。规范与理由见
+  [`design-system/time-scope/MASTER.md`](../../../design-system/time-scope/MASTER.md)。
+- 技术：React 19 + Vite + TypeScript + Tailwind v4 + lucide-react；
+  无重型状态管理库（组件 state 足够，config context 至今没派上用场）。
 
 ## 11. 隐私设计
 
@@ -524,3 +552,23 @@ Phase 1 前两步（骨架、引擎）实施完成后，回头审了一遍本文
 | §4.2 `close_behavior` 三态 | spec 正确，**plan 的实现写错了** | plan 的 `close_interception_when(tray_ok)` 硬编码 `Ask`，`minimize`/`quit` 形同虚设 | 实现按 spec，plan 的写法未采纳 |
 | §4.2 "退出仅走托盘菜单" | spec **过严**，实现放宽 | 托盘创建失败时若仍禁止其他退出路径，用户无法退出应用。降级为「关窗即退出」 | §12.1「托盘不可用」 |
 | §5.2 数值下限 `idle_threshold_s ≥ 10` | spec 正确，实现补了**上界** | spec 只给下限；上界（一天）防止 u32 极值把时间线切成几十万段 | `config.rs` 的 `MAX_SECONDS` |
+
+---
+
+## 19. 实施后修订记录（2026-10-03/04，UI 设计系统轮次）
+
+这一轮不在原三步计划内。规范主体移到了
+[`design-system/time-scope/MASTER.md`](../../../design-system/time-scope/MASTER.md)，
+本节只记录**与本 spec 的分歧和缺口**。
+
+| spec 原文 | 判定 | 依据 | 处理 |
+|---|---|---|---|
+| §10 "visx scale 计算布局" + 技术栈列 `@visx/scale` `@visx/shape` | **spec 假设过重，实现没用** | 时间线布局只是"起点→x、时长→宽"两个线性映射；一天几百段的场景下手写 SVG 与用 scale 库等价 | 改为手写 SVG + `viewBox`。`visx` 未进 `package.json` |
+| §10 "粒度切换器" | spec **没说清它干什么**，实现最初也没干 | 早期实现只改了一个桶计数，视图纹丝不动 —— 宽度已经表示时长、颜色已经表示类别、段间缝已经表示活动边界，再切一刀不增加任何信息 | 重定义为桶宽；指标模式下它决定格子大小 |
+| §10 "evidence 摘要（'依据：VS Code 前台 × 23 次心跳活跃'）" | spec 描述的文案**没实现** | 实际是"N 条事件支撑" | 保持现状，spec 这句暂不成立 |
+| §10 "各 category 时长条形 + 活跃/空闲比" | spec 正确，实现**长期缺了后半句** | 活跃/空闲比直到 2026-10-04 才补上 | 已实现。`unknown` 计入活跃（"没分类出是什么"≠"没在做事"） |
+| §9 `get_config` / `set_config` | spec 列了，**至今未实现** | Rust 侧只有 `get_segments` 和 `get_segment_titles` | 已知缺口。改 `config.toml` 只能手改文件，见 §4.2 |
+| §9 `segment-updated` 推送 | 未实现，5 秒轮询顶着 | 功能等价，差别只在数据量大了之后浪费 | 已知欠账，优先级最低 |
+| （spec 未提） | **新增** | 类别色必须过 all-pairs 色觉闸：八色平铺在时间线上不成立（六色时最差一对 deutan ΔE 2.7，等同同色） | 色相只承载三个层级 + 明度阶；深浅两套各自选步进。理由见 MASTER §2 |
+| （spec 未提） | **新增** | 真实数据是一天上百个 1–3 分钟的短段，干净数据下设计的界面在真实场景里不可读 | 轨道可见 + 最小段宽 2.5 单位 + 底部刻度尺。验证用 mock 必须按最坏情况造 |
+| （spec 未提） | **新增** | 窗口标题多到会撑开整个页面 | 标题列表限高自滚 + App 根节点 `h-full` 让底部面板各自滚 |

@@ -8,9 +8,9 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...
 
 // 时间必须基于"今天"：DateSummary 会把段截到 [今天 00:00, 次日 00:00)，
 // 硬编码日期的段在别的日子会算出空汇总。
-function dayAt(hour: number): number {
+function dayAt(hour: number, minute = 0): number {
   const d = new Date();
-  d.setHours(hour, 0, 0, 0);
+  d.setHours(hour, minute, 0, 0);
   return d.getTime();
 }
 
@@ -89,6 +89,69 @@ describe("App integration (segments)", () => {
     // 1 小时按 10 分钟切 = 6 块
     await waitFor(() => expect(timelineRects().length).toBe(6));
     expect(screen.getByText("1 段 → 6 块（10 分）")).toBeTruthy();
+  });
+
+  it("指标模式读数说的是指标，不是段数", async () => {
+    // 头部那行是模式的唯一文字出口，三种模式说三件不同的事。
+    // 两个类别必须落在**同一小时**里：09:00–09:30 work + 09:30–10:00 browsing。
+    // 否则 60 分桶里每桶只有一个类别，专注度恒为 100%，测不出东西。
+    const half = (id: string, fromH: number, fromM: number, toM: number, category: Segment["category"], app: string): Segment => ({
+      id,
+      startAt: dayAt(fromH, fromM),
+      endAt: dayAt(toM < fromM ? fromH + 1 : fromH, toM),
+      category,
+      application: app,
+      confidence: 0.9,
+      classifier: "rule",
+      classifierVersion: "rules:15",
+      evidenceEventIds: ["e1", "e2", "e3"],
+    });
+    invoke.mockResolvedValue([
+      half("s1", 9, 0, 30, "work", "Code.exe"),
+      half("s2", 9, 30, 0, "browsing", "chrome.exe"),
+    ]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBeGreaterThan(0));
+    // 这两段各占 30 分钟，在 30 分粒度下没被切开，所以头部走短格式
+    expect(screen.getByText("2 段（30 分）")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("60分"));
+    fireEvent.click(screen.getByRole("button", { name: "专注度" }));
+    await waitFor(() => expect(screen.getByText(/平均专注度/)).toBeTruthy());
+    expect(screen.getByText(/平均专注度 50%/)).toBeTruthy();
+    expect(screen.queryByText(/段 →/)).toBeNull();
+
+    // 同一桶里 work→browsing 是一次应用切换
+    fireEvent.click(screen.getByRole("button", { name: "切换次数" }));
+    await waitFor(() => expect(screen.getByText(/全天切换/)).toBeTruthy());
+    expect(screen.getByText(/全天切换 1 次/)).toBeTruthy();
+  });
+
+  it("指标模式下头部读数跟着粒度走", async () => {
+    invoke.mockResolvedValue([seg("s1", 9, 10, "work")]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "专注度" }));
+    await waitFor(() => expect(screen.getByText(/30 分一格/)).toBeTruthy());
+    fireEvent.click(screen.getByText("120分"));
+    await waitFor(() => expect(screen.getByText(/120 分一格/)).toBeTruthy());
+  });
+
+  it("没有活动的日子不显示指标读数，而不是显示 0%", async () => {
+    // 分母是 0，算出来是 NaN —— 显示 NaN% 比不显示更糟
+    invoke.mockResolvedValue([seg("s1", 9, 10, "work")]);
+    const { unmount } = render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "专注度" }));
+    await waitFor(() => expect(screen.getByText(/平均专注度/)).toBeTruthy());
+    unmount();
+
+    invoke.mockResolvedValue([]);
+    render(<App />);
+    await waitFor(() => expect(screen.getByText(/还没有活动段/)).toBeTruthy());
+    expect(screen.queryByText(/平均专注度/)).toBeNull();
+    expect(screen.queryByText(/全天切换/)).toBeNull();
   });
 
   it("shows an error state instead of throwing when the backend rejects", async () => {

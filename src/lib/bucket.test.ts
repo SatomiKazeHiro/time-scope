@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  bucketSegments,
   bucketStart,
   formatDuration,
   GRANULARITIES,
@@ -12,7 +11,6 @@ import type { Category, Segment } from "../types";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
-const DAY = 86_400_000;
 
 function seg(
   id: string,
@@ -56,69 +54,6 @@ describe("bucketStart", () => {
   it("guards against a zero interval", () => {
     // 除零会得到 NaN/Infinity，静默传下去会让整个时间线崩掉
     expect(bucketStart(HOUR, 0)).toBe(HOUR);
-  });
-});
-
-describe("bucketSegments", () => {
-  it("returns one bucket per interval, ascending", () => {
-    const bs = bucketSegments([seg("a", 0, HOUR)], HOUR);
-    expect(bs.length).toBe(1);
-    expect(bs[0].start).toBe(0);
-    expect(bs[0].end).toBe(HOUR);
-  });
-
-  it("puts a segment into every bucket it spans", () => {
-    const bs = bucketSegments([seg("a", 0, HOUR * 2 + 30 * MIN)], HOUR);
-    // 跨 2.5 小时的段应落进 3 个小时桶
-    expect(bs.length).toBe(3);
-    expect(bs.every((b) => b.segments.some((x) => x.id === "a"))).toBe(true);
-  });
-
-  it("a segment starting exactly on a boundary lands in the later bucket", () => {
-    const bs = bucketSegments([seg("a", HOUR, HOUR * 2)], HOUR);
-    expect(bs[0].start).toBe(HOUR);
-    expect(bs.length).toBe(1);
-  });
-
-  it("a segment ending exactly on a boundary does not touch the next bucket", () => {
-    const bs = bucketSegments([seg("a", 0, HOUR)], HOUR);
-    expect(bs.length).toBe(1);
-    expect(bs[0].start).toBe(0);
-  });
-
-  it("empty input yields empty buckets", () => {
-    expect(bucketSegments([], HOUR)).toEqual([]);
-  });
-
-  it("buckets stay ascending even when input is unsorted", () => {
-    const bs = bucketSegments(
-      [seg("b", HOUR * 2, HOUR * 3), seg("a", 0, HOUR)],
-      HOUR,
-    );
-    const starts = bs.map((b) => b.start);
-    expect(starts).toEqual([...starts].sort((x, y) => x - y));
-  });
-
-  it("switching granularity never changes which buckets a segment touches", () => {
-    const s = seg("a", 0, HOUR * 2 + 30 * MIN);
-    for (const m of GRANULARITIES) {
-      const bs = bucketSegments([s], m * MIN);
-      expect(bs.length).toBeGreaterThan(0);
-      expect(bs[bs.length - 1].end).toBeGreaterThan(s.startAt);
-      expect(bs[0].start).toBeLessThanOrEqual(s.startAt);
-    }
-  });
-
-  it("segments are clamped into the requested day", () => {
-    // 跨零点的段（或时区差导致的越界）不该产生负下标的桶
-    const bs = bucketSegments([seg("a", -HOUR, DAY + HOUR)], HOUR);
-    expect(bs[0].start).toBeGreaterThanOrEqual(0);
-    expect(bs[bs.length - 1].start).toBeLessThan(DAY);
-  });
-
-  it("a zero-length segment still lands in exactly one bucket", () => {
-    const bs = bucketSegments([seg("a", HOUR, HOUR)], HOUR);
-    expect(bs.length).toBe(1);
   });
 });
 
