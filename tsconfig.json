@@ -17,5 +17,5 @@
     "types": ["vitest/globals"]
   },
   "include": ["src"],
-  "exclude": ["src/preview.test.tsx"]
+  "exclude": ["src/preview.test.tsx", "src/preview-timeline.test.tsx"]
 }

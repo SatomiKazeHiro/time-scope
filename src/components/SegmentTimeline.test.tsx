@@ -117,3 +117,82 @@ describe("SegmentTimeline", () => {
     expect(container.textContent).toMatch(/还没有活动段/);
   });
 });
+
+/** 「此刻」游标：唯一一根用 cursor 色的 line。 */
+function nowCursor(container: HTMLElement): SVGLineElement | null {
+  return (
+    Array.from(container.querySelectorAll("line")).find(
+      (l) => l.getAttribute("stroke") === "var(--color-cursor-now)",
+    ) ?? null
+  );
+}
+
+describe("SegmentTimeline 刻度尺与此刻游标", () => {
+  const today: Segment[] = [
+    {
+      id: "a",
+      startAt: Date.now() - 3_600_000,
+      endAt: Date.now(),
+      category: "work",
+      application: "Code.exe",
+      confidence: 0.9,
+      classifier: "rule",
+      classifierVersion: "rules:15",
+      evidenceEventIds: [],
+    },
+  ];
+
+  it("看今天时画此刻游标", () => {
+    const { container } = render(
+      <SegmentTimeline segments={today} dayStartMs={0} onSelect={() => {}} showNow />,
+    );
+    expect(nowCursor(container)).not.toBeNull();
+  });
+
+  it("看历史日期时不画 —— 那天没有「现在」", () => {
+    const { container } = render(
+      <SegmentTimeline segments={today} dayStartMs={0} onSelect={() => {}} />,
+    );
+    expect(nowCursor(container)).toBeNull();
+  });
+
+  it("游标不吃鼠标事件，绝不挡用户点色块", () => {
+    const { container } = render(
+      <SegmentTimeline segments={today} dayStartMs={0} onSelect={() => {}} showNow />,
+    );
+    expect(nowCursor(container)!.getAttribute("pointer-events")).toBe("none");
+  });
+
+  it("游标贯穿轨道和底部刻度尺", () => {
+    // 刻度尺在轨道下方，游标只画轨道的一半就等于没有时间感
+    const { container } = render(
+      <SegmentTimeline segments={today} dayStartMs={0} onSelect={() => {}} showNow />,
+    );
+    const svg = container.querySelector("svg")!;
+    const cursor = nowCursor(container)!;
+    expect(Number(cursor.getAttribute("y2"))).toBe(Number(svg.getAttribute("viewBox")!.split(" ")[3]));
+  });
+
+  it("底部每 10 分钟一根刻度、每 60 分钟一根更高的", () => {
+    const { container } = render(
+      <SegmentTimeline segments={today} dayStartMs={0} onSelect={() => {}} />,
+    );
+    // 刻度组用 data-ruler 定位：stroke 挂在 <g> 上，逐根 <line> 读不到
+    const ruler = Array.from(
+      container.querySelectorAll('[data-ruler="ticks"] line'),
+    ) as SVGLineElement[];
+    // 一天 24×60 根
+    expect(ruler.length).toBe(144);
+    const heights = new Set(
+      ruler.map((l) => Number(l.getAttribute("y2")) - Number(l.getAttribute("y1"))),
+    );
+    expect(heights.size).toBe(2); // 小刻度 8 单位、大刻度 16 单位
+  });
+
+  it("刻度和游标都不增加 rect —— 测试拿 rect 数量断言段数", () => {
+    const { container } = render(
+      <SegmentTimeline segments={today} dayStartMs={0} onSelect={() => {}} showNow />,
+    );
+    expect(rects(container).length).toBe(today.length);
+  });
+});

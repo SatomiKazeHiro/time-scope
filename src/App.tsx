@@ -112,6 +112,7 @@ export default function App() {
               dayStartMs={dayStartMs}
               onSelect={(s) => setSelected((cur) => (cur?.id === s.id ? null : s))}
               selectedId={selected?.id ?? null}
+              showNow={isToday}
             />
           </section>
 

@@ -80,7 +80,13 @@
   --on-cat-idle: #e6eaf0; /* 7.74:1 */
   --on-cat-unknown: #e6eaf0; /* 10.83:1 */
 
-  --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45);
+  /* 「此刻」游标。单开一个 token 而不是复用 state-critical ——
+     那个是错误色，借用会让"当前时刻"读成"出错了"。
+     #e63946 在深轨道 3.83:1、浅轨道 3.82:1，两边几乎对称，
+     所以只有这一份声明，浅色块不必覆盖。 */
+  --color-cursor-now: #e63946;
+
+  --shadow-pop: 0 3px 10px rgb(0 0 0 / 0.34);
 
   /* 字族：系统字体，不下载 webfont。
      离线桌面应用，且常驻内存预算 < 80MB（STATUS §3）。中文走雅黑，
@@ -171,7 +177,7 @@
     --on-cat-idle: #12151a;
     --on-cat-unknown: #12151a;
 
-    --shadow-pop: 0 8px 24px rgb(10 15 25 / 0.12);
+    --shadow-pop: 0 3px 10px rgb(10 15 25 / 0.1);
   }
 }
 
@@ -218,7 +224,7 @@
   --on-cat-idle: #12151a;
   --on-cat-unknown: #12151a;
 
-  --shadow-pop: 0 8px 24px rgb(10 15 25 / 0.12);
+  --shadow-pop: 0 3px 10px rgb(10 15 25 / 0.1);
 }
 
 @layer base {
