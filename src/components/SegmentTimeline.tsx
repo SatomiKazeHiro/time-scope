@@ -1,5 +1,12 @@
 import { useMemo, useState } from "react";
 import { formatDuration, sliceSegments, type SegmentSlice } from "../lib/bucket";
+import {
+  bucketMetrics,
+  focusStep,
+  switchStep,
+  scaleColor,
+  type BucketMetric,
+} from "../lib/metrics";
 import { colorForCategory, labelForCategory, labelInkFor, metaForCategory } from "../design/categories";
 import type { Category, Segment } from "../types";
 
@@ -48,20 +55,40 @@ export const CATEGORY_COLOR: Record<Category, string> = Object.fromEntries(
 
 export { colorForCategory };
 
+/** 时间线看什么。类别模式画段，另两种模式画桶。 */
+export type MetricMode = "category" | "focus" | "switch";
+
+export const METRIC_LABEL: Record<MetricMode, string> = {
+  category: "类别",
+  focus: "专注度",
+  switch: "切换次数",
+};
+
 interface Props {
   segments: Segment[];
   /** 该日 00:00 的 Unix 毫秒（本地时区） */
   dayStartMs: number;
-  onSelect: (s: Segment) => void;
+  /** 点色块。第二个参数是所属桶的下标 —— 指标模式下色块就是桶，得知道是哪一格。 */
+  onSelect: (s: Segment, bucketIndex?: number) => void;
   /** 当前选中的段：给它加一圈亮环。选中用明度表达，不占用任何类别色相。 */
   selectedId?: string | null;
+  /**
+   * 指标模式下被点中的那一格。
+   *
+   * 类别模式下一段就是一个色块，选中它就够；指标模式下**一段横跨十几个桶**，
+   * 把它们全圈上会画出一道白栅栏。指标模式的选中语义是「我在看哪一格」，
+   * 所以只圈被点的那一格。
+   */
+  selectedBucket?: number | null;
   /** 正在看今天时画「此刻」游标。历史日期上没有"现在"，画了是错的。 */
   showNow?: boolean;
   /**
-   * 粒度（毫秒）。段按这个间隔切分，刻度尺的大刻度也跟着它走。
-   * 传 0 / 不传 = 不切。spec §8.2：切换粒度只改前端参数，不重查后端。
+   * 粒度（毫秒）。类别模式下段按它切分；指标模式下它就是桶宽。
+   * 传 0 / 不传 = 类别模式不切。spec §8.2：切换粒度只改前端参数，不重查后端。
    */
   intervalMs?: number;
+  /** 看类别还是看指标。默认 category。 */
+  metric?: MetricMode;
 }
 
 interface Placed {
@@ -105,12 +132,19 @@ export default function SegmentTimeline({
   dayStartMs,
   onSelect,
   selectedId,
+  selectedBucket = null,
   showNow = false,
   intervalMs = 0,
+  metric = "category",
 }: Props) {
-  const [hover, setHover] = useState<{ placed: Placed; xPct: number } | null>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const slices = useMemo(() => sliceSegments(segments, intervalMs), [segments, intervalMs]);
+  const buckets = useMemo(
+    () => (metric === "category" ? [] : bucketMetrics(segments, dayStartMs, intervalMs)),
+    [metric, segments, dayStartMs, intervalMs],
+  );
 
   if (segments.length === 0) {
     return (
@@ -124,6 +158,7 @@ export default function SegmentTimeline({
     );
   }
   const dayEnd = dayStartMs + DAY_MS;
+  const isMetric = metric !== "category";
 
   // 跨零点或时区差可能让段越出当天，不夹会画出负 x 或超 viewBox
   const placed: Placed[] = slices.map((sl, i) => {
@@ -144,7 +179,20 @@ export default function SegmentTimeline({
       widthPct: (Math.max(rawW - gap, MIN_WIDTH) / WIDTH) * 100,
       gap,
       segLeftPct: ((segStart - dayStartMs) / DAY_MS) * 100,
-      segWidthPct: (((segEnd - segStart) / DAY_MS) * 100),
+      segWidthPct: (segEnd - segStart) / DAY_MS * 100,
+    };
+  });
+
+  /** 指标模式下，一个桶就是一个色块。 */
+  const bucketCells = buckets.map((b, i) => {
+    const step = metric === "focus" ? focusStep(b.focus) : switchStep(b.switches);
+    const rawW = WIDTH / buckets.length;
+    return {
+      metric: b,
+      index: i,
+      step: b.segmentCount === 0 ? 0 : step,
+      x: i * rawW,
+      w: Math.max(rawW - GAP, MIN_WIDTH),
     };
   });
 
@@ -158,13 +206,16 @@ export default function SegmentTimeline({
   // 大刻度跟随当前粒度，于是这个控件在刻度尺上也看得见反应。
   const majorStepMin = intervalMs >= MINUTE_MS ? intervalMs / MINUTE_MS : DEFAULT_MAJOR_STEP_MIN;
   const ticks: { x: number; major: boolean }[] = [];
-  const step = Math.max(1, Math.min(MINOR_STEP_MIN, majorStepMin));
-  for (let m = 0; m < MINUTES_PER_DAY; m += step) {
+  const stepMin = Math.max(1, Math.min(MINOR_STEP_MIN, majorStepMin));
+  for (let m = 0; m < MINUTES_PER_DAY; m += stepMin) {
     const major = m % majorStepMin === 0;
     // 粒度比 10 分钟还细时，大刻度和这一步重合，只画一根
-    if (!major && step >= majorStepMin) continue;
+    if (!major && stepMin >= majorStepMin) continue;
     ticks.push({ x: (m / MINUTES_PER_DAY) * WIDTH, major });
   }
+
+  const hoverBucket: BucketMetric | null =
+    isMetric && hoverIndex !== null ? buckets[hoverIndex] : null;
 
   return (
     /* 外层只负责定位，不裁剪 —— 提示框在轨道**上方**，放进裁剪容器会被切掉 */
@@ -179,45 +230,93 @@ export default function SegmentTimeline({
           aria-label="24h 活动时间线"
           className="block h-18 w-full"
         >
-          {placed.map((p) => {
-            const seg = p.slice.segment;
-            const selected = selectedId === p.slice.segmentId;
-            return (
-              <rect
-                key={p.slice.id}
-                data-id={p.slice.segmentId}
-                x={p.x}
-                y={4}
-                width={p.w}
-                height={TRACK_H - 8}
-                rx={1.5}
-                fill={colorForCategory(seg.category)}
-                vectorEffect="non-scaling-stroke"
-                className="cursor-pointer"
-                /* 描边兼两职：选中时是 2px 亮环（选中用明度表达，不占用类别色相）；
-                   未选中时是 8px 透明描边 —— 1 分钟的段只有约 3px 宽，
-                   裸 rect 不好点。透明描边只扩大命中区，不改变观感。 */
-                style={{
-                  pointerEvents: "all",
-                  stroke: selected ? "var(--color-ink)" : "transparent",
-                  strokeWidth: selected ? 2 : 8,
-                }}
-                /* 点任意一块都选中整段活动，不是只选中这一片 */
-                onClick={() => onSelect(seg)}
-                onMouseMove={(e) => {
-                  const box = e.currentTarget.ownerSVGElement!.getBoundingClientRect();
-                  const xPct = ((e.clientX - box.left) / box.width) * 100;
-                  setHover({ placed: p, xPct });
-                }}
-                onMouseLeave={() => setHover(null)}
-              >
-                {/* 原生 title 兜底：浮层还没渲染出来前也有提示 */}
-                <title>
-                  {`${clockOf(seg.startAt)} – ${clockOf(seg.endAt)} · ${seg.category} · ${formatDuration(seg.endAt - seg.startAt)}`}
-                </title>
-              </rect>
-            );
-          })}
+          {isMetric
+            ? bucketCells.map((c) => {
+                const selected = selectedBucket === c.index;
+                return (
+                  <rect
+                    key={`b${c.index}`}
+                    data-bucket={c.index}
+                    x={c.x}
+                    y={4}
+                    width={c.w}
+                    height={TRACK_H - 8}
+                    rx={1.5}
+                    /* 没数据的桶留成轨道色，别用最低档 —— 那会被读成"专注度极低" */
+                    fill={c.step === 0 ? "transparent" : scaleColor(c.step)}
+                    vectorEffect="non-scaling-stroke"
+                    className="cursor-pointer"
+                    style={{
+                      pointerEvents: "all",
+                      stroke: selected ? "var(--color-ink)" : "transparent",
+                      strokeWidth: selected ? 2 : 6,
+                    }}
+                    onClick={() => {
+                      const s = c.metric.segments[0];
+                      if (s) onSelect(s, c.index);
+                    }}
+                    onMouseMove={(e) => {
+                      const box = e.currentTarget.ownerSVGElement!.getBoundingClientRect();
+                      setHoverX(((e.clientX - box.left) / box.width) * 100);
+                      setHoverIndex(c.index);
+                    }}
+                    onMouseLeave={() => {
+                      setHoverX(null);
+                      setHoverIndex(null);
+                    }}
+                  >
+                    <title>
+                      {`${clockOf(c.metric.start)} – ${clockOf(c.metric.end)}`}
+                    </title>
+                  </rect>
+                );
+              })
+            : null}
+          {isMetric
+            ? null
+            : placed.map((p) => {
+                const seg = p.slice.segment;
+                const selected = selectedId === p.slice.segmentId;
+                const cellIndex = slices.findIndex((s) => s.id === p.slice.id);
+                return (
+                  <rect
+                    key={p.slice.id}
+                    data-id={p.slice.segmentId}
+                    x={p.x}
+                    y={4}
+                    width={p.w}
+                    height={TRACK_H - 8}
+                    rx={1.5}
+                    fill={colorForCategory(seg.category)}
+                    vectorEffect="non-scaling-stroke"
+                    className="cursor-pointer"
+                    /* 描边兼两职：选中时是 2px 亮环（选中用明度表达，不占用类别色相）；
+                       未选中时是 8px 透明描边 —— 1 分钟的段只有约 3px 宽，
+                       裸 rect 不好点。透明描边只扩大命中区，不改变观感。 */
+                    style={{
+                      pointerEvents: "all",
+                      stroke: selected ? "var(--color-ink)" : "transparent",
+                      strokeWidth: selected ? 2 : 8,
+                    }}
+                    /* 点任意一块都选中整段活动，不是只选中这一片 */
+                    onClick={() => onSelect(seg)}
+                    onMouseMove={(e) => {
+                      const box = e.currentTarget.ownerSVGElement!.getBoundingClientRect();
+                      setHoverX(((e.clientX - box.left) / box.width) * 100);
+                      setHoverIndex(cellIndex);
+                    }}
+                    onMouseLeave={() => {
+                      setHoverX(null);
+                      setHoverIndex(null);
+                    }}
+                  >
+                    {/* 原生 title 兜底：浮层还没渲染出来前也有提示 */}
+                    <title>
+                      {`${clockOf(seg.startAt)} – ${clockOf(seg.endAt)} · ${seg.category} · ${formatDuration(seg.endAt - seg.startAt)}`}
+                    </title>
+                  </rect>
+                );
+              })}
 
           {/* 刻度尺：小刻度固定 10 分钟作参考，大刻度跟随当前粒度。
               一天一百多根，用 stroke 而非 DOM 节点，省得为装饰铺这么多元素。 */}
@@ -266,7 +365,9 @@ export default function SegmentTimeline({
             这层覆盖层只盖轨道那 64px，直接相对整个容器 top-1/2 会把标签
             推到轨道底边去蹭刻度尺。 */}
         <div className="pointer-events-none absolute inset-x-0 top-0 h-16">
-          {placed.map((p) => {
+          {isMetric
+            ? null
+            : placed.map((p) => {
             const meta = metaForCategory(p.slice.segment.category);
             if (!p.slice.isFirst || !meta.inlineLabel) return null;
             const segW = (p.segWidthPct / 100) * WIDTH;
@@ -290,32 +391,61 @@ export default function SegmentTimeline({
         </div>
       </div>
 
-      {hover && (
+      {hoverX !== null && (
         <div
           role="tooltip"
           className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-md border border-line-strong bg-surface-3 px-2.5 py-1.5 text-xs whitespace-nowrap shadow-pop"
-          style={{ left: `${Math.min(Math.max(hover.xPct, 8), 92)}%`, top: -8 }}
+          style={{ left: `${Math.min(Math.max(hoverX, 8), 92)}%`, top: -8 }}
         >
-          <span
-            className="mr-1.5 inline-block size-2 rounded-[2px] align-middle"
-            style={{ background: colorForCategory(hover.placed.slice.segment.category) }}
-            aria-hidden
-          />
-          <span className="font-medium">
-            {labelForCategory(hover.placed.slice.segment.category)}
-          </span>
-          <span className="text-ink-muted">
-            {" "}
-            · {hover.placed.slice.segment.application ?? "未知应用"}
-          </span>
-          <div className="tnum mt-0.5 text-ink-muted">
-            {clockOf(hover.placed.slice.segment.startAt)} –{" "}
-            {clockOf(hover.placed.slice.segment.endAt)}
-            <span className="mx-1 text-ink-ghost">|</span>
-            {formatDuration(
-              hover.placed.slice.segment.endAt - hover.placed.slice.segment.startAt,
-            )}
-          </div>
+          {hoverBucket && hoverIndex !== null ? (
+            <>
+              <span
+                className="mr-1.5 inline-block size-2 rounded-[2px] align-middle"
+                style={{ background: scaleColor(bucketCells[hoverIndex].step) }}
+                aria-hidden
+              />
+              <span className="font-medium">{METRIC_LABEL[metric]}</span>
+              <span className="text-ink-muted">
+                {metric === "focus"
+                  ? ` ${Math.round(hoverBucket.focus * 100)}%`
+                  : ` ${hoverBucket.switches} 次`}
+              </span>
+              <div className="tnum mt-0.5 text-ink-muted">
+                {clockOf(hoverBucket.start)} – {clockOf(hoverBucket.end)}
+                <span className="mx-1 text-ink-ghost">|</span>
+                {hoverBucket.segmentCount === 0
+                  ? "无活动"
+                  : `${hoverBucket.appCount} 个应用 · ${hoverBucket.segmentCount} 段`}
+              </div>
+              {hoverBucket.dominantCategory && (
+                <div className="mt-0.5 text-ink-faint">
+                  主要在做 {labelForCategory(hoverBucket.dominantCategory)}
+                </div>
+              )}
+            </>
+          ) : hoverIndex !== null ? (
+            (() => {
+              const p = placed[hoverIndex];
+              const seg = p?.slice.segment;
+              if (!seg) return null;
+              return (
+                <>
+                  <span
+                    className="mr-1.5 inline-block size-2 rounded-[2px] align-middle"
+                    style={{ background: colorForCategory(seg.category) }}
+                    aria-hidden
+                  />
+                  <span className="font-medium">{labelForCategory(seg.category)}</span>
+                  <span className="text-ink-muted"> · {seg.application ?? "未知应用"}</span>
+                  <div className="tnum mt-0.5 text-ink-muted">
+                    {clockOf(seg.startAt)} – {clockOf(seg.endAt)}
+                    <span className="mx-1 text-ink-ghost">|</span>
+                    {formatDuration(seg.endAt - seg.startAt)}
+                  </div>
+                </>
+              );
+            })()
+          ) : null}
         </div>
       )}
 

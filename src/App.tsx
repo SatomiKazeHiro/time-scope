@@ -5,8 +5,11 @@ import GranularityPicker from "./components/GranularityPicker";
 import DaySummary from "./components/DaySummary";
 import SegmentDetail from "./components/EventDetail";
 import ThemeToggle from "./components/ThemeToggle";
+import MetricPicker, { ScaleLegend } from "./components/MetricPicker";
+import { type MetricMode } from "./components/SegmentTimeline";
 import { useTheme } from "./design/useTheme";
 import { sliceSegments, DEFAULT_GRANULARITY } from "./lib/bucket";
+import { bucketMetrics } from "./lib/metrics";
 import { getSegments, shiftDate, todayString, type Segment } from "./types";
 
 type Status = "loading" | "ok" | "error";
@@ -18,9 +21,17 @@ export default function App() {
   const [date, setDate] = useState(todayString());
   const [segments, setSegments] = useState<Segment[]>([]);
   const [selected, setSelected] = useState<Segment | null>(null);
+  /** 指标模式下被点中的那一格 */
+  const [selectedBucket, setSelectedBucket] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [granularity, setGranularity] = useState<number>(DEFAULT_GRANULARITY);
   const { theme, cycle } = useTheme();
+  const [metric, setMetric] = useState<MetricMode>("category");
+  // 切模式时清掉按另一套语义选中的东西，免得留下一个圈不到任何东西的环
+  const switchMetric = (m: MetricMode) => {
+    setMetric(m);
+    setSelectedBucket(null);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -57,25 +68,51 @@ export default function App() {
 
   // spec §8.2：分桶在前端做，切换粒度不重查后端
   const intervalMs = granularity * 60_000;
-  // 与时间线内部同一套切片，头部读数说的就是屏幕上真的画了几块
+  const isMetric = metric !== "category";
+  // 类别模式说"切了几块"，指标模式说"全天平均专注度 / 共切换多少次"
   const pieceCount = useMemo(
-    () => sliceSegments(segments, intervalMs).length,
-    [segments, intervalMs],
+    () => (isMetric ? 0 : sliceSegments(segments, intervalMs).length),
+    [segments, intervalMs, isMetric],
   );
+  const dayStats = useMemo(() => {
+    if (!isMetric || segments.length === 0) return null;
+    const bs = bucketMetrics(segments, dayStartMs, intervalMs);
+    const withData = bs.filter((b) => b.segmentCount > 0);
+    if (withData.length === 0) return null;
+    const covered = withData.reduce((s, b) => s + b.coveredMs, 0);
+    return {
+      // 按覆盖时长加权，且别忘了 ×100 —— 少了这一步 1.0 会被 round 成「1%」
+      active: Math.round(
+        (withData.reduce((s, b) => s + b.focus * b.coveredMs, 0) / covered) * 100,
+      ),
+      switches: bs.reduce((s, b) => s + b.switches, 0),
+    };
+  }, [isMetric, segments, dayStartMs, intervalMs]);
 
   const isToday = date === todayString();
 
   return (
-    <div className="flex min-h-full flex-col gap-4 bg-surface-0 p-4">
+    /* h-full 而不是 min-h-full：给 flex 链一个确定的高度，底部那行才能真正
+       收缩并在内部滚动。用 min-h-full 时内容只会把整页顶高。 */
+    <div className="flex h-full flex-col gap-4 overflow-hidden bg-surface-0 p-4">
       <header className="flex items-center gap-3">
         <h1 className="m-0 text-lg font-semibold tracking-tight text-ink">Time Scope</h1>
         <LiveBadge status={status} />
         <ThemeToggle theme={theme} onCycle={cycle} />
         <span className="ml-auto tnum text-sm text-ink-faint">
-          {status === "ok" &&
-            (pieceCount > segments.length
-              ? `${segments.length} 段 → ${pieceCount} 块（${granularity} 分）`
-              : `${segments.length} 段（${granularity} 分）`)}
+          {status === "ok" && metric === "category" && (
+            <>
+              {pieceCount > segments.length
+                ? `${segments.length} 段 → ${pieceCount} 块（${granularity} 分）`
+                : `${segments.length} 段（${granularity} 分）`}
+            </>
+          )}
+          {status === "ok" && metric === "focus" && dayStats && (
+            <>平均专注度 {dayStats.active}%（{granularity} 分一格）</>
+          )}
+          {status === "ok" && metric === "switch" && dayStats && (
+            <>全天切换 {dayStats.switches} 次（{granularity} 分一格）</>
+          )}
         </span>
       </header>
 
@@ -83,8 +120,10 @@ export default function App() {
         date={date}
         isToday={isToday}
         granularity={granularity}
+        metric={metric}
         onDate={setDate}
         onGranularity={setGranularity}
+        onMetric={switchMetric}
       />
 
       {status === "loading" && <p className="text-sm text-ink-faint">加载中…</p>}
@@ -106,19 +145,24 @@ export default function App() {
           <section className="panel p-4" aria-label="时间线">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <h2 className="panel-title">24 小时时间线</h2>
+              {/* 图例常驻：连续量没有图例就读不出数值。不能因为选中就让它消失 */}
+              <ScaleLegend metric={metric} />
               {selected && (
-                <span className="text-micro text-ink-faint">
-                  已选中一段 · 再次点击可取消
-                </span>
+                <span className="text-micro text-ink-faint">已选中 · 再次点击取消</span>
               )}
             </div>
             <SegmentTimeline
               segments={segments}
               dayStartMs={dayStartMs}
-              onSelect={(s) => setSelected((cur) => (cur?.id === s.id ? null : s))}
+              onSelect={(s, bucketIndex) => {
+                setSelected((cur) => (cur?.id === s.id ? null : s));
+                setSelectedBucket((cur) => (cur === bucketIndex ? null : (bucketIndex ?? null)));
+              }}
               selectedId={selected?.id ?? null}
+              selectedBucket={selectedBucket}
               showNow={isToday}
               intervalMs={intervalMs}
+              metric={metric}
             />
           </section>
 
@@ -152,14 +196,18 @@ function Toolbar({
   date,
   isToday,
   granularity,
+  metric,
   onDate,
   onGranularity,
+  onMetric,
 }: {
   date: string;
   isToday: boolean;
   granularity: number;
+  metric: MetricMode;
   onDate: (d: string) => void;
   onGranularity: (m: number) => void;
+  onMetric: (m: MetricMode) => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -198,7 +246,9 @@ function Toolbar({
         </button>
       )}
 
-      <div className="ml-auto">
+      {/* 指标和粒度挨着放：指标模式下粒度就是桶宽，两个控件是同一件事的两面 */}
+      <div className="ml-auto flex items-center gap-2">
+        <MetricPicker value={metric} onChange={onMetric} />
         <GranularityPicker value={granularity} onChange={onGranularity} />
       </div>
     </div>

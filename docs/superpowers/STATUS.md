@@ -16,13 +16,16 @@
 | 8 | 测试里 rect 数量 = 段数 | **粒度打开后 rect 是"块"不是"段"**（`intervalMs` 切出来的）。精确的"一段一 rect"在 `SegmentTimeline` 单测里锁着，那里传 `intervalMs={0}` | 别改断言去迁就实现，先想清楚数的是什么 |
 | 9 | `cargo test` 不带 `--workspace` 更快 | **只跑根包，0 个测试，显示绿色** | 永远带 `--workspace` |
 | 10 | 验证采集要切到 Time Scope 自己的窗口 | `WINEVENT_SKIPOWNPROCESS` 会过滤自己的窗口，切自己不产生 focus 事件 | 这是设计不是 bug，切到别的程序 |
+| 11 | 指标模式的色阶最低档太暗了，再压低一点 | **不能再压。** 指标模式下"没有活动的桶"是透明的、露出轨道色；第一版最低档跟轨道色只差 1.11:1，"专注度极低"和"根本没活动"长得一样 | 现在最低档 1.77:1 对面板、1.60:1 对轨道。要改先重算这两个数（MASTER §2.5） |
+| 12 | 蓝（`study` 暗档）和紫色阶太近 | 红色盲下确实会塌陷（deutan ΔE 2.9） | **不构成问题**：类别模式和指标模式互斥，永不同框。代价是模式切换必须一眼可辨，别为了"顺手"把两种模式画进同一行 |
 
 ### 待重构（现在别动，但确实该做）
 
 | 项 | 现状 | 为什么现在不做 |
 |---|---|---|
+| **色板校验器丢了** | `verify-palette.mjs` 依赖的 `validate_palette.js` 随 dataviz skill 分发，**不在本仓库**。2026-10-04 会话刷新后那个文件消失，脚本按设计 exit 2 | 重新调用 dataviz skill 即可恢复。**期间类别色的 all-pairs 色觉分离度验不了**（色阶的对比度是手算 WCAG 公式验的，不受影响） |
 | **`bucketSegments` 是死代码** | `App` 改用 `sliceSegments` 后它没有任何调用方，却还带着 10 条测试和一个 `Bucket`/`SummaryRow` 式的聚合语义 | 删它要先确认将来汇总面板要不要"每桶聚合"这层能力。要 → 接上调用方；不要 → 连测试一起删。**别默默留着，也别默默删掉** |
-| 浅色 token 重复 32 个 | 见上表第 4 条 | 等有人愿意动 CSP |
+| 浅色 token 重复 37 个 | 见上表第 4 条 | 等有人愿意动 CSP |
 | `EventDetail`（`EventDetail.tsx` 里的 deprecated 导出） | 旧的原始事件详情面板，`SegmentDetail` 上线后就退役了 | 无调用方，可删；但和上面那条一起清比较合适 |
 | CI 的 Rust job 从没在 runner 上验证过 | 已绿过两次，但 `windows-latest` + pnpm 12 的组合长期没变过 | 改动依赖时顺手验证 |
 | 长时间段未对真实数据验证 | 预览里造过 6 小时连段，真机上没专门看过 | 需要用户手上真有那种数据 |
@@ -68,6 +71,7 @@ Phase 1 分三步。**三步都已完成**，另加一轮 UI 设计系统（§1.
 - 锁屏与合盖记成 idle，不再把 8 小时锁屏算成 8 小时活跃
 - 行为参数（空闲阈值、心跳窗口、宽限、关窗行为）在 `config.toml` 里可调
 - **深/浅/跟随系统三态主题**（页头切换，选择会记住）
+- **时间线三态指标**：类别 / 专注度 / 切换次数（同一行轨道，粒度即桶宽）
 
 **现在做不到的**：见 [四、遗留问题清单](#四遗留问题清单)。
 
@@ -95,8 +99,8 @@ Phase 1 分三步。**三步都已完成**，另加一轮 UI 设计系统（§1.
 
 ```
 Rust  34 文件 / 5499 行（不含测试）  TS/TSX  11 文件 / 1247 行（不含测试）
-测试  261 Rust + 106 前端 = 367 条用例，全绿，0 warning
-提交  20 个（main..phase1-polish），**未合并**；工作区干净
+测试  261 Rust + 132 前端 = 393 条用例，全绿，0 warning
+提交  22 个（main..phase1-polish），**未合并**；工作区干净
 ```
 
 ```
@@ -112,8 +116,10 @@ time-scope/
 │   ├── components/DaySummary         当日各类别时长与占比（同时充当图例）
 │   ├── components/EventDetail        选中段的详情
 │   ├── components/ThemeToggle        主题切换按钮
-│   ├── lib/bucket.ts                 分桶 / 汇总 / 时长格式化（纯函数）
-│   ├── preview.test.tsx              整页视觉预览（渲染真实组件供截图）
+│   ├── components/MetricPicker        类别/专注度/切换次数 + 色阶图例
+│   ├── lib/bucket.ts                 分桶 / 切片 / 汇总 / 时长格式化（纯函数）
+│   ├── lib/metrics.ts                每桶的专注度 / 切换次数等指标（纯函数）
+│   ├── preview.test.tsx              整页视觉预览（3 指标 × 2 主题）
 │   ├── preview-timeline.test.tsx     碎片化时间线预览
 │   └── types.ts                      ActivitySegment 的 TS 镜像 + IPC
 └── src-tauri/
@@ -148,7 +154,7 @@ time-scope/
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 261 passed
-pnpm test                                                      # 106 passed
+pnpm test                                                      # 132 passed
 pnpm build                                                     # 无 tsc 报错
 node design-system/time-scope/verify-palette.mjs               # 色板校验，exit 0
 ```

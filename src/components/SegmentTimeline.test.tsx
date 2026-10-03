@@ -291,3 +291,93 @@ describe("SegmentTimeline 粒度切片", () => {
     expect(majors(10 * 60_000)).toBe(144);
   });
 });
+
+describe("SegmentTimeline 指标模式", () => {
+  const HOUR_30 = 30 * 60_000;
+  /** 9:00–11:00 连着做，中间夹一次应用切换 */
+  const busy = seg("a", 9 * HOUR, 11 * HOUR, "work");
+
+  it("指标模式画的是桶，不是段", () => {
+    const { container } = render(
+      <SegmentTimeline
+        segments={[busy]}
+        dayStartMs={0}
+        onSelect={() => {}}
+        intervalMs={HOUR_30}
+        metric="focus"
+      />,
+    );
+    // 30 分桶一天 48 格，每格一个桶；段只有 1 个
+    expect(container.querySelectorAll("[data-bucket]").length).toBe(48);
+    expect(container.querySelectorAll("[data-id]").length).toBe(0);
+  });
+
+  it("没有活动的桶留空，不涂成最低档", () => {
+    // 涂最低档会被读成"这里有活动但专注度极低"，和"根本没活动"是两回事
+    const { container } = render(
+      <SegmentTimeline
+        segments={[busy]}
+        dayStartMs={0}
+        onSelect={() => {}}
+        intervalMs={HOUR_30}
+        metric="focus"
+      />,
+    );
+    const empty = container.querySelector('[data-bucket="2"]')!; // 01:00–01:30
+    expect(empty.getAttribute("fill")).toBe("transparent");
+    const filled = container.querySelector('[data-bucket="18"]')!; // 09:00–09:30
+    expect(filled.getAttribute("fill")).toMatch(/^var\(--color-scale-/);
+  });
+
+  it("点一格选中的是该桶里的活动", () => {
+    const picked: string[] = [];
+    const { container } = render(
+      <SegmentTimeline
+        segments={[busy]}
+        dayStartMs={0}
+        onSelect={(s) => picked.push(s.id)}
+        intervalMs={HOUR_30}
+        metric="switch"
+      />,
+    );
+    container
+      .querySelector('[data-bucket="18"]')!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(picked).toEqual(["a"]);
+  });
+
+  it("指标模式只圈被点的那一格，不圈整段覆盖的所有桶", () => {
+    // 一段横跨四格，全圈上会画出一道白栅栏
+    const { container } = render(
+      <SegmentTimeline
+        segments={[busy]}
+        dayStartMs={0}
+        onSelect={() => {}}
+        intervalMs={HOUR_30}
+        metric="focus"
+        selectedBucket={18}
+      />,
+    );
+    const ringed = Array.from(container.querySelectorAll("[data-bucket]")).filter(
+      (r) => r.getAttribute("style")?.includes("var(--color-ink)"),
+    );
+    expect(ringed.length).toBe(1);
+  });
+
+  it("空桶点了也不会炸", () => {
+    const picked: string[] = [];
+    const { container } = render(
+      <SegmentTimeline
+        segments={[busy]}
+        dayStartMs={0}
+        onSelect={(s) => picked.push(s.id)}
+        intervalMs={HOUR_30}
+        metric="focus"
+      />,
+    );
+    container
+      .querySelector('[data-bucket="2"]')!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(picked).toEqual([]);
+  });
+});

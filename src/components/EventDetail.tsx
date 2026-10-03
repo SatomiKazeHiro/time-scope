@@ -55,7 +55,9 @@ export default function SegmentDetail({ segment }: { segment: Segment | null }) 
   const meta = metaForCategory(segment.category);
 
   return (
-    <section aria-label="段详情" className="panel p-4">
+    /* min-h-0 + overflow-y-auto：窗口不够高时面板自己滚，而不是把整页顶高。
+       窗口标题区自己先滚（max-h-40），这里只是兜底。 */
+    <section aria-label="段详情" className="panel min-h-0 overflow-y-auto p-4">
       <div className="mb-3 flex items-center gap-2">
         <span
           className="size-2.5 rounded-[2px] shadow-[inset_0_0_0_1px_var(--color-line-strong)]"
@@ -144,9 +146,14 @@ function TitlesRow({
   failed: boolean;
   hasEvidence: boolean;
 }) {
+  // 列表限高滚动，但不给提示的话用户只会看到内容被截断，不知道下面还有
+  const hint = titles !== null && !failed && titles.length > 1 ? titles.length : 0;
   return (
     <Field icon={<Layers size={13} aria-hidden />} label="窗口标题">
       <TitleList titles={titles} failed={failed} hasEvidence={hasEvidence} />
+      {hint > 0 && (
+        <span className="tnum mt-1 block text-micro text-ink-ghost">{hint} 条 · 可滚动</span>
+      )}
     </Field>
   );
 }
@@ -174,7 +181,7 @@ function TitleList({
     return <span className="text-ink-faint">（这段没有带标题的窗口事件）</span>;
   }
   return (
-    <ul className="m-0 flex list-none flex-col gap-1 p-0">
+    <ul className="m-0 flex max-h-40 list-none flex-col gap-1 overflow-y-auto p-0 pr-1">
       {titles.map((t) => (
         <li key={t.title} className="flex flex-wrap items-baseline gap-1.5">
           <span className="min-w-0 break-all">{t.title}</span>

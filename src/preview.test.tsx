@@ -26,74 +26,130 @@ const CSS_BUNDLE = existsSync("dist/assets")
   ? readdirSync("dist/assets").find((f: string) => f.endsWith(".css"))
   : undefined;
 
-/** 造一天：早上写代码，中午学习，下午沟通，晚上娱乐，夹着空闲和长段未分类。 */
+/**
+ * 造一天：碎片为主，夹杂长段专注 —— 真实采集就是这个形状。
+ *
+ * 之前用的是 14 个整块的干净数据，专注度/切换次数在那种数据下几乎全是满档，
+ * 看不出这两个指标是干什么的。碎片数据才有真实的分布。
+ */
 function day(): Segment[] {
-  const at = (h: number, m = 0) => {
+  const r = (() => {
+    let s = 20261004;
+    return () => ((s = (s * 1664525 + 1013904223) % 4294967296), s / 4294967296);
+  })();
+  const at = (min: number) => {
     const d = new Date();
-    d.setHours(h, m, 0, 0);
-    return d.getTime();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() + min * 60_000;
   };
-  let n = 0;
-  const s = (
-    sh: number,
-    sm: number,
-    eh: number,
-    em: number,
-    category: Segment["category"],
-    application: string | null,
-  ): Segment => ({
-    id: `s${n++}`,
-    startAt: at(sh, sm),
-    endAt: at(eh, em),
-    category,
-    application,
-    confidence: 0.9,
-    classifier: "rule",
-    classifierVersion: "rules:15",
-    evidenceEventIds: ["e1", "e2", "e3"],
-  });
 
-  return [
-    s(0, 0, 7, 20, "idle", null), // 睡觉：长段空闲，最考验中性色够不够退后
-    s(7, 20, 7, 45, "life", " explorer.exe"),
-    s(7, 45, 9, 0, "work", "Code.exe"), // 整段 work：段内直标要打得下
-    s(9, 0, 9, 4, "communication", "WeChat.exe"),
-    s(9, 4, 12, 30, "work", "Code.exe"),
-    s(12, 30, 13, 30, "life", " explorer.exe"),
-    s(13, 30, 17, 0, "work", "Code.exe"),
-    s(17, 0, 18, 30, "browsing", " chrome.exe"), // browsing
-    s(18, 30, 20, 0, "entertainment", " bilibili.exe"),
-    s(20, 0, 21, 0, "communication", "WeChat.exe"),
-    s(21, 0, 22, 0, "study", "Code.exe"), // study：打不了直标的那一档
-    s(22, 0, 22, 1, "unknown", null),
-    s(22, 1, 23, 0, "work", "Code.exe"),
-    s(23, 0, 24, 0, "idle", null),
+  // 凌晨到早上是睡眠（长 idle），8:00 起床后碎片化，
+  // 下午有两段长专注，中午午饭 + 通勤。
+  const out: Segment[] = [];
+  let n = 0;
+  const push = (from: number, to: number, category: Segment["category"], application: string | null) => {
+    out.push({
+      id: `s${n++}`,
+      startAt: at(from),
+      endAt: at(to),
+      category,
+      application,
+      confidence: 0.9,
+      classifier: "rule",
+      classifierVersion: "rules:15",
+      evidenceEventIds: ["e1", "e2", "e3"],
+    });
+  };
+
+  push(0, 7 * 60 + 40, "idle", null); // 睡眠
+  // 起床后：碎片化的上午
+  const apps: [Segment["category"], string][] = [
+    ["work", "Code.exe"],
+    ["browsing", "chrome.exe"],
+    ["communication", "WeChat.exe"],
+    ["work", "Code.exe"],
+    ["life", "explorer.exe"],
   ];
+  let t = 7 * 60 + 40;
+  const morningEnd = 12 * 60;
+  while (t < morningEnd - 6) {
+    const dur = 2 + Math.floor(r() * 9);
+    const end = Math.min(t + dur, morningEnd - 3);
+    const [cat, app] = apps[Math.floor(r() * apps.length)];
+    push(t, end, cat, app);
+    t = end + (r() < 0.3 ? 4 : 1); // 有时留个小空档
+  }
+  push(t, 13 * 60 + 10, "life", "explorer.exe"); // 午饭
+
+  // 下午：两段长专注 —— 这正是专注度模式要显出来的东西
+  push(13 * 60 + 20, 15 * 60 + 40, "work", "Code.exe"); // 2h20m 连着做
+  push(15 * 60 + 40, 16 * 60, "life", "explorer.exe"); // 歇一会
+  push(16 * 60, 18 * 60 + 30, "work", "Code.exe"); // 又一段 2h30m
+
+  // 傍晚：碎片化
+  const evening: [Segment["category"], string][] = [
+    ["browsing", "chrome.exe"],
+    ["communication", "WeChat.exe"],
+    ["entertainment", "bilibili.exe"],
+    ["life", "explorer.exe"],
+  ];
+  let e = 18 * 60 + 30;
+  while (e < 23 * 60) {
+    const dur = 2 + Math.floor(r() * 8);
+    const end = Math.min(e + dur, 23 * 60);
+    const [cat, app] = evening[Math.floor(r() * evening.length)];
+    push(e, end, cat, app);
+    e = end + (r() < 0.35 ? 3 : 1);
+  }
+  push(23 * 60, 24 * 60, "idle", null);
+  return out;
 }
 
+/** 造一屏很长的窗口标题：验证详情面板不会被撑开、标题区自己滚。 */
+const MANY_TITLES = Array.from({ length: 24 }, (_, i) => ({
+  title: `第 ${i + 1} 条 · ${"一段比较长的窗口标题内容".repeat(2)}_${i}.ts - 某个项目 - Visual Studio Code`,
+  redacted: i % 5 === 0,
+  count: (i % 7) + 1,
+}));
+
 beforeAll(() => {
-  invoke.mockResolvedValue(day());
+  invoke.mockImplementation((cmd: string) =>
+    cmd === "get_segment_titles" ? Promise.resolve(MANY_TITLES) : Promise.resolve(day()),
+  );
 });
 
 describe("preview", () => {
-  it.skipIf(!CSS_BUNDLE)("dumps the real UI to .preview/ for both themes", async () => {
-    const { container } = render(<App />);
-    await waitFor(() => expect(container.querySelectorAll("svg[role='img']").length).toBeGreaterThan(0));
-
-    // 选中一段，让详情面板也进画面
-    const svg = screen.getByRole("img", { name: "24h 活动时间线" });
-    fireEvent.click(svg.querySelectorAll("rect")[5]);
-
+  it.skipIf(!CSS_BUNDLE)("dumps the real UI to .preview/ for both themes and all 3 metrics", async () => {
     mkdirSync(".preview", { recursive: true });
-    for (const theme of ["dark", "light"]) {
-      // data-theme 落在 <html> 上（useTheme 写的是 documentElement），
-      // 静态页面里得手动带上，否则截出来两张都是默认的深色。
-      const html = `<!doctype html>
+
+    for (const metric of ["category", "focus", "switch"] as const) {
+      const { container, unmount } = render(<App />);
+      await waitFor(() =>
+        expect(container.querySelectorAll("svg[role='img']").length).toBeGreaterThan(0),
+      );
+
+      // 切到要看的指标模式
+      if (metric !== "category") {
+        fireEvent.click(screen.getByRole("button", { name: metric === "focus" ? "专注度" : "切换次数" }));
+      }
+
+      // 选中一段，让详情面板也进画面
+      const svg = screen.getByRole("img", { name: "24h 活动时间线" });
+      fireEvent.click(svg.querySelectorAll("rect")[12] || svg.querySelectorAll("rect")[0]);
+      // 等标题真的加载出来，否则 dump 出来的是「读取中…」，截不出滚动效果
+      await waitFor(() => expect(screen.getByText(/条 · 可滚动/)).toBeTruthy());
+
+      for (const theme of ["dark", "light"]) {
+        // data-theme 落在 <html> 上（useTheme 写的是 documentElement），
+        // 静态页面里得手动带上，否则截出来两张都是默认的深色。
+        const html = `<!doctype html>
 <html lang="zh-CN" data-theme="${theme}"><head><meta charset="utf-8">
 <link rel="stylesheet" href="../dist/assets/${CSS_BUNDLE}">
 <style>body{width:1200px;height:700px;overflow:hidden}</style>
 </head><body>${container.innerHTML}</body></html>`;
-      writeFileSync(join(".preview", `preview-${theme}.html`), html);
+        writeFileSync(join(".preview", `preview-${metric}-${theme}.html`), html);
+      }
+      unmount();
     }
   });
 });
