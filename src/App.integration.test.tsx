@@ -43,12 +43,24 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/**
+ * 只取时间线里的 rect。
+ *
+ * 以前页面里只有时间线一个 svg，`container.querySelectorAll("rect")` 恰好等于段数。
+ * 引入 lucide 图标后不成立了 —— CalendarDays 自带一个 <rect>，会被数进去，
+ * 点到的也是它而不是段。按无障碍名定位到时间线本身，断言才是它本来要断的东西。
+ */
+function timelineRects(): SVGRectElement[] {
+  const svg = screen.getByRole("img", { name: "24h 活动时间线" });
+  return Array.from(svg.querySelectorAll("rect")) as SVGRectElement[];
+}
+
 describe("App integration (segments)", () => {
   it("asks the backend for today's segments and renders them", async () => {
     invoke.mockResolvedValue([seg("s1", 9, 10)]);
-    const { container } = render(<App />);
+    render(<App />);
 
-    await waitFor(() => expect(container.querySelectorAll("rect").length).toBe(1));
+    await waitFor(() => expect(timelineRects().length).toBe(1));
     expect(invoke).toHaveBeenCalledWith("get_segments", {
       date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     });
@@ -84,10 +96,10 @@ describe("App integration (segments)", () => {
 
   it("renders segment details when a block is clicked", async () => {
     invoke.mockResolvedValue([seg("s1", 9, 10)]);
-    const { container } = render(<App />);
-    await waitFor(() => expect(container.querySelectorAll("rect").length).toBe(1));
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBe(1));
 
-    fireEvent.click(container.querySelector("rect")!);
+    fireEvent.click(timelineRects()[0]);
 
     // "work" 在详情标题和汇总行里都会出现，所以断言详情专属的文案
     await waitFor(() => expect(screen.getByText("3 条事件支撑")).toBeTruthy());
@@ -98,9 +110,9 @@ describe("App integration (segments)", () => {
 
   it("shows an unknown application as a placeholder, not a blank", async () => {
     invoke.mockResolvedValue([seg("s1", 9, 10, "idle", null)]);
-    const { container } = render(<App />);
-    await waitFor(() => expect(container.querySelectorAll("rect").length).toBe(1));
-    fireEvent.click(container.querySelector("rect")!);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBe(1));
+    fireEvent.click(timelineRects()[0]);
     await waitFor(() => expect(screen.getByText("（未知）")).toBeTruthy());
   });
 

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { AppWindow, Clock, Gauge, Layers, ShieldCheck } from "lucide-react";
 import { parsePayload, type Segment, type SegmentTitle } from "../types";
 import { formatDuration } from "../lib/bucket";
-import { colorForCategory } from "./SegmentTimeline";
+import { colorForCategory, metaForCategory } from "../design/categories";
 
 /**
  * 选中某个 ActivitySegment 后的详情（spec §10）。
@@ -41,76 +42,96 @@ export default function SegmentDetail({ segment }: { segment: Segment | null }) 
   }, [key]);
 
   if (!segment) {
-    return <p style={{ color: "#666" }}>点击时间线上的色块查看详情。</p>;
+    return (
+      <p className="text-sm text-ink-faint">
+        点击时间线上的色块查看详情。
+      </p>
+    );
   }
 
   const start = new Date(segment.startAt).toLocaleTimeString();
   const end = new Date(segment.endAt).toLocaleTimeString();
   const anyRedacted = (titles ?? []).some((t) => t.redacted);
+  const meta = metaForCategory(segment.category);
 
   return (
-    <div style={{ marginTop: 12 }}>
-      <h2 style={{ fontSize: 15, margin: "0 0 6px" }}>
+    <section aria-label="段详情" className="panel p-4">
+      <div className="mb-3 flex items-center gap-2">
         <span
+          className="size-2.5 rounded-[2px] shadow-[inset_0_0_0_1px_var(--color-line-strong)]"
+          style={{ background: colorForCategory(segment.category) }}
           aria-hidden
-          style={{
-            display: "inline-block",
-            width: 10,
-            height: 10,
-            borderRadius: 2,
-            marginRight: 6,
-            background: colorForCategory(segment.category),
-          }}
         />
-        {segment.category}
-      </h2>
+        <h2 className="text-md font-semibold text-ink">{meta.label}</h2>
+        {/* 原始 key 留着，方便和 rules.toml 对规则 */}
+        <code className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-micro text-ink-faint">
+          {segment.category}
+        </code>
+      </div>
 
-      <dl
-        style={{
-          margin: 0,
-          display: "grid",
-          gridTemplateColumns: "auto 1fr",
-          gap: "2px 12px",
-        }}
-      >
-        <dt style={{ color: "#666" }}>时间</dt>
-        <dd style={{ margin: 0 }}>
-          {start} – {end}（{formatDuration(segment.endAt - segment.startAt)}）
-        </dd>
+      <dl className="m-0 grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2">
+        <Field icon={<Clock size={13} aria-hidden />} label="时间">
+          <span className="tnum">
+            {start} – {end}
+          </span>
+          <span className="text-ink-faint">（{formatDuration(segment.endAt - segment.startAt)}）</span>
+        </Field>
 
-        <dt style={{ color: "#666" }}>应用</dt>
-        <dd style={{ margin: 0 }}>{segment.application ?? "（未知）"}</dd>
+        <Field icon={<AppWindow size={13} aria-hidden />} label="应用">
+          {segment.application ?? "（未知）"}
+        </Field>
 
         <TitlesRow titles={titles} failed={titlesFailed} hasEvidence={evidenceIds.length > 0} />
 
-        <dt style={{ color: "#666" }}>置信度</dt>
-        <dd style={{ margin: 0 }}>{segment.confidence.toFixed(2)}</dd>
+        <Field icon={<Gauge size={13} aria-hidden />} label="置信度">
+          <span className="tnum">{segment.confidence.toFixed(2)}</span>
+        </Field>
 
-        <dt style={{ color: "#666" }}>分类依据</dt>
-        <dd style={{ margin: 0 }}>
-          {segment.classifier === "rule"
-            ? `规则 ${segment.classifierVersion}`
-            : segment.classifier}
-        </dd>
+        <Field icon={<Layers size={13} aria-hidden />} label="分类依据">
+          {segment.classifier === "rule" ? `规则 ${segment.classifierVersion}` : segment.classifier}
+        </Field>
 
-        <dt style={{ color: "#666" }}>证据</dt>
-        <dd style={{ margin: 0 }}>
+        <Field icon={<Layers size={13} aria-hidden />} label="证据">
           {evidenceIds.length > 0
             ? `${evidenceIds.length} 条事件支撑`
             : "无（该段尚未落库）"}
-        </dd>
+        </Field>
       </dl>
 
       {anyRedacted && (
-        <p style={{ margin: "8px 0 0", color: "#8a6d3b", fontSize: 12 }}>
-          标有「已脱敏」的标题里，命中的部分在
-          <strong>写入数据库之前</strong>就被替换成了
-          <code>[redacted]</code>，原文从未落盘。
-          在 <code>%APPDATA%\time-scope\rules.toml</code> 的{" "}
-          <code>[[redact]]</code> 里调整规则，重启后对新数据生效。
+        <p className="mt-3 flex gap-2 rounded-md border border-line bg-surface-2 p-2.5 text-micro text-ink-muted">
+          <ShieldCheck size={14} className="mt-0.5 shrink-0 text-state-warning" aria-hidden />
+          <span>
+            标有「已脱敏」的标题里，命中的部分在
+            <strong className="text-ink">写入数据库之前</strong>就被替换成了
+            <code className="tnum mx-0.5"> [redacted] </code>
+            ，原文从未落盘。在{" "}
+            <code className="tnum">%APPDATA%\time-scope\rules.toml</code> 的{" "}
+            <code>[[redact]]</code> 里调整规则，重启后对新数据生效。
+          </span>
         </p>
       )}
-    </div>
+    </section>
+  );
+}
+
+function Field({
+  icon,
+  label,
+  children,
+}: {
+  icon: ReactNode;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <dt className="flex items-center gap-1.5 text-label text-ink-faint">
+        <span className="text-ink-ghost">{icon}</span>
+        {label}
+      </dt>
+      <dd className="m-0 min-w-0 text-sm break-words text-ink">{children}</dd>
+    </>
   );
 }
 
@@ -124,12 +145,9 @@ function TitlesRow({
   hasEvidence: boolean;
 }) {
   return (
-    <>
-      <dt style={{ color: "#666" }}>窗口标题</dt>
-      <dd style={{ margin: 0, minWidth: 0 }}>
-        <TitleList titles={titles} failed={failed} hasEvidence={hasEvidence} />
-      </dd>
-    </>
+    <Field icon={<Layers size={13} aria-hidden />} label="窗口标题">
+      <TitleList titles={titles} failed={failed} hasEvidence={hasEvidence} />
+    </Field>
   );
 }
 
@@ -143,50 +161,34 @@ function TitleList({
   hasEvidence: boolean;
 }) {
   if (failed) {
-    return <span style={{ color: "#999" }}>（标题读取失败，其余信息不受影响）</span>;
+    return <span className="text-ink-faint">（标题读取失败，其余信息不受影响）</span>;
   }
   if (titles === null) {
     return hasEvidence ? (
-      <span style={{ color: "#999" }}>读取中…</span>
+      <span className="text-ink-faint">读取中…</span>
     ) : (
-      <span style={{ color: "#999" }}>（该段尚未落库，还没有标题）</span>
+      <span className="text-ink-faint">（该段尚未落库，还没有标题）</span>
     );
   }
   if (titles.length === 0) {
-    return <span style={{ color: "#999" }}>（这段没有带标题的窗口事件）</span>;
+    return <span className="text-ink-faint">（这段没有带标题的窗口事件）</span>;
   }
   return (
-    <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+    <ul className="m-0 flex list-none flex-col gap-1 p-0">
       {titles.map((t) => (
-        <li
-          key={t.title}
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: 6,
-            marginBottom: 2,
-            wordBreak: "break-all",
-          }}
-        >
-          <span>{t.title}</span>
+        <li key={t.title} className="flex flex-wrap items-baseline gap-1.5">
+          <span className="min-w-0 break-all">{t.title}</span>
           {t.redacted && (
             <span
               title="该标题的一部分在入库前被替换为 [redacted]"
-              style={{
-                flex: "none",
-                fontSize: 11,
-                padding: "0 5px",
-                borderRadius: 3,
-                border: "1px solid #d9b36c",
-                background: "#fdf3e0",
-                color: "#8a6d3b",
-              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-line-strong bg-surface-2 px-1.5 py-px text-micro text-state-warning"
             >
+              <ShieldCheck size={10} aria-hidden />
               已脱敏
             </span>
           )}
           {t.count > 1 && (
-            <span style={{ flex: "none", color: "#999", fontSize: 11 }}>× {t.count}</span>
+            <span className="tnum shrink-0 text-micro text-ink-ghost">× {t.count}</span>
           )}
         </li>
       ))}
@@ -201,12 +203,12 @@ export async function getSegmentTitles(eventIds: string[]): Promise<SegmentTitle
 
 /** @deprecated 旧的事件详情面板。UI 改用 SegmentDetail 后随之退役。 */
 export function EventDetail({ event }: { event: import("../types").StoredEvent | null }) {
-  if (!event) return <p style={{ color: "#666" }}>点击时间线上的色块查看详情。</p>;
+  if (!event) return <p className="text-sm text-ink-faint">点击时间线上的色块查看详情。</p>;
   const p = parsePayload<import("../types").WindowFocusPayload>(event.payload);
   return (
-    <div style={{ marginTop: 12 }}>
-      <h2 style={{ fontSize: 15, margin: "0 0 6px" }}>{event.type}</h2>
-      <p style={{ margin: 0 }}>
+    <div className="mt-3">
+      <h2 className="text-md font-semibold text-ink">{event.type}</h2>
+      <p className="m-0 text-sm text-ink-muted">
         {p ? `${p.process_name} — ${p.window_title ?? "（无标题）"}` : "无法解析"}
       </p>
     </div>

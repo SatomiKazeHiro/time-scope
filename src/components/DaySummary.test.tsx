@@ -24,10 +24,17 @@ describe("DaySummary", () => {
     );
     const rows = screen.getAllByRole("listitem");
     expect(rows.length).toBe(2);
-    expect(screen.getByText("work")).toBeTruthy();
-    expect(screen.getByText("browsing")).toBeTruthy();
+    // 界面上显示中文类名
+    expect(screen.getByText("工作")).toBeTruthy();
+    expect(screen.getByText("浏览")).toBeTruthy();
     // 两行都是 1 小时，所以用 getAllByText
     expect(screen.getAllByText("1 时").length).toBe(2);
+  });
+
+  it("keeps the raw category key reachable so rules.toml stays cross-referenceable", () => {
+    // 中文名是给人看的，原始 key 是拿去和 rules.toml 的规则对账的 —— 两个都要在。
+    render(<DaySummary segments={[seg("a", 0, HOUR, "work")]} dayStartMs={0} />);
+    expect(screen.getByTitle("work")).toBeTruthy();
   });
 
   it("renders nothing when there is no activity", () => {

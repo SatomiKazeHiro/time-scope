@@ -69,9 +69,10 @@ describe("SegmentTimeline", () => {
   });
 
   it("falls back to a neutral color for an unknown category", () => {
-    // 后端加了新 category 而前端没跟上时，不该渲染成透明/无色
+    // 后端加了新 category 而前端没跟上时，不该渲染成透明/无色。
+    // 兜底指向 CSS 变量而不是写死 hex：色值真相只在 styles/theme.css 一处。
     const bogus = "brand_new" as Category;
-    expect(colorForCategory(bogus)).toBe("#e0e0e0");
+    expect(colorForCategory(bogus)).toBe("var(--color-cat-unknown)");
   });
 
   it("clamps segments extending past the day", () => {

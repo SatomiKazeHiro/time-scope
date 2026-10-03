@@ -27,3 +27,9 @@ vendor/
 
 # Tauri 生成的 ACL schema（每次 build 重新生成）
 src-tauri/gen/schemas/
+
+# 视觉检查的临时产物（src/preview.test.tsx 生成）
+.preview/
+
+# Claude Code 本地配置与 skill
+.claude/

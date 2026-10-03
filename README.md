@@ -55,6 +55,8 @@ close_behavior = "ask"  # ask = 问一次 / minimize = 最小化到托盘 / quit
 - Rust stable，target `x86_64-pc-windows-msvc`
 - WebView2 Runtime（Tauri 依赖，Win11 自带；Win10 需从微软官网装）
 
+UI 走 Tailwind v4 + lucide-react。色板见 [`design-system/time-scope/MASTER.md`](design-system/time-scope/MASTER.md)。
+
 ## 运行
 
 ```bash
@@ -78,15 +80,21 @@ pnpm test
 
 ```
 src/                     React 前端
-  components/Timeline    24h 横向时间线（SVG）
-  components/EventDetail 选中事件的详情
+  styles/theme.css       设计 token（色板 / 字阶 / 间距 / 圆角），Tailwind v4 @theme
+  design/categories.ts   类别元数据：中文名、层级、CSS 变量引用
+  components/SegmentTimeline  24h 横向时间线（SVG）
+  components/EventDetail 选中段的详情
   types.ts               StoredEvent 的 TS 镜像 + IPC 封装 + 日期工具
 src-tauri/               Rust workspace
   crates/core            Event / EventType / 序列化（无 IO）
   crates/storage         SQLite schema、批量写入、按天范围查询
   crates/collector       Windows 采集：窗口 hook、输入 idle
   src/                   Tauri 应用壳：命令、线程编排
+design-system/           UI 基调与组件规范
 ```
+
+色值真相只有一处：`src/styles/theme.css`。组件通过 `var(--color-cat-*)` 引用，
+不抄 hex。改色板前后跑 `node design-system/time-scope/verify-palette.mjs`。
 
 依赖方向：`core ← storage ← collector ← app`，`core` 不依赖任何 IO。
 

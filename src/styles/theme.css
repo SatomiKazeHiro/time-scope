@@ -1,0 +1,166 @@
+@import "tailwindcss";
+
+/*
+ * Time Scope 设计基调：仪表盘（instrument panel）。
+ *
+ * 两条硬规则，破坏其中任何一条都会让整个界面失掉"数据优先"的性格：
+ *
+ *  1. **UI 强调色是中性亮色，不是色相。** 选中、聚焦、主按钮一律用明度表达。
+ *     三个数据色相（蓝/橙/青）全部让给类别，界面层不许借用 —— 一旦按钮用了
+ *     蓝色，用户在时间线上看到蓝色就会犹豫"这是类别还是这里被选中了"。
+ *
+ *  2. **idle / unknown 不是类别，是"无"。** 它们走中性灰且刻意压到 3:1 以下，
+ *     让长段空白在视觉上退到背景后面。空闲的时长应当"看起来就是空的"。
+ *
+ * 类别色经过色觉安全校验，改动前先跑：
+ *   node design-system/time-scope/verify-palette.mjs
+ * 详见 design-system/time-scope/MASTER.md §2。
+ */
+
+/* 清空 Tailwind 自带的调色板：只留下面声明的语义色。
+   写错成 bg-blue-500 会直接构建失败，而不是悄悄引入一个体系外的颜色。 */
+@theme {
+  --color-*: initial;
+}
+
+/* ── 表面：由深到浅四级，深色界面用明度而非阴影表达层级 ────────────── */
+@theme {
+  --color-surface-0: #0c0f14; /* 页面底 */
+  --color-surface-1: #151920; /* 面板 / 时间线底（类别色就是对着它校验的） */
+  --color-surface-2: #1c222c; /* 悬浮 / 输入框 */
+  --color-surface-3: #232a36; /* 浮层 / 提示条 */
+
+  /* ── 文字：四级，对 surface-1 的对比度分别是
+        14.59 / 7.07 / 4.86 :1，ink-faint 只用于非文字元素 ─────────── */
+  --color-ink: #e6eaf0; /* 14.59:1 正文 */
+  --color-ink-muted: #9aa5b6; /*  7.07:1 次要说明 */
+  --color-ink-faint: #7d8798; /*  4.86:1 刻度、微标签 */
+  --color-ink-ghost: #6b7688; /*  3.84:1 仅网格线等非文字（需 ≥3:1） */
+
+  /* ── 分隔线：深色下用半透明白，比实色灰更稳 ───────────────────── */
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.14);
+
+  /* ── 中性交互色：界面层唯一的"高亮"手段就是它 ─────────────────── */
+  --color-neutral-solid: #d7dde6; /* 主按钮底 */
+  --color-on-neutral: #0c0f14; /* 主按钮文字，14.05:1 */
+
+  /* ── 状态色：语义保留，永不当作第 4 个类别色用 ─────────────────── */
+  --color-state-good: #0ca30c; /* 5.25:1 采集中 */
+  --color-state-warning: #fab219; /* 9.60:1 脱敏提示 */
+  --color-state-critical: #d03b3b; /* 3.67:1 错误（非文字配图标） */
+
+  /* ── 类别色：3 色相（专注/消耗/社交）+ 层级内明度阶 + 2 中性 ──────
+     all-pairs 校验：最差 CVD ΔE 9.4 / 常色 ΔE 20.9，三个色相互相都站得住。
+     同一色相内的两级靠明度区分（ΔL ≥ 0.06，单色相），属 ordinal 结构。 */
+  --color-cat-work: #3987e5; /* 专注 · 亮  4.84:1 */
+  --color-cat-study: #256abf; /* 专注 · 暗  3.27:1 */
+  --color-cat-browsing: #d95926; /* 消耗 · 亮  4.54:1 */
+  --color-cat-entertainment: #b0471c; /* 消耗 · 暗  3.16:1 */
+  --color-cat-communication: #199e70; /* 社交 · 亮  5.17:1 */
+  --color-cat-life: #107a56; /* 社交 · 暗  3.31:1 */
+  --color-cat-idle: #3f4756; /* 空闲：1.89:1，刻意退后 */
+  --color-cat-unknown: #2b313b; /* 未分类：1.35:1，刻意退后 */
+
+  /* ── 字族：系统字体，不下载 webfont ──────────────────────────────
+     离线桌面应用，且常驻内存预算 < 80MB（STATUS §3）。中文走雅黑，
+     时间码用 Cascadia/Consolas 并开等宽数字，避免读数跳动。 */
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI",
+    "Microsoft YaHei", sans-serif;
+  --font-mono:
+    ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "Microsoft YaHei UI",
+    monospace;
+
+  /* 字阶：仪表盘取向，比通用产品小一档，信息密度优先 */
+  --text-micro: 0.6875rem; /* 11px 轴标签、角标 */
+  --text-label: 0.75rem; /*  12px 字段名 */
+  --text-sm: 0.8125rem; /*   13px 次要正文 */
+  --text-base: 0.875rem; /*  14px 正文基准 */
+  --text-md: 1rem; /*        16px 小标题 */
+  --text-lg: 1.25rem; /*     20px 页标题 */
+  --text-micro--line-height: 1.4;
+  --text-label--line-height: 1.45;
+  --text-sm--line-height: 1.5;
+  --text-base--line-height: 1.55;
+  --text-md--line-height: 1.4;
+  --text-lg--line-height: 1.25;
+
+  /* 间距：4px 基准 */
+  --spacing: 0.25rem;
+
+  /* 圆角：克制。时间线色块用 sm，接近数据端 4px 的圆角规范 */
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* 层级：深色下几乎不用阴影，靠明度差；这一档只给浮层用 */
+  --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45);
+
+  /* 动效：只有两档，且退场比入场快 */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-surface-0);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 所有数字读数用等宽数字：时间码跳变时数字不会左右抖 */
+  .tnum {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 键盘焦点：深色下用亮色环，而不是浏览器默认的蓝环（蓝是 work 的色相） */
+  :focus-visible {
+    outline: 2px solid var(--color-neutral-solid);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+@layer components {
+  /* 面板：仪表盘的基本单元 */
+  .panel {
+    background: var(--color-surface-1);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+  }
+
+  .panel-title {
+    font-size: var(--text-label);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--color-ink-muted);
+  }
+}
+
+/* 尊重系统的减少动效设置：常驻应用会在用户眼前跑一整天，
+   任何无意义的过渡对他都是持续的干扰。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
