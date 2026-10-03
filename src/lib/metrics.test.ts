@@ -10,6 +10,7 @@ import {
 import type { Category, Segment } from "../types";
 
 const MIN = 60_000;
+const HOUR = 60 * MIN;
 const DAY = 86_400_000;
 /** 当天 00:00，用整数基准避免时区把边界推到别处 */
 const DAY_START = new Date(2026, 0, 15, 0, 0, 0, 0).getTime();
@@ -146,7 +147,7 @@ describe("bucketMetrics", () => {
     expect(m[10].switches).toBe(0);
   });
 
-  it("focus is the dominant category's share of covered time", () => {
+  it("focus is the dominant category's share of *active* time", () => {
     const m = bucketMetrics(
       [
         seg("a", 600, 630, "work"), // 30 分
@@ -191,6 +192,52 @@ describe("bucketMetrics", () => {
     );
     expect(m[10].appCount).toBe(1);
     expect(m[10].switches).toBe(0);
+  });
+
+  it("focus ignores idle time entirely", () => {
+    // 挂机两小时曾被读成「高度专注 100%」：idle 是一个类别，
+    // 被当成主导类别就算进了专注度。空闲不是"不专注"，是"没在工作"。
+    const m = bucketMetrics(
+      [seg("a", 9 * 60, 11 * 60, "idle", null)],
+      DAY_START,
+      60 * MIN,
+    );
+    const b = m[9];
+    expect(b.coveredMs).toBe(HOUR);
+    expect(b.activeMs).toBe(0);
+    expect(b.focus).toBe(0);
+    expect(b.allIdle).toBe(true);
+    // 空闲桶的主导类别是 null，不是 "idle" —— 界面上据此不涂色
+    expect(b.dominantCategory).toBeNull();
+  });
+
+  it("focus is diluted by idle time in the same bucket, not helped by it", () => {
+    // 一半在工作一半在挂机 → 专注度 100%（只在活动部分内算），不是 50%
+    const m = bucketMetrics(
+      [
+        seg("a", 9 * 60, 9 * 60 + 30, "work"),
+        seg("b", 9 * 60 + 30, 10 * 60, "idle", null),
+      ],
+      DAY_START,
+      60 * MIN,
+    );
+    expect(m[9].activeMs).toBe(30 * MIN);
+    expect(m[9].coveredMs).toBe(HOUR);
+    expect(m[9].focus).toBe(1);
+    expect(m[9].allIdle).toBe(false);
+  });
+
+  it("a mixed idle+work bucket still names the working category", () => {
+    const m = bucketMetrics(
+      [
+        seg("a", 9 * 60, 9 * 60 + 40, "work"),
+        seg("b", 9 * 60 + 40, 10 * 60, "idle", null),
+      ],
+      DAY_START,
+      60 * MIN,
+    );
+    expect(m[9].dominantCategory).toBe("work");
+    expect(m[9].allIdle).toBe(false);
   });
 
   it("keeps segment order stable so switch counting is deterministic", () => {

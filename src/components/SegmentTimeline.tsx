@@ -185,12 +185,16 @@ export default function SegmentTimeline({
 
   /** 指标模式下，一个桶就是一个色块。 */
   const bucketCells = buckets.map((b, i) => {
-    const step = metric === "focus" ? focusStep(b.focus) : switchStep(b.switches);
     const rawW = WIDTH / buckets.length;
+    // 专注度模式下全是空闲的桶不涂色：空闲是"没在工作"，不是"不专注"。
+    // 涂成最低档会被读成"在做事但很分心"，那也是假的。
+    const blank = b.segmentCount === 0 || (metric === "focus" && b.activeMs === 0);
+    const step = metric === "focus" ? focusStep(b.focus) : switchStep(b.switches);
     return {
       metric: b,
       index: i,
-      step: b.segmentCount === 0 ? 0 : step,
+      blank,
+      step: blank ? 0 : step,
       x: i * rawW,
       w: Math.max(rawW - GAP, MIN_WIDTH),
     };
@@ -243,7 +247,7 @@ export default function SegmentTimeline({
                     height={TRACK_H - 8}
                     rx={1.5}
                     /* 没数据的桶留成轨道色，别用最低档 —— 那会被读成"专注度极低" */
-                    fill={c.step === 0 ? "transparent" : scaleColor(c.step)}
+                    fill={c.blank ? "transparent" : scaleColor(c.step)}
                     vectorEffect="non-scaling-stroke"
                     className="cursor-pointer"
                     style={{
@@ -398,31 +402,48 @@ export default function SegmentTimeline({
           style={{ left: `${Math.min(Math.max(hoverX, 8), 92)}%`, top: -8 }}
         >
           {hoverBucket && hoverIndex !== null ? (
-            <>
-              <span
-                className="mr-1.5 inline-block size-2 rounded-[2px] align-middle"
-                style={{ background: scaleColor(bucketCells[hoverIndex].step) }}
-                aria-hidden
-              />
-              <span className="font-medium">{METRIC_LABEL[metric]}</span>
-              <span className="text-ink-muted">
-                {metric === "focus"
-                  ? ` ${Math.round(hoverBucket.focus * 100)}%`
-                  : ` ${hoverBucket.switches} 次`}
-              </span>
-              <div className="tnum mt-0.5 text-ink-muted">
-                {clockOf(hoverBucket.start)} – {clockOf(hoverBucket.end)}
-                <span className="mx-1 text-ink-ghost">|</span>
-                {hoverBucket.segmentCount === 0
-                  ? "无活动"
-                  : `${hoverBucket.appCount} 个应用 · ${hoverBucket.segmentCount} 段`}
-              </div>
-              {hoverBucket.dominantCategory && (
-                <div className="mt-0.5 text-ink-faint">
-                  主要在做 {labelForCategory(hoverBucket.dominantCategory)}
+            bucketCells[hoverIndex].blank ? (
+              /* 没涂色的格子不能报读数 —— 报了就是在编一个不存在的数值 */
+              <>
+                <span className="font-medium text-ink-muted">
+                  {hoverBucket.segmentCount === 0
+                    ? "无活动"
+                    : metric === "focus"
+                      ? "这段时间是空闲"
+                      : METRIC_LABEL[metric]}
+                </span>
+                <div className="tnum mt-0.5 text-ink-muted">
+                  {clockOf(hoverBucket.start)} – {clockOf(hoverBucket.end)}
                 </div>
-              )}
-            </>
+                {hoverBucket.segmentCount > 0 && metric === "focus" && (
+                  <div className="mt-0.5 text-ink-faint">没在用电脑，不计入专注度</div>
+                )}
+              </>
+            ) : (
+              <>
+                <span
+                  className="mr-1.5 inline-block size-2 rounded-[2px] align-middle"
+                  style={{ background: scaleColor(bucketCells[hoverIndex].step) }}
+                  aria-hidden
+                />
+                <span className="font-medium">{METRIC_LABEL[metric]}</span>
+                <span className="text-ink-muted">
+                  {metric === "focus"
+                    ? ` ${Math.round(hoverBucket.focus * 100)}%`
+                    : ` ${hoverBucket.switches} 次`}
+                </span>
+                <div className="tnum mt-0.5 text-ink-muted">
+                  {clockOf(hoverBucket.start)} – {clockOf(hoverBucket.end)}
+                  <span className="mx-1 text-ink-ghost">|</span>
+                  {`${hoverBucket.appCount} 个应用 · ${hoverBucket.segmentCount} 段`}
+                </div>
+                {hoverBucket.dominantCategory && (
+                  <div className="mt-0.5 text-ink-faint">
+                    主要在做 {labelForCategory(hoverBucket.dominantCategory)}
+                  </div>
+                )}
+              </>
+            )
           ) : hoverIndex !== null ? (
             (() => {
               const p = placed[hoverIndex];

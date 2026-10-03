@@ -28,10 +28,25 @@ export interface BucketMetric {
    * 那些不是用户自己在跳。数应用变化才是"我换了个程序"。
    */
   switches: number;
-  /** 专注度 = 主导类别时长 / 覆盖时长，0..1。没有数据时为 0。 */
+  /**
+   * 桶内的**非空闲**时长。专注度的分母 —— 见下面 focus 的说明。
+   */
+  activeMs: number;
+  /**
+   * 专注度 = 主导类别时长 / **非空闲**时长，0..1。
+   *
+   * **分母必须排除 idle。** idle 是一个类别，如果把它算进来，挂机两小时的桶
+   * 主导类别就是 idle、专注度算出来 100% —— "完全没在用电脑"被读成"高度专注"。
+   * 用户第一次看到的就是这个。空闲不是"不专注"，是"没在工作"，两回事。
+   *
+   * 桶内全是空闲时 activeMs = 0，focus = 0，且界面上**不涂色** ——
+   * 涂成最低档会被读成"在做事但很分心"，同样是假的。
+   */
   focus: number;
-  /** 主导类别；桶内无数据时为 null */
+  /** 主导类别（只统计非空闲段）；桶内无活动时为 null */
   dominantCategory: Category | null;
+  /** 桶内是否只有空闲（"没在工作"，不是"不专注"） */
+  allIdle: boolean;
   /** 去重应用数 */
   appCount: number;
 }
@@ -61,8 +76,10 @@ export function bucketMetrics(
     coverage: 0,
     segmentCount: 0,
     switches: 0,
+    activeMs: 0,
     focus: 0,
     dominantCategory: null,
+    allIdle: false,
     appCount: 0,
   }));
 
@@ -98,17 +115,19 @@ export function bucketMetrics(
     for (let i = 0; i < b.segments.length; i++) {
       const s = b.segments[i];
       apps.add(s.application ?? "（未知）");
-      const bStart = b.start;
-      const bEnd = b.end;
-      const ms = Math.min(s.endAt, bEnd) - Math.max(s.startAt, bStart);
-      byCategory.set(s.category, (byCategory.get(s.category) ?? 0) + Math.max(0, ms));
+      const ms = Math.min(s.endAt, b.end) - Math.max(s.startAt, b.start);
+      const clamped = Math.max(0, ms);
+      if (s.category !== "idle") {
+        b.activeMs += clamped;
+        byCategory.set(s.category, (byCategory.get(s.category) ?? 0) + clamped);
+      }
       if (i > 0 && (b.segments[i - 1].application ?? "（未知）") !== (s.application ?? "（未知）")) {
         b.switches++;
       }
     }
     b.appCount = apps.size;
 
-    // 主导类别 = 时长最长的那个。段本身已经按桶裁剪，所以这里再夹一次桶边界。
+    // 主导类别 = 非空闲段里时长最长的那个。
     let best: Category | null = null;
     let bestMs = -1;
     for (const [cat, ms] of byCategory) {
@@ -118,7 +137,10 @@ export function bucketMetrics(
       }
     }
     b.dominantCategory = best;
-    b.focus = b.coveredMs > 0 && bestMs > 0 ? Math.min(1, bestMs / b.coveredMs) : 0;
+    // 分母是非空闲时长：挂机两小时的桶是"没在工作"，不是"高度专注"
+    b.focus = b.activeMs > 0 && bestMs > 0 ? Math.min(1, bestMs / b.activeMs) : 0;
+    // 「只有空闲」必须在循环外判定：桶里既有 idle 也有 work 时它不是全空闲
+    b.allIdle = b.coveredMs > 0 && b.activeMs === 0;
   }
 
   return buckets;

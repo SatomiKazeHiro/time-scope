@@ -364,6 +364,41 @@ describe("SegmentTimeline 指标模式", () => {
     expect(ringed.length).toBe(1);
   });
 
+  it("全是空闲的桶不涂色 —— 空闲是「没在工作」，不是「不专注」", () => {
+    // 曾经把 idle 当成一个类别算进专注度，挂机两小时显示成「高度专注 100%」
+    const idleAll = seg("i", 9 * HOUR, 11 * HOUR, "idle", null);
+    const { container } = render(
+      <SegmentTimeline
+        segments={[idleAll]}
+        dayStartMs={0}
+        onSelect={() => {}}
+        intervalMs={30 * 60_000}
+        metric="focus"
+      />,
+    );
+    const b = (i: number) => container.querySelector(`[data-bucket="${i}"]`)!;
+    expect(b(18).getAttribute("fill")).toBe("transparent"); // 09:00–09:30
+    expect(b(21).getAttribute("fill")).toBe("transparent"); // 10:30–11:00
+  });
+
+  it("混合桶（工作 + 挂机）照常涂色，工作那部分算专注度", () => {
+    const mixed = seg("m", 9 * HOUR, 10 * HOUR, "work");
+    const idle = seg("i", 10 * HOUR, 11 * HOUR, "idle", null);
+    const { container } = render(
+      <SegmentTimeline
+        segments={[mixed, idle]}
+        dayStartMs={0}
+        onSelect={() => {}}
+        intervalMs={60 * 60_000}
+        metric="focus"
+      />,
+    );
+    const work = container.querySelector('[data-bucket="9"]')!;
+    const idleB = container.querySelector('[data-bucket="10"]')!;
+    expect(work.getAttribute("fill")).toMatch(/^var\(--color-scale-/);
+    expect(idleB.getAttribute("fill")).toBe("transparent");
+  });
+
   it("空桶点了也不会炸", () => {
     const picked: string[] = [];
     const { container } = render(

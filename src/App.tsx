@@ -77,15 +77,20 @@ export default function App() {
   const dayStats = useMemo(() => {
     if (!isMetric || segments.length === 0) return null;
     const bs = bucketMetrics(segments, dayStartMs, intervalMs);
-    const withData = bs.filter((b) => b.segmentCount > 0);
-    if (withData.length === 0) return null;
-    const covered = withData.reduce((s, b) => s + b.coveredMs, 0);
+    // 专注度只对**有活动**的桶求加权平均。挂机两小时不该把当天的专注度拉高或拉低
+    // ——那既不是"专注"也不是"分心"，是"没在工作"，它由活跃/空闲比去说。
+    const active = bs.filter((b) => b.activeMs > 0);
+    const switches = bs.reduce((s, b) => s + b.switches, 0);
+    if (active.length === 0) {
+      return { focusPct: null, switches };
+    }
+    const weight = active.reduce((s, b) => s + b.activeMs, 0);
     return {
-      // 按覆盖时长加权，且别忘了 ×100 —— 少了这一步 1.0 会被 round 成「1%」
-      active: Math.round(
-        (withData.reduce((s, b) => s + b.focus * b.coveredMs, 0) / covered) * 100,
+      // 按非空闲时长加权；别忘了 ×100 —— 少了这一步 1.0 会被 round 成「1%」
+      focusPct: Math.round(
+        (active.reduce((s, b) => s + b.focus * b.activeMs, 0) / weight) * 100,
       ),
-      switches: bs.reduce((s, b) => s + b.switches, 0),
+      switches,
     };
   }, [isMetric, segments, dayStartMs, intervalMs]);
 
@@ -107,8 +112,8 @@ export default function App() {
                 : `${segments.length} 段（${granularity} 分）`}
             </>
           )}
-          {status === "ok" && metric === "focus" && dayStats && (
-            <>平均专注度 {dayStats.active}%（{granularity} 分一格）</>
+          {status === "ok" && metric === "focus" && dayStats?.focusPct !== null && (
+            <>平均专注度 {dayStats?.focusPct}%（{granularity} 分一格）</>
           )}
           {status === "ok" && metric === "switch" && dayStats && (
             <>全天切换 {dayStats.switches} 次（{granularity} 分一格）</>
