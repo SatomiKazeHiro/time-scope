@@ -226,5 +226,61 @@ for (const T of THEMES) {
   }
 }
 
+/* ── 顺序色阶（专注度 / 切换次数）────────────────────────────────
+   色阶是单色相的顺序量，判据和类别色不同：
+   - 相邻档必须分得开（ΔL ≥ 0.06），否则中间三档在图上糊成一片
+   - 最低档必须和「没有活动的桶」分得开 —— 那是不画的，露的是轨道色
+   - 最高档必须醒目，否则"值很大"看起来和"值一般"一样
+   这一组以前是手算 WCAG 公式验的，写在这里是为了让改色阶也走同一条流水线。 */
+for (const T of THEMES) {
+  const g = T.get;
+  const SURFACE = g("--color-surface-1");
+  const RAIL = g("--color-surface-2");
+  // 浅色底上低端是浅色，ordinal 要求「亮 → 暗」，所以按对底色的对比度排
+  const steps = [1, 2, 3, 4, 5].map((i) => g(`--color-scale-${i}`));
+  const ordered = [...steps].sort((a, b) => contrast(b, SURFACE) - contrast(a, SURFACE));
+
+  line(`\n════ 顺序色阶 · ${T.name} ════`);
+  const rr = validateOrdinal(ordered, { mode: T.mode, surface: SURFACE });
+  for (const [n, st, m] of rr.report) line(`  [${String(st).toUpperCase()}] ${n}: ${m}`);
+  if (!rr.ok) fail(`${T.name}：顺序色阶的明度阶未通过`);
+
+  const lowestVsRail = contrast(steps[0], RAIL);
+  const highestVsSurface = contrast(steps[4], SURFACE);
+  line(
+    `  最低档 vs 轨道色(无数据) ${lowestVsRail.toFixed(2)}:1  ${lowestVsRail >= 1.5 ? "ok" : "不足 1.5:1 —— 会和『没活动』混淆"}`,
+  );
+  if (lowestVsRail < 1.5) {
+    fail(
+      `${T.name}：色阶最低档与"没有活动的桶"只差 ${lowestVsRail.toFixed(2)}:1，两者会读成同一件事`,
+    );
+  }
+  line(
+    `  最高档 vs 底色 ${highestVsSurface.toFixed(2)}:1  ${highestVsSurface >= 3 ? "ok" : "不足 3:1 —— 值最大时也不醒目"}`,
+  );
+  if (highestVsSurface < 3) fail(`${T.name}：色阶最高档仅 ${highestVsSurface.toFixed(2)}:1`);
+
+  // 色阶 vs 类别色：两者互斥、从不同时出现，但记下最差一对，
+  // 有人提议"两个模式画进一行"时能立刻看到代价（MASTER §2.5）
+  const catColors = [
+    g("--color-cat-work"),
+    g("--color-cat-study"),
+    g("--color-cat-browsing"),
+    g("--color-cat-entertainment"),
+    g("--color-cat-communication"),
+    g("--color-cat-life"),
+  ];
+  const mixed = validate([...steps, ...catColors], {
+    mode: T.mode,
+    surface: SURFACE,
+    pairs: "all",
+  });
+  const nRow = mixed.report.find((r) => r[0] === "Normal-vision floor");
+  const cRow = mixed.report.find((r) => r[0] === "CVD separation");
+  line(`  色阶 + 类别 混在一起的参照值（两者互斥，不作为闸门）：`);
+  line(`    常色视觉最差一对   ${String(nRow[2]).replace(/.*worst all-pairs /, "")}`);
+  line(`    色觉障碍最差一对   ${String(cRow[2]).replace(/.*worst all-pairs /, "")}`);
+}
+
 line(`\n${failed === 0 ? "全部通过" : `${failed} 项失败 —— 不要提交`}`);
 process.exit(failed === 0 ? 0 : 1);
