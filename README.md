@@ -121,6 +121,35 @@ design-system/           UI 基调与组件规范
 本轮（Phase 1 第三步「打磨」）的人工验证清单：
 `docs/superpowers/plans/2026-10-02-phase1-polish-verification.md`
 
+## 启动慢（`pnpm tauri dev` 白屏）
+
+**开发模式下**窗口会先白一段再出界面。实测数字（`node_modules/.vite` 缓存被清空 vs 已建立）：
+
+| | 冷 | 热 |
+|---|---|---|
+| dev server 可访问 | 5.8s | 1.8s |
+| **首个模块请求** | **81s** | **0.7s** |
+| 其余 13 个模块 | 4.2s | ~2s |
+
+全部是 **Vite 预构建依赖**，且只挂在第一个请求上。主要成本来自 `lucide-react`：
+4242 个图标的 barrel，预构建后单个文件 1420 KB。
+
+**这跟打包后的应用无关。** 生产产物是一个 262 KB 的 JS + 21 KB CSS，没有依赖爬取，
+没有这段等待。
+
+已经做的：`index.html` 里内联了一个首屏占位（`#root:empty::after`），
+这段等待里窗口显示 "Time Scope" 而不是纯白。改不了耗时，但不让它看起来像坏了。
+
+没做的，以及代价：
+
+- **`optimizeDeps.include: ["lucide-react"]`** —— 试过，**无效**。实测第一个请求仍阻塞 38s。
+  写进 `include` 并不能把爬取挪到启动阶段。
+- **改成深导入**（`lucide-react/dist/esm/icons/activity.mjs`）—— 能让冷启动大幅缩短，
+  但那是包内部路径，`package.json` 没有 `exports` 字段保证，lucide 升个版本就断。
+  只为开发模式的速度不值得。
+- **不预热 / 不清缓存** —— 平时什么都不用做，缓存热了就是 1 秒内。
+  遇到长时间白屏，等它跑完即可，缓存建立后下次就不会再有。
+
 ## 人工验证清单
 
 `docs/superpowers/plans/2026-10-01-phase1-engine-verification.md`

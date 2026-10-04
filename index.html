@@ -4,6 +4,68 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Time Scope</title>
+    <style>
+      /*
+       * 首屏占位。
+       *
+       * React mount 之前 `#root` 是空的，那段时间窗口里是**纯白**。冷启动时
+       * Vite 要预构建依赖（lucide-react 是 4242 个图标的 barrel，预构建后
+       * 单文件 1.4MB），实测第一个模块请求会阻塞 80 秒 —— 白屏看着像程序坏了。
+       *
+       * 改不了那个耗时（见 README 的「启动慢」一节），但可以让这段等待**看得见**。
+       * 用 `#root:empty::after` 而不是塞一段 DOM：React 一 render 就往 root 里
+       * 填子节点，`:empty` 立刻不匹配，占位自己消失，不需要手动 remove，
+       * 也不会在 hot reload 时留残影。
+       *
+       * 内联而不引外部 CSS：这份样式要抢在模块请求之前生效，引外部文件
+       * 只会多一次阻塞。
+       */
+      html {
+        background: #0c0f14; /* 深色是默认值（theme.css 的 @theme 就是深色） */
+        color: #7d8798; /* = --color-ink-faint */
+        color-scheme: dark;
+      }
+      @media (prefers-color-scheme: light) {
+        html {
+          background: #eef0f3;
+          color: #6b7688;
+          color-scheme: light;
+        }
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI Variable Text", "Segoe UI", system-ui,
+          "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      }
+      #root:empty::after {
+        content: "Time Scope";
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        letter-spacing: 0.04em;
+        /* 极低频呼吸：既说明"还活着"，又不会在冷启动的长时间等待里变得刺眼 */
+        animation: ts-boot 2.4s ease-in-out infinite;
+      }
+      @keyframes ts-boot {
+        0%,
+        100% {
+          opacity: 0.45;
+        }
+        50% {
+          opacity: 0.9;
+        }
+      }
+      /* 尊重系统的减少动效：常驻应用会在眼前跑一整天 */
+      @media (prefers-reduced-motion: reduce) {
+        #root:empty::after {
+          animation: none;
+          opacity: 0.7;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
