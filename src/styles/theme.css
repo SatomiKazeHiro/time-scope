@@ -47,6 +47,12 @@
   --color-line: rgb(255 255 255 / 0.08);
   --color-line-strong: rgb(255 255 255 / 0.14);
 
+  /* 侧边栏「当前页」的底色。
+     **不能直接用 surface-3**：深色下 surface-3 离 surface-1 有 1.22:1，浅色下
+     两者是同一个 #ffffff（1.000:1）—— 选中态在浅色里会完全看不见。
+     surface-2 在两个主题下都只有 ~1.10:1，也不够。给「选中」单开一个。 */
+  --color-nav-active: #313b4a; /* 对 surface-1 1.56:1 */
+
   /* 中性交互色：界面层唯一的"高亮"手段 */
   --color-neutral-solid: #d7dde6; /* 主按钮底 */
   --color-on-neutral: #0c0f14; /* 主按钮文字，14.05:1 */
@@ -180,6 +186,7 @@
 
     --color-line: rgb(10 15 25 / 0.1);
     --color-line-strong: rgb(10 15 25 / 0.16);
+    --color-nav-active: #e2e6ec; /* 对 surface-1 约 1.25:1 */
 
     --color-neutral-solid: #1c222c;
     --color-on-neutral: #ffffff; /* 15.97:1 */
@@ -239,6 +246,7 @@
 
   --color-line: rgb(10 15 25 / 0.1);
   --color-line-strong: rgb(10 15 25 / 0.16);
+  --color-nav-active: #e2e6ec;
 
   --color-neutral-solid: #1c222c;
   --color-on-neutral: #ffffff;

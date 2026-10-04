@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Radio } from "lucide-react";
-import SegmentTimeline from "./components/SegmentTimeline";
+import SegmentTimeline, { type MetricMode } from "./components/SegmentTimeline";
 import GranularityPicker from "./components/GranularityPicker";
 import DaySummary from "./components/DaySummary";
 import SegmentDetail from "./components/EventDetail";
-import ThemeToggle from "./components/ThemeToggle";
 import MetricPicker, { ScaleLegend } from "./components/MetricPicker";
-import { type MetricMode } from "./components/SegmentTimeline";
-import { useTheme } from "./design/useTheme";
+import SettingsPage from "./components/SettingsPage";
+import Sidebar, { type View } from "./components/Sidebar";
 import { DEFAULT_GRANULARITY } from "./lib/bucket";
 import { bucketMetrics } from "./lib/metrics";
 import { getSegments, shiftDate, todayString, type Segment } from "./types";
@@ -25,8 +24,8 @@ export default function App() {
   const [selectedBucket, setSelectedBucket] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [granularity, setGranularity] = useState<number>(DEFAULT_GRANULARITY);
-  const { theme, cycle } = useTheme();
   const [metric, setMetric] = useState<MetricMode>("category");
+  const [view, setView] = useState<View>("monitor");
   // 切模式时清掉按另一套语义选中的东西，免得留下一个圈不到任何东西的环
   const switchMetric = (m: MetricMode) => {
     setMetric(m);
@@ -93,97 +92,111 @@ export default function App() {
   const isToday = date === todayString();
 
   return (
-    /* min-h-full：内容超了就让**整页**滚。原先用 h-full + 面板各自滚，
+    /* min-h-screen：内容超了就让**整页**滚。原先用 h-full + 面板各自滚，
        结果窄窗口下出现三层嵌套滚动条，每个面板只剩一两行 —— 不如一根
-       页面滚动条来得自然。700px 高时内容本来就装得下，不会出现滚动。 */
-    <div className="flex min-h-full flex-col gap-3 bg-surface-0 p-4">
-      {/* 身份 | 控件 —— 一行。原来分三行，700px 的窗口里 260px（37%）
-          用在数据之前。托盘常驻的单窗口应用没有导航可放，一条工具栏是它的常态。
+       页面滚动条来得自然。700px 高时内容本来就装得下，不会出现滚动。
+       Sidebar 自己 sticky，不跟着页面滚走。 */
+    <div className="flex min-h-screen bg-surface-0">
+      <Sidebar view={view} onViewChange={setView} />
 
-          **必须能换行。** 之前给两组都加了 shrink-0，结果窄窗口下 120分
-          直接被裁掉、整条栏溢出。宽窗口下它自然排成一行，窄窗口下"指标+粒度"
-          整体落到第二行，比哪个按钮被切掉强。 */}
-      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2">
-        {/* 应用名降级成安静标识：托盘里已经常驻，20px 的 h1 是抢戏。
-            whitespace-nowrap 必需：不加的话窄窗口下会被逐字折成竖排。 */}
-        <h1 className="m-0 shrink-0 text-label font-semibold tracking-wide whitespace-nowrap text-ink-muted">
-          Time Scope
-        </h1>
-        <LiveBadge status={status} />
-        <ThemeToggle theme={theme} onCycle={cycle} />
+      <main className="flex min-w-0 flex-1 flex-col gap-3 p-4">
+        {view === "settings" ? (
+          <SettingsPage />
+        ) : (
+          <>
+            {/* 身份 | 控件 —— 一行。原来分三行，700px 的窗口里 260px（37%）
+                用在数据之前。托盘常驻的单窗口应用没有导航可放，一条工具栏是它的常态。
 
-        <span aria-hidden className="mx-1 hidden h-5 w-px shrink-0 bg-line sm:block" />
+                **必须能换行。** 之前给两组都加了 shrink-0，结果窄窗口下 120分
+                直接被裁掉、整条栏溢出。宽窗口下它自然排成一行，窄窗口下"指标+粒度"
+                整体落到第二行，比哪个按钮被切掉强。 */}
+            <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2">
+              {/* 应用名降级成安静标识：托盘里已经常驻，20px 的 h1 是抢戏。
+                  whitespace-nowrap 必需：不加的话窄窗口下会被逐字折成竖排。 */}
+              <h1 className="m-0 shrink-0 text-label font-semibold tracking-wide whitespace-nowrap text-ink-muted">
+                Time Scope
+              </h1>
+              <LiveBadge status={status} />
 
-        <DateNav date={date} isToday={isToday} onDate={setDate} />
+              <span aria-hidden className="mx-1 hidden h-5 w-px shrink-0 bg-line sm:block" />
 
-        {/* 指标和粒度是同一件事的两面（"怎么看"和"看多细"），当一个单元。
-            w-full + lg:w-auto：窄窗口换行时这一组独占一行且**靠左**，不然
-            ml-auto 会把它甩到右边，跟上面那行左对齐的控件看着像两组东西。 */}
-        <div className="flex w-full shrink-0 items-center gap-2 lg:ml-auto lg:w-auto">
-          <MetricPicker value={metric} onChange={switchMetric} />
-          <GranularityPicker value={granularity} onChange={setGranularity} />
-        </div>
-      </div>
+              <DateNav date={date} isToday={isToday} onDate={setDate} />
 
-      {status === "loading" && <p className="text-sm text-ink-faint">加载中…</p>}
-
-      {status === "error" && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 rounded-md border border-line bg-surface-1 p-3 text-sm text-ink"
-        >
-          <CircleAlert size={15} className="mt-0.5 shrink-0 text-state-critical" aria-hidden />
-          <span>
-            加载失败。请确认后端已启动（<code className="tnum">pnpm tauri dev</code>）。
-          </span>
-        </div>
-      )}
-
-      {status === "ok" && (
-        <>
-          <section className="panel p-4" aria-label="时间线">
-            {/* 标题位不写"24 小时时间线"—— 面板里就是 24h 色带，轴还标着
-                00:00–24:00，再声明一遍是零信息。改成放**读数**：它描述的正是
-                下面这块数据，放在这儿比推到页头最右（隔着一整条工具栏）更近。 */}
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <span className="panel-title tnum">
-                {metric === "category" && `${segments.length} 段`}
-                {metric === "focus" &&
-                  (dayStats?.focusPct != null
-                    ? `平均专注度 ${dayStats.focusPct}%（${granularity} 分一格）`
-                    : "这一天没有活动")}
-                {metric === "switch" &&
-                  (dayStats ? `全天切换 ${dayStats.switches} 次（${granularity} 分一格）` : "这一天没有活动")}
-              </span>
-              {/* 图例常驻：连续量没有图例就读不出数值。不能因为选中就让它消失 */}
-              <ScaleLegend metric={metric} />
-              {selected && (
-                <span className="text-micro text-ink-faint">已选中 · 再次点击取消</span>
-              )}
+              {/* 指标和粒度是同一件事的两面（"怎么看"和"看多细"），当一个单元。
+                  w-full + lg:w-auto：窄窗口换行时这一组独占一行且**靠左**，不然
+                  ml-auto 会把它甩到右边，跟上面那行左对齐的控件看着像两组东西。 */}
+              <div className="flex w-full shrink-0 items-center gap-2 lg:ml-auto lg:w-auto">
+                <MetricPicker value={metric} onChange={switchMetric} />
+                <GranularityPicker value={granularity} onChange={setGranularity} />
+              </div>
             </div>
-            <SegmentTimeline
-              segments={segments}
-              dayStartMs={dayStartMs}
-              onSelect={(s, bucketIndex) => {
-                setSelected((cur) => (cur?.id === s.id ? null : s));
-                setSelectedBucket((cur) => (cur === bucketIndex ? null : (bucketIndex ?? null)));
-              }}
-              selectedId={selected?.id ?? null}
-              selectedBucket={selectedBucket}
-              showNow={isToday}
-              intervalMs={intervalMs}
-              metric={metric}
-            />
-          </section>
 
-          {/* 面板不再各自滚。滚动交给整页（根节点 min-h-full），
-              免得窄窗口下三层滚动条套在一起，每层都只剩一两行。 */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 flex-1">
-            <DaySummary segments={segments} dayStartMs={dayStartMs} />
-            <SegmentDetail segment={selected} />
-          </div>
-        </>
-      )}
+            {status === "loading" && <p className="text-sm text-ink-faint">加载中…</p>}
+
+            {status === "error" && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-line bg-surface-1 p-3 text-sm text-ink"
+              >
+                <CircleAlert size={15} className="mt-0.5 shrink-0 text-state-critical" aria-hidden />
+                <span>
+                  加载失败。请确认后端已启动（<code className="tnum">pnpm tauri dev</code>）。
+                </span>
+              </div>
+            )}
+
+            {status === "ok" && (
+              <>
+                <section className="panel p-4" aria-label="时间线">
+                  {/* 标题位不写"24 小时时间线"—— 面板里就是 24h 色带，轴还标着
+                      00:00–24:00，再声明一遍是零信息。改成放**读数**：它描述的正是
+                      下面这块数据，放在这儿比推到页头最右（隔着一整条工具栏）更近。 */}
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <span className="panel-title tnum">
+                      {metric === "category" && `${segments.length} 段`}
+                      {metric === "focus" &&
+                        (dayStats?.focusPct != null
+                          ? `平均专注度 ${dayStats.focusPct}%（${granularity} 分一格）`
+                          : "这一天没有活动")}
+                      {metric === "switch" &&
+                        (dayStats
+                          ? `全天切换 ${dayStats.switches} 次（${granularity} 分一格）`
+                          : "这一天没有活动")}
+                    </span>
+                    {/* 图例常驻：连续量没有图例就读不出数值。不能因为选中就让它消失 */}
+                    <ScaleLegend metric={metric} />
+                    {selected && (
+                      <span className="text-micro text-ink-faint">已选中 · 再次点击取消</span>
+                    )}
+                  </div>
+                  <SegmentTimeline
+                    segments={segments}
+                    dayStartMs={dayStartMs}
+                    onSelect={(s, bucketIndex) => {
+                      setSelected((cur) => (cur?.id === s.id ? null : s));
+                      setSelectedBucket((cur) =>
+                        cur === bucketIndex ? null : (bucketIndex ?? null),
+                      );
+                    }}
+                    selectedId={selected?.id ?? null}
+                    selectedBucket={selectedBucket}
+                    showNow={isToday}
+                    intervalMs={intervalMs}
+                    metric={metric}
+                  />
+                </section>
+
+                {/* 面板不再各自滚。滚动交给整页（根节点 min-h-screen），
+                    免得窄窗口下三层滚动条套在一起，每层都只剩一两行。 */}
+                <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
+                  <DaySummary segments={segments} dayStartMs={dayStartMs} />
+                  <SegmentDetail segment={selected} />
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </main>
     </div>
   );
 }

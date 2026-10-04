@@ -209,8 +209,7 @@ for (const T of THEMES) {
     if (c < need) fail(`${T.name}：${n} 仅 ${c.toFixed(2)}:1（${why}，需 ${need}:1）`);
   }
 
-  line("── 7. 段内直标配字（只有 inlineLabel=true 的类别才真的用）──");
-  for (const [name, tok] of [
+  line("── 7. 段内直标配字（只有 inlineLabel=true 的类别才真的用）──");  for (const [name, tok] of [
     ["work", "--color-cat-work"],
     ["browsing", "--color-cat-browsing"],
     ["entertainment", "--color-cat-entertainment"],
@@ -280,6 +279,21 @@ for (const T of THEMES) {
   line(`  色阶 + 类别 混在一起的参照值（两者互斥，不作为闸门）：`);
   line(`    常色视觉最差一对   ${String(nRow[2]).replace(/.*worst all-pairs /, "")}`);
   line(`    色觉障碍最差一对   ${String(cRow[2]).replace(/.*worst all-pairs /, "")}`);
+
+  line("── 8. 侧边栏选中态必须和它自己的底色分得开 ──");
+  // 曾用 surface-3 当选中态：深色下离 surface-1 有 1.22:1 看得出，浅色下两者
+  // 是同一个 #ffffff（1.000:1）—— 选中态在浅色里彻底消失。现在单开
+  // --color-nav-active，这条守住它。
+  const navActive = g("--color-nav-active");
+  const navSep = contrast(navActive, g("--color-surface-1"));
+  line(
+    `  ${navActive} vs ${g("--color-surface-1")}  ${navSep.toFixed(2)}:1  ${
+      navSep >= 1.2 ? "ok" : "不足 1.2:1 —— 选中态会看不见"
+    }`,
+  );
+  if (navSep < 1.2) {
+    fail(`${T.name}：侧边栏选中态与自身底色只差 ${navSep.toFixed(2)}:1`);
+  }
 }
 
 line(`\n${failed === 0 ? "全部通过" : `${failed} 项失败 —— 不要提交`}`);

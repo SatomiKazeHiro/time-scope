@@ -139,6 +139,15 @@ describe("preview", () => {
       // 等标题真的加载出来，否则 dump 出来的是「读取中…」，截不出滚动效果
       await waitFor(() => expect(screen.getByText(/条 · 可滚动/)).toBeTruthy());
 
+      // 悬浮提示是 hover 态，静态页面出不来。侧边栏那条伸到栏外右侧，
+      // 会被祖先的 overflow 裁掉 —— 所以把「设置」那条强制点亮，截图验它没被切。
+      const settings = container.querySelector('button[aria-label="设置"]');
+      const tip = settings?.querySelector('span[role="tooltip"]') as HTMLElement | null;
+      if (tip) {
+        tip.classList.remove("opacity-0");
+        tip.classList.add("opacity-100");
+      }
+
       for (const theme of ["dark", "light"]) {
         // data-theme 落在 <html> 上（useTheme 写的是 documentElement），
         // 静态页面里得手动带上，否则截出来两张都是默认的深色。
