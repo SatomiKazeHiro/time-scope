@@ -178,7 +178,7 @@ export default function App() {
 
           {/* 面板不再各自滚。滚动交给整页（根节点 min-h-full），
               免得窄窗口下三层滚动条套在一起，每层都只剩一两行。 */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 flex-1">
             <DaySummary segments={segments} dayStartMs={dayStartMs} />
             <SegmentDetail segment={selected} />
           </div>

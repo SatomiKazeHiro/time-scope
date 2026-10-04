@@ -43,9 +43,11 @@ export default function SegmentDetail({ segment }: { segment: Segment | null }) 
 
   if (!segment) {
     return (
-      <p className="text-sm text-ink-faint">
-        点击时间线上的色块查看详情。
-      </p>
+      <div className="panel p-4 flex items-center justify-center border-dashed">
+        <div className="text-sm text-ink-faint">
+          点击时间线上的色块查看详情
+        </div>
+      </div>
     );
   }
 
@@ -62,7 +64,7 @@ export default function SegmentDetail({ segment }: { segment: Segment | null }) 
           style={{ background: colorForCategory(segment.category) }}
           aria-hidden
         />
-        <h2 className="text-md font-semibold text-ink">{meta.label}</h2>
+        <h2 className="panel-title">{meta.label}</h2>
         {/* 原始 key 留着，方便和 rules.toml 对规则 */}
         <code className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-micro text-ink-faint">
           {segment.category}
@@ -181,7 +183,7 @@ function TitleList({
   return (
     <ul className="m-0 flex max-h-40 list-none flex-col gap-1 overflow-y-auto p-0 pr-1">
       {titles.map((t) => (
-        <li key={t.title} className="flex flex-wrap items-baseline gap-1.5">
+        <li key={t.title} className="flex items-baseline gap-1.5">
           <span className="min-w-0 break-all">{t.title}</span>
           {t.redacted && (
             <span
@@ -212,7 +214,7 @@ export function EventDetail({ event }: { event: import("../types").StoredEvent |
   const p = parsePayload<import("../types").WindowFocusPayload>(event.payload);
   return (
     <div className="mt-3">
-      <h2 className="text-md font-semibold text-ink">{event.type}</h2>
+      <h2 className="panel-title">{event.type}</h2>
       <p className="m-0 text-sm text-ink-muted">
         {p ? `${p.process_name} — ${p.window_title ?? "（无标题）"}` : "无法解析"}
       </p>
