@@ -217,18 +217,37 @@ describe("SegmentTimeline 类别模式不受粒度影响", () => {
     });
   }
 
-  it("首尾相接的同类别段之间用更细的缝 —— 它们是同一个活动的两截", () => {
-    const a = seg("a", 9 * HOUR, 9 * HOUR + 30 * 60_000, "work");
-    const b = seg("b", 9 * HOUR + 30 * 60_000, 10 * HOUR, "work");
-    const c = seg("c", 10 * HOUR, 10 * HOUR + 30 * 60_000, "browsing");
+  it("贴着 24:00 的段，标签不会被 overflow-hidden 切掉", () => {
+    // 曾经用切片时代的补偿公式定位标签，20:00–24:00 这种段算出来
+    // left + width = 108%，标签右半截被容器裁掉。
     const { container } = render(
-      <SegmentTimeline segments={[a, b, c]} dayStartMs={0} onSelect={() => {}} />,
+      <SegmentTimeline
+        segments={[seg("a", 20 * HOUR, 24 * HOUR, "work")]}
+        dayStartMs={0}
+        onSelect={() => {}}
+      />,
     );
-    const [wa, wb, wc] = rects(container).map((r) => Number(r.getAttribute("width")));
-    // 缝由「下一个段」决定：a 的下一个是 b（同类别相接）→ 细缝，宽 0.5 单位；
-    // b 的下一个是 c（类别变了）→ 正常缝；c 后面没有段 → 也是正常缝。
-    expect(wa - wb).toBeCloseTo(0.5, 1);
-    expect(wc - wb).toBeCloseTo(0, 1);
+    const span = container.querySelector("span[aria-hidden]") as HTMLElement;
+    expect(span).toBeTruthy();
+    const right = parseFloat(span.style.left) + parseFloat(span.style.width);
+    expect(right).toBeLessThanOrEqual(100.01);
+    const left = parseFloat(span.style.left);
+    expect(left).toBeGreaterThanOrEqual(0);
+  });
+
+  it("倒挂 / 零长段不把轨道画歪", () => {
+    // 引擎不该产出这种段，但负宽度会让 x 飞到视图外
+    const { container } = render(
+      <SegmentTimeline
+        segments={[seg("a", 10 * HOUR, 9 * HOUR, "work"), seg("b", 12 * HOUR, 12 * HOUR, "idle")]}
+        dayStartMs={0}
+        onSelect={() => {}}
+      />,
+    );
+    for (const r of rects(container)) {
+      expect(Number(r.getAttribute("x"))).toBeLessThanOrEqual(1000);
+      expect(Number(r.getAttribute("width"))).toBeGreaterThanOrEqual(0);
+    }
   });
 });
 

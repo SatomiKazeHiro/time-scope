@@ -101,7 +101,7 @@ interface Placed {
   /** 占全天的百分比，HTML 覆盖层按它定位 */
   leftPct: number;
   widthPct: number;
-  /** 这次扣掉的缝宽，直标的居中要用它回补 */
+  /** 这次扣掉的缝宽。标签定位不再用它（曾因补偿公式溢出 8%） */
   gap: number;
 }
 
@@ -166,6 +166,20 @@ export default function SegmentTimeline({
   const placed: Placed[] = segments.map((s, i) => {
     const start = Math.max(s.startAt, dayStartMs);
     const end = Math.min(s.endAt, dayEnd);
+    // **只挡倒挂段**（end < start）。负宽度会让 x 飞到视图外把轨道画歪。
+    // 零长段（end === start）要走正常路径拿 MIN_WIDTH 缝隙 —— 那是一个真实事件，
+    // 画成 0 宽用户会以为数据丢了，这正是最早那条测试守住的东西。
+    if (end < start) {
+      return {
+        seg: s,
+        index: i,
+        x: ((start - dayStartMs) / DAY_MS) * WIDTH,
+        w: 0,
+        leftPct: ((start - dayStartMs) / DAY_MS) * 100,
+        widthPct: 0,
+        gap: 0,
+      };
+    }
     const next = segments[i + 1];
     const continues = next !== undefined && next.startAt === end && next.category === s.category;
     const gap = continues ? SPLIT_GAP : GAP;
@@ -364,10 +378,10 @@ export default function SegmentTimeline({
         </svg>
 
         {/* 段内直标：能不能打是结构决策（inlineLabel），什么颜色由 CSS 随主题决定。
-            **按整段判宽、贴整段开头** —— 30 分粒度下一段连切六刀，每块只有约 21 单位，
-            按块判宽等于默认视图下一个标签都打不出来，而直标是 §2.3 的无障碍兜底通道。
-            只在第一块上标一次，否则一段会连着标六次。
-            这层覆盖层只盖轨道那 64px，直接相对整个容器 top-1/2 会把标签
+            **左对齐贴在块的开头**，不居中：时间从左往右流，标签在块开头读作
+            "从这里开始是 X"；居中会飘在宽块中间，而且离左右边界都远。
+            宽度不够（< 46 单位 ≈ 66 分钟）就不打，两个字塞不下会盖到邻居上。
+            这层覆盖层只盖轨道那部分，直接相对整个容器 top-1/2 会把标签
             推到轨道底边去蹭刻度尺。 */}
         <div
           className="pointer-events-none absolute inset-x-0 top-0"
@@ -384,11 +398,16 @@ export default function SegmentTimeline({
               <span
                 key={`l-${p.seg.id}`}
                 aria-hidden
-                className="absolute top-1/2 max-w-full -translate-y-1/2 truncate pr-1 text-[11px] leading-none font-medium"
+                /* 左对齐加一点内边距，不居中：时间从左往右流，标签贴在块的
+                   开头读起来是"从这里开始是 X"；居中会飘在宽块中间。
+                   左对齐也不会碰到轨道右沿 —— 贴着 24:00 的段也不会被裁。 */
+                className="absolute top-1/2 -translate-y-1/2 truncate pl-1.5 text-[11px] leading-none font-medium"
                 style={{
-                  left: `${p.leftPct + (p.widthPct - (p.gap / WIDTH) * 100) / 2}%`,
-                  width: `${p.widthPct}%`,
-                  textAlign: "center",
+                  /* 标签正好盖住 rect：left 用 leftPct，width 用 rect 实际宽度
+                     （已经扣过缝）。之前这里沿用切片时代的补偿公式，
+                     left + width 会算出 108%，标签被 overflow-hidden 切掉一截。 */
+                  left: `${p.leftPct}%`,
+                  width: `${(p.w / WIDTH) * 100}%`,
                   color: labelInkFor(p.seg.category),
                   opacity: 0.85,
                 }}
