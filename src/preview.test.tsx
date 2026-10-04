@@ -54,7 +54,7 @@ function day(): Segment[] {
       endAt: at(to),
       category,
       application,
-      confidence: category === "unknown" ? 0 : 0.9,
+      confidence: 0.9,
       classifier: "rule",
       classifierVersion: "rules:15",
       evidenceEventIds: ["e1", "e2", "e3"],
@@ -68,8 +68,6 @@ function day(): Segment[] {
     ["browsing", "chrome.exe"],
     ["communication", "WeChat.exe"],
     ["work", "Code.exe"],
-    ["unknown", "Zed.exe"],
-    ["unknown", "DBeaver.exe"],
     ["life", "explorer.exe"],
   ];
   let t = 7 * 60 + 40;
@@ -94,8 +92,6 @@ function day(): Segment[] {
     ["communication", "WeChat.exe"],
     ["entertainment", "bilibili.exe"],
     ["life", "explorer.exe"],
-    ["unknown", "FinalShell.exe"],
-    ["unknown", "HBuilderX.exe"],
   ];
   let e = 18 * 60 + 30;
   while (e < 23 * 60) {

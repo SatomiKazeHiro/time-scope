@@ -5,7 +5,6 @@ import {
   GRANULARITIES,
   DEFAULT_GRANULARITY,
   summarize,
-  unclassifiedApps,
 } from "./bucket";
 import type { Category, Segment } from "../types";
 
@@ -17,14 +16,13 @@ function seg(
   start: number,
   end: number,
   category: Category = "work",
-  application: string | null = "Code.exe",
 ): Segment {
   return {
     id,
     startAt: start,
     endAt: end,
     category,
-    application,
+    application: "Code.exe",
     confidence: 0.9,
     classifier: "rule",
     classifierVersion: "rules:15",
@@ -128,74 +126,5 @@ describe("formatDuration", () => {
 
   it("renders zero", () => {
     expect(formatDuration(0)).toBe("0 分");
-  });
-});
-
-describe("unclassifiedApps", () => {
-  it("只收 unknown 段，已分类的不进这个列表", () => {
-    const apps = unclassifiedApps(
-      [
-        seg("a", 0, HOUR, "work", "Code.exe"),
-        seg("b", HOUR, HOUR * 2, "unknown", "Zed.exe"),
-      ],
-      0,
-    );
-    expect(apps.map((a) => a.application)).toEqual(["Zed.exe"]);
-  });
-
-  it("同一程序的多个段合并时长，按累计时长降序", () => {
-    const apps = unclassifiedApps(
-      [
-        seg("a", 0, 10 * MIN, "unknown", "Zed.exe"),
-        seg("b", 20 * MIN, 30 * MIN, "unknown", "Zed.exe"),
-        seg("c", 40 * MIN, 50 * MIN, "unknown", "DBeaver.exe"),
-      ],
-      0,
-    );
-    expect(apps.map((a) => a.application)).toEqual(["Zed.exe", "DBeaver.exe"]);
-    expect(apps[0].durationMs).toBe(20 * MIN);
-    expect(apps[1].durationMs).toBe(10 * MIN);
-  });
-
-  it("比例以未分类总时长为分母，不是全天", () => {
-    // 已分类的 2 小时不该稀释分母，否则用户会以为该补的规则占比很低
-    const apps = unclassifiedApps(
-      [
-        seg("w", 0, 2 * HOUR, "work", "Code.exe"),
-        seg("a", 2 * HOUR, 2 * HOUR + 30 * MIN, "unknown", "Zed.exe"),
-        seg("b", 2 * HOUR + 30 * MIN, 3 * HOUR, "unknown", "Godot.exe"),
-      ],
-      0,
-    );
-    expect(apps[0].ratio).toBeCloseTo(0.5, 5);
-    expect(apps[0].ratio + apps[1].ratio).toBeCloseTo(1, 5);
-  });
-
-  it("尊重 limit", () => {
-    const many = Array.from({ length: 9 }, (_, i) =>
-      seg(`s${i}`, i * HOUR, i * HOUR + 30 * MIN, "unknown", `app${i}.exe`),
-    );
-    expect(unclassifiedApps(many, 0, 3)).toHaveLength(3);
-    expect(unclassifiedApps(many, 0, 3)[0].application).toBe("app0.exe");
-  });
-
-  it("没有未分类段时返回空数组，不返回空壳", () => {
-    expect(unclassifiedApps([seg("a", 0, HOUR, "work")], 0)).toEqual([]);
-    expect(unclassifiedApps([], 0)).toEqual([]);
-  });
-
-  it("应用名为 null 时归到一个可辨认的桶里，不丢掉", () => {
-    const apps = unclassifiedApps([seg("a", 0, HOUR, "unknown", null)], 0);
-    expect(apps).toHaveLength(1);
-    expect(apps[0].application).toBe("（未知应用）");
-  });
-
-  it("跨零点的未分类段按当天裁剪，不算进明天的量", () => {
-    const day = 1_700_000_000_000;
-    const apps = unclassifiedApps(
-      [seg("a", day - 30 * MIN, day + 30 * MIN, "unknown", "Zed.exe")],
-      day,
-    );
-    expect(apps[0].durationMs).toBe(30 * MIN);
   });
 });
