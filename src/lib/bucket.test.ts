@@ -4,7 +4,6 @@ import {
   formatDuration,
   GRANULARITIES,
   DEFAULT_GRANULARITY,
-  sliceSegments,
   summarize,
 } from "./bucket";
 import type { Category, Segment } from "../types";
@@ -54,92 +53,6 @@ describe("bucketStart", () => {
   it("guards against a zero interval", () => {
     // 除零会得到 NaN/Infinity，静默传下去会让整个时间线崩掉
     expect(bucketStart(HOUR, 0)).toBe(HOUR);
-  });
-});
-
-describe("sliceSegments", () => {
-  const THIRTY = 30 * MIN;
-
-  it("leaves a segment that fits in one bucket alone", () => {
-    const out = sliceSegments([seg("a", 9 * HOUR, 9 * HOUR + 20 * MIN)], THIRTY);
-    expect(out.length).toBe(1);
-    expect(out[0].startAt).toBe(9 * HOUR);
-    expect(out[0].endAt).toBe(9 * HOUR + 20 * MIN);
-    expect(out[0].isFirst).toBe(true);
-  });
-
-  it("cuts a crossing segment at the bucket boundary, allocating by elapsed time", () => {
-    // 9:00–10:00 整一小时，30 分粒度 = 两块，各 30 分钟
-    const out = sliceSegments([seg("a", 9 * HOUR, 10 * HOUR)], THIRTY);
-    expect(out.length).toBe(2);
-    expect(out[0].startAt).toBe(9 * HOUR);
-    expect(out[0].endAt).toBe(9 * HOUR + 30 * MIN);
-    expect(out[1].startAt).toBe(9 * HOUR + 30 * MIN);
-    expect(out[1].endAt).toBe(10 * HOUR);
-    // 切出来的时长加起来必须等于原段，一分钟都不能凭空多或丢
-    const total = out.reduce((s, p) => s + (p.endAt - p.startAt), 0);
-    expect(total).toBe(HOUR);
-  });
-
-  it("never leaves a zero-length sliver at a boundary", () => {
-    // 正好落在边界上收尾的段：末尾不能再切一刀
-    const out = sliceSegments([seg("a", 9 * HOUR, 9 * HOUR + 30 * MIN)], THIRTY);
-    expect(out.length).toBe(1);
-    expect(out.every((p) => p.endAt > p.startAt)).toBe(true);
-  });
-
-  it("marks only the first piece so an inline label is not repeated", () => {
-    const out = sliceSegments([seg("a", 9 * HOUR, 11 * HOUR)], THIRTY);
-    expect(out.length).toBe(4);
-    expect(out.filter((p) => p.isFirst).length).toBe(1);
-    expect(out[0].isFirst).toBe(true);
-  });
-
-  it("gives every piece a unique id but keeps the original segmentId", () => {
-    const out = sliceSegments([seg("a", 9 * HOUR, 10 * HOUR)], THIRTY);
-    expect(new Set(out.map((p) => p.id)).size).toBe(out.length);
-    // 点任意一块都要能选中整段活动
-    expect(out.every((p) => p.segmentId === "a")).toBe(true);
-    expect(out.every((p) => p.segment.id === "a")).toBe(true);
-  });
-
-  it("finer granularity yields more pieces", () => {
-    const s = [seg("a", 9 * HOUR, 10 * HOUR)];
-    expect(sliceSegments(s, 10 * MIN).length).toBe(6);
-    expect(sliceSegments(s, 30 * MIN).length).toBe(2);
-    expect(sliceSegments(s, HOUR).length).toBe(1);
-  });
-
-  it("a zero-length segment still yields exactly one piece, not zero", () => {
-    // 切没了就等于在界面上凭空消失一段
-    const out = sliceSegments([seg("a", 9 * HOUR, 9 * HOUR)], THIRTY);
-    expect(out.length).toBe(1);
-  });
-
-  it("a negative-length segment is preserved rather than dropped", () => {
-    const out = sliceSegments([seg("a", 10 * HOUR, 9 * HOUR)], THIRTY);
-    expect(out.length).toBe(1);
-  });
-
-  it("a zero or non-finite interval does not slice, and does not empty the timeline", () => {
-    const s = [seg("a", 9 * HOUR, 10 * HOUR)];
-    for (const bad of [0, NaN, Infinity, -1]) {
-      const out = sliceSegments(s, bad);
-      expect(out.length).toBe(1);
-      expect(out[0].startAt).toBe(9 * HOUR);
-      expect(out[0].endAt).toBe(10 * HOUR);
-    }
-  });
-
-  it("empty input yields no pieces and no throw", () => {
-    expect(sliceSegments([], THIRTY)).toEqual([]);
-  });
-
-  it("every piece boundary is a multiple of the interval", () => {
-    const out = sliceSegments([seg("a", 9 * HOUR + 7 * MIN, 11 * HOUR + 13 * MIN)], THIRTY);
-    for (const p of out.slice(1)) {
-      expect(p.startAt % THIRTY).toBe(0);
-    }
   });
 });
 

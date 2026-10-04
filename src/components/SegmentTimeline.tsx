@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { formatDuration, sliceSegments, type SegmentSlice } from "../lib/bucket";
+import { formatDuration } from "../lib/bucket";
 import {
   bucketMetrics,
   focusStep,
@@ -32,9 +32,9 @@ const MIN_WIDTH = 2.5;
  * 两种缝，分得很要紧：
  *
  *  - `GAP` 不同活动段之间。1.5 单位，让"这里结束、那里开始"读得出来。
- *  - `SPLIT_GAP` 同一段被桶边界切开之间。1 单位，更细 —— 它只是时间网格线，
- *    不是活动边界。如果两者一样粗，30 分钟一切会把一段连续工作切成条形码，
- *    正好把碎片可读性那轮修掉的问题又请回来。
+ *  - `SPLIT_GAP` **首尾相接、又是同一类别**的相邻段之间。1 单位，更细 ——
+ *    那不是活动边界，只是引擎把它们分成了两段（比如标题变了），
+ *    视觉上应该读成"同一个活动的两截"而不是"两件事"。
  */
 const GAP = 1.5;
 const SPLIT_GAP = 1;
@@ -83,8 +83,8 @@ interface Props {
   /** 正在看今天时画「此刻」游标。历史日期上没有"现在"，画了是错的。 */
   showNow?: boolean;
   /**
-   * 粒度（毫秒）。类别模式下段按它切分；指标模式下它就是桶宽。
-   * 传 0 / 不传 = 类别模式不切。spec §8.2：切换粒度只改前端参数，不重查后端。
+   * 粒度（毫秒）。**类别模式下它只管底部刻度尺的大刻度**，不碰色块；
+   * 指标模式下它就是桶宽。spec §8.2：切换粒度只改前端参数，不重查后端。
    */
   intervalMs?: number;
   /** 看类别还是看指标。默认 category。 */
@@ -92,7 +92,9 @@ interface Props {
 }
 
 interface Placed {
-  slice: SegmentSlice;
+  seg: Segment;
+  /** 在 segments 里的下标 —— 悬停时用它回查 */
+  index: number;
   /** viewBox 单位 */
   x: number;
   w: number;
@@ -101,9 +103,6 @@ interface Placed {
   widthPct: number;
   /** 这次扣掉的缝宽，直标的居中要用它回补 */
   gap: number;
-  /** 整段（未切片）在轨道上的横向范围。直标按整段判宽、贴整段开头。 */
-  segLeftPct: number;
-  segWidthPct: number;
 }
 
 function clockOf(ms: number): string {
@@ -123,9 +122,6 @@ function clockOf(ms: number): string {
  * **轨道是可见的。** 之前轨道背景与面板同色，浅色下三者是同一个白 ——
  * 于是"这段没活动"和"这里什么都没画"读起来一模一样，整条时间线没有边框可依。
  * 现在轨道用 surface-2 + 描边 + 圆角，空白时段明确读作"无活动"。
- *
- * **粒度是真的在切。** spec §8.2 要求"跨桶的 segment 按桶边界切成多段"，
- * 但这个控件之前只改了个桶计数，视图纹丝不动。
  */
 export default function SegmentTimeline({
   segments,
@@ -140,7 +136,6 @@ export default function SegmentTimeline({
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
-  const slices = useMemo(() => sliceSegments(segments, intervalMs), [segments, intervalMs]);
   const buckets = useMemo(
     () => (metric === "category" ? [] : bucketMetrics(segments, dayStartMs, intervalMs)),
     [metric, segments, dayStartMs, intervalMs],
@@ -149,7 +144,8 @@ export default function SegmentTimeline({
   if (segments.length === 0) {
     return (
       <div
-        className="flex h-16 items-center rounded-md border border-line bg-surface-2 px-3 text-sm text-ink-faint"
+        className="flex items-center rounded-md border border-line bg-surface-2 px-3 text-sm text-ink-faint"
+        style={{ height: "var(--track-h)" }}
         role="img"
         aria-label="24h 活动时间线"
       >
@@ -160,26 +156,29 @@ export default function SegmentTimeline({
   const dayEnd = dayStartMs + DAY_MS;
   const isMetric = metric !== "category";
 
-  // 跨零点或时区差可能让段越出当天，不夹会画出负 x 或超 viewBox
-  const placed: Placed[] = slices.map((sl, i) => {
-    const start = Math.max(sl.startAt, dayStartMs);
-    const end = Math.min(sl.endAt, dayEnd);
-    // 下一块是不是同一段的延续 —— 是的话缝细一档，那是时间网格不是活动边界
-    const next = slices[i + 1];
-    const continues = next !== undefined && next.segmentId === sl.segmentId;
+  /**
+   * 类别模式：一个段就是一个色块，**不按桶切**。
+   *
+   * 段是引擎判定的活动边界，它是什么就是什么 —— 按时间格切一刀只会把一段
+   * 连续活动切碎，既不增加信息（宽度已经表示时长），又让"这段到底多长"
+   * 变得要靠心算。粒度在类别模式下只管底部的刻度尺。
+   */
+  const placed: Placed[] = segments.map((s, i) => {
+    const start = Math.max(s.startAt, dayStartMs);
+    const end = Math.min(s.endAt, dayEnd);
+    const next = segments[i + 1];
+    const continues = next !== undefined && next.startAt === end && next.category === s.category;
     const gap = continues ? SPLIT_GAP : GAP;
     const rawW = Math.max(((end - start) / DAY_MS) * WIDTH, MIN_WIDTH);
-    const segStart = Math.max(sl.segment.startAt, dayStartMs);
-    const segEnd = Math.min(sl.segment.endAt, dayEnd);
+    const w = Math.max(rawW - gap, MIN_WIDTH);
     return {
-      slice: sl,
+      seg: s,
+      index: i,
       x: ((start - dayStartMs) / DAY_MS) * WIDTH,
-      w: Math.max(rawW - gap, MIN_WIDTH),
+      w,
       leftPct: ((start - dayStartMs) / DAY_MS) * 100,
-      widthPct: (Math.max(rawW - gap, MIN_WIDTH) / WIDTH) * 100,
+      widthPct: (w / WIDTH) * 100,
       gap,
-      segLeftPct: ((segStart - dayStartMs) / DAY_MS) * 100,
-      segWidthPct: (segEnd - segStart) / DAY_MS * 100,
     };
   });
 
@@ -232,7 +231,9 @@ export default function SegmentTimeline({
           preserveAspectRatio="none"
           role="img"
           aria-label="24h 活动时间线"
-          className="block h-18 w-full"
+          className="block w-full"
+          /* 高度由 --track-h 决定，矮窗口下压扁（见 theme.css） */
+          style={{ height: "var(--track-h)" }}
         >
           {isMetric
             ? bucketCells.map((c) => {
@@ -279,13 +280,13 @@ export default function SegmentTimeline({
           {isMetric
             ? null
             : placed.map((p) => {
-                const seg = p.slice.segment;
-                const selected = selectedId === p.slice.segmentId;
-                const cellIndex = slices.findIndex((s) => s.id === p.slice.id);
+                const seg = p.seg;
+                const selected = selectedId === p.seg.id;
+                const cellIndex = p.index;
                 return (
                   <rect
-                    key={p.slice.id}
-                    data-id={p.slice.segmentId}
+                    key={p.seg.id}
+                    data-id={p.seg.id}
                     x={p.x}
                     y={4}
                     width={p.w}
@@ -368,23 +369,27 @@ export default function SegmentTimeline({
             只在第一块上标一次，否则一段会连着标六次。
             这层覆盖层只盖轨道那 64px，直接相对整个容器 top-1/2 会把标签
             推到轨道底边去蹭刻度尺。 */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-16">
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0"
+          /* 覆盖层只盖轨道那部分（viewBox 72 单位里的 64），
+             所以跟着 --track-h 一起缩，否则矮窗口下标签会掉到刻度尺上 */
+          style={{ height: "calc(var(--track-h) * 0.888)" }}
+        >
           {isMetric
             ? null
             : placed.map((p) => {
-            const meta = metaForCategory(p.slice.segment.category);
-            if (!p.slice.isFirst || !meta.inlineLabel) return null;
-            const segW = (p.segWidthPct / 100) * WIDTH;
-            if (segW < LABEL_MIN_W) return null;
+            const meta = metaForCategory(p.seg.category);
+            if (!meta.inlineLabel || p.w < LABEL_MIN_W) return null;
             return (
               <span
-                key={`l-${p.slice.segmentId}`}
+                key={`l-${p.seg.id}`}
                 aria-hidden
                 className="absolute top-1/2 max-w-full -translate-y-1/2 truncate pr-1 text-[11px] leading-none font-medium"
                 style={{
-                  left: `${p.segLeftPct}%`,
-                  width: `${p.segWidthPct}%`,
-                  color: labelInkFor(p.slice.segment.category),
+                  left: `${p.leftPct + (p.widthPct - (p.gap / WIDTH) * 100) / 2}%`,
+                  width: `${p.widthPct}%`,
+                  textAlign: "center",
+                  color: labelInkFor(p.seg.category),
                   opacity: 0.85,
                 }}
               >
@@ -447,7 +452,7 @@ export default function SegmentTimeline({
           ) : hoverIndex !== null ? (
             (() => {
               const p = placed[hoverIndex];
-              const seg = p?.slice.segment;
+              const seg = p?.seg;
               if (!seg) return null;
               return (
                 <>

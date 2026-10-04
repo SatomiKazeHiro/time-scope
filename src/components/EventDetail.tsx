@@ -55,9 +55,7 @@ export default function SegmentDetail({ segment }: { segment: Segment | null }) 
   const meta = metaForCategory(segment.category);
 
   return (
-    /* min-h-0 + overflow-y-auto：窗口不够高时面板自己滚，而不是把整页顶高。
-       窗口标题区自己先滚（max-h-40），这里只是兜底。 */
-    <section aria-label="段详情" className="panel min-h-0 overflow-y-auto p-4">
+    <section aria-label="段详情" className="panel p-4">
       <div className="mb-3 flex items-center gap-2">
         <span
           className="size-2.5 rounded-[2px] shadow-[inset_0_0_0_1px_var(--color-line-strong)]"

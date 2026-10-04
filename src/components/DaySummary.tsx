@@ -27,9 +27,7 @@ export default function DaySummary({ segments, dayStartMs }: Props) {
   const activePct = total > 0 ? Math.round((activeMs / total) * 100) : 0;
 
   return (
-    /* min-h-0 + overflow-y-auto：窗口不够高时面板自己滚，而不是把整页顶高。
-       内容短的时候（常见的空闲日）永远不会触发。 */
-    <section aria-label="当日汇总" className="panel min-h-0 overflow-y-auto p-4">
+    <section aria-label="当日汇总" className="panel p-4">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="panel-title">当日汇总</h2>
         <span className="tnum text-micro text-ink-ghost">{rows.length} 个类别</span>

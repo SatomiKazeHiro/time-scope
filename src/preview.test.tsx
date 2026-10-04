@@ -145,7 +145,7 @@ describe("preview", () => {
         const html = `<!doctype html>
 <html lang="zh-CN" data-theme="${theme}"><head><meta charset="utf-8">
 <link rel="stylesheet" href="../dist/assets/${CSS_BUNDLE}">
-<style>body{width:1200px;height:700px;overflow:hidden}</style>
+<style>html,body{margin:0}</style>
 </head><body>${container.innerHTML}</body></html>`;
         writeFileSync(join(".preview", `preview-${metric}-${theme}.html`), html);
       }

@@ -197,80 +197,14 @@ describe("SegmentTimeline 刻度尺与此刻游标", () => {
   });
 });
 
-describe("SegmentTimeline 粒度切片", () => {
+describe("SegmentTimeline 类别模式不受粒度影响", () => {
   const oneHour = seg("a", 9 * HOUR, 10 * HOUR, "work");
 
-  it("intervalMs 为 0 时不切，一个段一个 rect", () => {
-    const { container } = render(
-      <SegmentTimeline segments={[oneHour]} dayStartMs={0} onSelect={() => {}} intervalMs={0} />,
-    );
-    expect(rects(container).length).toBe(1);
-  });
-
-  it("给了 intervalMs 就按桶边界真的切段", () => {
-    // 这个控件之前只改了个桶计数，视图纹丝不动 —— 这条断言就是防它退回去
-    const { container } = render(
-      <SegmentTimeline
-        segments={[oneHour]}
-        dayStartMs={0}
-        onSelect={() => {}}
-        intervalMs={30 * 60_000}
-      />,
-    );
-    expect(rects(container).length).toBe(2);
-  });
-
-  it("点切片里的任意一块，选中的都是整段活动", () => {
-    // 切的是时间，不是活动 —— 选中半段会让人以为后半段是另一次活动
-    const picked: string[] = [];
-    const { container } = render(
-      <SegmentTimeline
-        segments={[oneHour]}
-        dayStartMs={0}
-        onSelect={(s) => picked.push(s.id)}
-        intervalMs={10 * 60_000}
-      />,
-    );
-    const r = rects(container);
-    r.forEach((rect) => rect.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    expect(rects(container).length).toBe(6);
-    expect(picked).toEqual(["a", "a", "a", "a", "a", "a"]);
-  });
-
-  it("切出来的块共享同一个 data-id，测试与读数都还认得出它们是一段", () => {
-    const { container } = render(
-      <SegmentTimeline
-        segments={[oneHour]}
-        dayStartMs={0}
-        onSelect={() => {}}
-        intervalMs={30 * 60_000}
-      />,
-    );
-    expect(new Set(rects(container).map((r) => r.getAttribute("data-id")))).toEqual(
-      new Set(["a"]),
-    );
-  });
-
-  it("切片只标第一块，同一段连切三刀不会标三次", () => {
-    const long = seg("b", 9 * HOUR, 12 * HOUR, "work"); // 3 小时 → 6 块
-    const { container } = render(
-      <SegmentTimeline
-        segments={[long]}
-        dayStartMs={0}
-        onSelect={() => {}}
-        intervalMs={30 * 60_000}
-      />,
-    );
-    expect(rects(container).length).toBe(6);
-    // 段内直标是 aria-hidden 的装饰文本，数 span 即可
-    const labels = Array.from(container.querySelectorAll("span")).filter((s) =>
-      ["工作"].includes(s.textContent ?? ""),
-    );
-    expect(labels.length).toBe(1);
-  });
-
-  it("大刻度跟随粒度，于是这个控件在刻度尺上也看得见反应", () => {
-    const majors = (intervalMs: number) => {
+  for (const intervalMs of [0, 10 * 60_000, 30 * 60_000, 60 * 60_000, 120 * 60_000]) {
+    it(`粒度 ${intervalMs / 60_000} 分钟时，一个段仍然是一个 rect`, () => {
+      // 段是引擎判定的活动边界，它是什么就是什么。按时间格切一刀只会把一段
+      // 连续活动切碎，既不增加信息（宽度已经表示时长），又让"这段多长"要靠心算。
+      // 类别模式下粒度只管底部刻度尺的大刻度。
       const { container } = render(
         <SegmentTimeline
           segments={[oneHour]}
@@ -279,16 +213,22 @@ describe("SegmentTimeline 粒度切片", () => {
           intervalMs={intervalMs}
         />,
       );
-      const g = container.querySelector('[data-ruler="ticks"]')!;
-      return Array.from(g.querySelectorAll("line")).filter((l) => {
-        const h = Number(l.getAttribute("y2")) - Number(l.getAttribute("y1"));
-        return h > 6; // 整根高度的是大刻度
-      }).length;
-    };
-    // 120 分粒度一天 12 根大刻度，30 分粒度 48 根，10 分粒度 144 根
-    expect(majors(120 * 60_000)).toBe(12);
-    expect(majors(30 * 60_000)).toBe(48);
-    expect(majors(10 * 60_000)).toBe(144);
+      expect(rects(container).length).toBe(1);
+    });
+  }
+
+  it("首尾相接的同类别段之间用更细的缝 —— 它们是同一个活动的两截", () => {
+    const a = seg("a", 9 * HOUR, 9 * HOUR + 30 * 60_000, "work");
+    const b = seg("b", 9 * HOUR + 30 * 60_000, 10 * HOUR, "work");
+    const c = seg("c", 10 * HOUR, 10 * HOUR + 30 * 60_000, "browsing");
+    const { container } = render(
+      <SegmentTimeline segments={[a, b, c]} dayStartMs={0} onSelect={() => {}} />,
+    );
+    const [wa, wb, wc] = rects(container).map((r) => Number(r.getAttribute("width")));
+    // 缝由「下一个段」决定：a 的下一个是 b（同类别相接）→ 细缝，宽 0.5 单位；
+    // b 的下一个是 c（类别变了）→ 正常缝；c 后面没有段 → 也是正常缝。
+    expect(wa - wb).toBeCloseTo(0.5, 1);
+    expect(wc - wb).toBeCloseTo(0, 1);
   });
 });
 

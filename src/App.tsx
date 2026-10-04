@@ -8,7 +8,7 @@ import ThemeToggle from "./components/ThemeToggle";
 import MetricPicker, { ScaleLegend } from "./components/MetricPicker";
 import { type MetricMode } from "./components/SegmentTimeline";
 import { useTheme } from "./design/useTheme";
-import { sliceSegments, DEFAULT_GRANULARITY } from "./lib/bucket";
+import { DEFAULT_GRANULARITY } from "./lib/bucket";
 import { bucketMetrics } from "./lib/metrics";
 import { getSegments, shiftDate, todayString, type Segment } from "./types";
 
@@ -69,11 +69,7 @@ export default function App() {
   // spec §8.2：分桶在前端做，切换粒度不重查后端
   const intervalMs = granularity * 60_000;
   const isMetric = metric !== "category";
-  // 类别模式说"切了几块"，指标模式说"全天平均专注度 / 共切换多少次"
-  const pieceCount = useMemo(
-    () => (isMetric ? 0 : sliceSegments(segments, intervalMs).length),
-    [segments, intervalMs, isMetric],
-  );
+  // 类别模式只报段数（粒度在那儿只管刻度尺），指标模式报当天读数
   const dayStats = useMemo(() => {
     if (!isMetric || segments.length === 0) return null;
     const bs = bucketMetrics(segments, dayStartMs, intervalMs);
@@ -97,39 +93,37 @@ export default function App() {
   const isToday = date === todayString();
 
   return (
-    /* h-full 而不是 min-h-full：给 flex 链一个确定的高度，底部那行才能真正
-       收缩并在内部滚动。用 min-h-full 时内容只会把整页顶高。 */
-    <div className="flex h-full flex-col gap-4 overflow-hidden bg-surface-0 p-4">
-      <header className="flex items-center gap-3">
-        <h1 className="m-0 text-lg font-semibold tracking-tight text-ink">Time Scope</h1>
+    /* min-h-full：内容超了就让**整页**滚。原先用 h-full + 面板各自滚，
+       结果窄窗口下出现三层嵌套滚动条，每个面板只剩一两行 —— 不如一根
+       页面滚动条来得自然。700px 高时内容本来就装得下，不会出现滚动。 */
+    <div className="flex min-h-full flex-col gap-3 bg-surface-0 p-4">
+      {/* 身份 | 控件 —— 一行。原来分三行，700px 的窗口里 260px（37%）
+          用在数据之前。托盘常驻的单窗口应用没有导航可放，一条工具栏是它的常态。
+
+          **必须能换行。** 之前给两组都加了 shrink-0，结果窄窗口下 120分
+          直接被裁掉、整条栏溢出。宽窗口下它自然排成一行，窄窗口下"指标+粒度"
+          整体落到第二行，比哪个按钮被切掉强。 */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2">
+        {/* 应用名降级成安静标识：托盘里已经常驻，20px 的 h1 是抢戏。
+            whitespace-nowrap 必需：不加的话窄窗口下会被逐字折成竖排。 */}
+        <h1 className="m-0 shrink-0 text-label font-semibold tracking-wide whitespace-nowrap text-ink-muted">
+          Time Scope
+        </h1>
         <LiveBadge status={status} />
         <ThemeToggle theme={theme} onCycle={cycle} />
-        <span className="ml-auto tnum text-sm text-ink-faint">
-          {status === "ok" && metric === "category" && (
-            <>
-              {pieceCount > segments.length
-                ? `${segments.length} 段 → ${pieceCount} 块（${granularity} 分）`
-                : `${segments.length} 段（${granularity} 分）`}
-            </>
-          )}
-          {status === "ok" && metric === "focus" && dayStats?.focusPct !== null && (
-            <>平均专注度 {dayStats?.focusPct}%（{granularity} 分一格）</>
-          )}
-          {status === "ok" && metric === "switch" && dayStats && (
-            <>全天切换 {dayStats.switches} 次（{granularity} 分一格）</>
-          )}
-        </span>
-      </header>
 
-      <Toolbar
-        date={date}
-        isToday={isToday}
-        granularity={granularity}
-        metric={metric}
-        onDate={setDate}
-        onGranularity={setGranularity}
-        onMetric={switchMetric}
-      />
+        <span aria-hidden className="mx-1 hidden h-5 w-px shrink-0 bg-line sm:block" />
+
+        <DateNav date={date} isToday={isToday} onDate={setDate} />
+
+        {/* 指标和粒度是同一件事的两面（"怎么看"和"看多细"），当一个单元。
+            w-full + lg:w-auto：窄窗口换行时这一组独占一行且**靠左**，不然
+            ml-auto 会把它甩到右边，跟上面那行左对齐的控件看着像两组东西。 */}
+        <div className="flex w-full shrink-0 items-center gap-2 lg:ml-auto lg:w-auto">
+          <MetricPicker value={metric} onChange={switchMetric} />
+          <GranularityPicker value={granularity} onChange={setGranularity} />
+        </div>
+      </div>
 
       {status === "loading" && <p className="text-sm text-ink-faint">加载中…</p>}
 
@@ -148,8 +142,19 @@ export default function App() {
       {status === "ok" && (
         <>
           <section className="panel p-4" aria-label="时间线">
+            {/* 标题位不写"24 小时时间线"—— 面板里就是 24h 色带，轴还标着
+                00:00–24:00，再声明一遍是零信息。改成放**读数**：它描述的正是
+                下面这块数据，放在这儿比推到页头最右（隔着一整条工具栏）更近。 */}
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="panel-title">24 小时时间线</h2>
+              <span className="panel-title tnum">
+                {metric === "category" && `${segments.length} 段`}
+                {metric === "focus" &&
+                  (dayStats?.focusPct != null
+                    ? `平均专注度 ${dayStats.focusPct}%（${granularity} 分一格）`
+                    : "这一天没有活动")}
+                {metric === "switch" &&
+                  (dayStats ? `全天切换 ${dayStats.switches} 次（${granularity} 分一格）` : "这一天没有活动")}
+              </span>
               {/* 图例常驻：连续量没有图例就读不出数值。不能因为选中就让它消失 */}
               <ScaleLegend metric={metric} />
               {selected && (
@@ -171,8 +176,9 @@ export default function App() {
             />
           </section>
 
-          {/* 1200×700 的窗口里，汇总与详情并排比上下堆更省纵向空间 */}
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* 面板不再各自滚。滚动交给整页（根节点 min-h-full），
+              免得窄窗口下三层滚动条套在一起，每层都只剩一两行。 */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <DaySummary segments={segments} dayStartMs={dayStartMs} />
             <SegmentDetail segment={selected} />
           </div>
@@ -186,7 +192,7 @@ export default function App() {
 function LiveBadge({ status }: { status: Status }) {
   const live = status === "ok";
   return (
-    <span className="flex items-center gap-1.5 rounded-full border border-line bg-surface-1 px-2 py-0.5 text-micro text-ink-muted">
+    <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface-1 px-2 py-0.5 text-micro whitespace-nowrap text-ink-muted">
       <Radio
         size={11}
         aria-hidden
@@ -197,25 +203,18 @@ function LiveBadge({ status }: { status: Status }) {
   );
 }
 
-function Toolbar({
+/** 日期导航。原来和指标/粒度一起塞在 `Toolbar` 里，现在只是控制栏中间一段。 */
+function DateNav({
   date,
   isToday,
-  granularity,
-  metric,
   onDate,
-  onGranularity,
-  onMetric,
 }: {
   date: string;
   isToday: boolean;
-  granularity: number;
-  metric: MetricMode;
   onDate: (d: string) => void;
-  onGranularity: (m: number) => void;
-  onMetric: (m: MetricMode) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex shrink-0 items-center gap-1.5">
       <div className="flex items-center gap-1 rounded-md border border-line bg-surface-1 p-0.5">
         <IconButton label="前一天" onClick={() => onDate(shiftDate(date, -1))}>
           <ChevronLeft size={15} aria-hidden />
@@ -241,6 +240,8 @@ function Toolbar({
         </IconButton>
       </div>
 
+      {/* 不是今天才出现 —— 常驻的按钮要么一直占位要么突然冒出来，
+          都是让布局跳。消失本身是信息（"你在看今天"）。 */}
       {!isToday && (
         <button
           type="button"
@@ -250,12 +251,6 @@ function Toolbar({
           回到今天
         </button>
       )}
-
-      {/* 指标和粒度挨着放：指标模式下粒度就是桶宽，两个控件是同一件事的两面 */}
-      <div className="ml-auto flex items-center gap-2">
-        <MetricPicker value={metric} onChange={onMetric} />
-        <GranularityPicker value={granularity} onChange={onGranularity} />
-      </div>
     </div>
   );
 }

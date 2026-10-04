@@ -138,6 +138,22 @@
   --duration-fast: 120ms;
   --duration-base: 180ms;
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+
+  /*
+   * 时间线 SVG 的渲染高度（viewBox 72 单位：64 轨道 + 8 刻度尺）。
+   *
+   * 用 CSS 变量而不是 JS：窗口高度变化不需要 React 重渲染，SVG 靠
+   * preserveAspectRatio="none" 直接压扁。文字不在 SVG 里（走 HTML 覆盖层），
+   * 压扁只影响色块和刻度，正是我们想缩的那部分。
+   * 矮窗口（500px）下时间线占掉近四成高度，底部的汇总和详情只剩一两行。
+   */
+  --track-h: 72px;
+}
+
+@media (max-height: 620px) {
+  :root {
+    --track-h: 52px;
+  }
 }
 
 /* ══ 浅色覆盖 ══════════════════════════════════════════════════
