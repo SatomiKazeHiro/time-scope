@@ -1,4 +1,4 @@
-import { formatDuration, summarize } from "../lib/bucket";
+import { formatDuration, summarize, unclassifiedApps } from "../lib/bucket";
 import { colorForCategory, metaForCategory } from "../design/categories";
 import type { Category, Segment } from "../types";
 
@@ -25,6 +25,10 @@ export default function DaySummary({ segments, dayStartMs }: Props) {
   const activeMs = rows.reduce((sum, r) => sum + r.durationMs, 0) - idleMs;
   const total = activeMs + idleMs;
   const activePct = total > 0 ? Math.round((activeMs / total) * 100) : 0;
+
+  // 「未分类 33%」本身没法行动 —— 得直接给出该往 rules.toml 补哪几个进程。
+  const gaps = unclassifiedApps(segments, dayStartMs, 5);
+  const gapTotalMs = gaps.reduce((s, g) => s + g.durationMs, 0);
 
   return (
     <section aria-label="当日汇总" className="panel p-4">
@@ -58,6 +62,35 @@ export default function DaySummary({ segments, dayStartMs }: Props) {
           <SummaryRow key={r.category} category={r.category} ratio={r.ratio} durationMs={r.durationMs} />
         ))}
       </ul>
+
+      {gaps.length > 0 && (
+        <div className="mt-4 rounded-md border border-line bg-surface-2 p-3">
+          <div className="mb-2 flex items-baseline justify-between">
+            <span className="text-label font-semibold text-ink">还没规则覆盖的程序</span>
+            <span className="tnum text-micro text-ink-faint">{formatDuration(gapTotalMs)}</span>
+          </div>
+          <ul className="m-0 flex list-none flex-col gap-1 p-0">
+            {gaps.map((g) => (
+              <li key={g.application} className="flex items-baseline gap-2 text-sm">
+                <code className="tnum min-w-0 flex-1 truncate text-ink-muted">
+                  {g.application}
+                </code>
+                <span className="tnum shrink-0 text-micro text-ink-ghost">
+                  {Math.round(g.ratio * 100)}%
+                </span>
+                <span className="tnum w-16 shrink-0 text-right text-micro text-ink-faint">
+                  {formatDuration(g.durationMs)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-micro text-ink-faint">
+            在 <code className="tnum">%APPDATA%\time-scope\rules.toml</code> 加一条{" "}
+            <code className="tnum">[[rule]]</code>，<code className="tnum">process</code> 填上面的文件名，
+            重启后这段就会归到对应类别。
+          </p>
+        </div>
+      )}
     </section>
   );
 }
