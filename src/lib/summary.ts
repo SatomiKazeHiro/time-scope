@@ -282,9 +282,15 @@ export function rangeFor(
   }
 }
 
-/** 给用户看的范围文案。 */
+/**
+ * 给用户看的范围文案。
+ *
+ * 默认档叫「近一年」而不是「全部」：它就是墙铺的那 53 周窗口。
+ * 叫「全部」会跟「我有数据的全部区间」混淆 —— 那只有 5 天，
+ * 而墙上是 53 周，三处口径必须一致。
+ */
 export function rangeLabel(r: DateRange): string {
-  if (r.kind === "all") return "全部";
+  if (r.kind === "all") return "近一年";
   if (r.kind === "day") return r.from;
   if (r.kind === "week") return `${r.from} – ${r.to}`;
   return r.label;

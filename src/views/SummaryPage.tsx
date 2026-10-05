@@ -53,11 +53,12 @@ export default function SummaryPage() {
         if (dead) return;
         setLoaded(true);
         if (!cal) return;                       // 库为空：保持 all=null，走空状态
-        setAll({ kind: "all", from: cal.first, to: cal.last, label: "全部" });
-        // 墙铺**固定 53 周**（GitHub 的形状），不是数据跨度 ——
-        // 只有 5 天数据时整面墙只有 2 列 1 个月份标签，看着像渲染坏了。
-        // 窗口内没数据的日子照样在序列里，totalMs=0 画成空的。
+        // 默认范围 = 墙铺的那 53 周窗口，**不是** [首个数据日, 今天]。
+        // 以前 chip 写「全部」而实际只查 5 天，墙上却是 53 周 —— 三处口径
+        // 不一致，读者会以为指标覆盖了一年。数据全落在窗口内，所以改成
+        // 窗口后**数字一个都不变**，只是说法对上了。
         const w = wallWindow(todayString());
+        setAll({ kind: "all", from: w.start, to: w.end, label: "近一年" });
         setDays(
           fillDays(w.start, w.end, new Map(cal.days.map((d) => [d.date, d.totalMs]))),
         );

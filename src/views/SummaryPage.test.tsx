@@ -129,13 +129,33 @@ describe("SummaryPage", () => {
     });
   });
 
-  it("默认范围是全部（首个数据日 → 末日）", async () => {
+  it("默认范围 = 墙的 53 周窗口，不是「有数据的全部」", async () => {
+    // 三处口径必须一致：墙铺 53 周、范围 chip 写「近一年」、
+    // 指标就按同一个窗口算。以前 chip 写「全部」而实际是 5 天，墙上却是 53 周。
     render(<SummaryPage />);
     await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
     expect(lastArgs("get_summary")).toMatchObject({
-      from: "2026-10-01",
+      from: "2025-10-05",
       to: "2026-10-05",
     });
+  });
+
+  it("范围 chip 默认写「近一年」，不写「全部」", async () => {
+    render(<SummaryPage />);
+    await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
+    const chip = screen.getByTestId("range-chip").textContent ?? "";
+    expect(chip).toContain("近一年");
+    expect(chip).not.toContain("全部");
+  });
+
+  it("热力图面板标题写的是墙的跨度，与范围 chip 同口径", async () => {
+    render(<SummaryPage />);
+    await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
+    const title = screen.getByText(/监控时长 ·/).textContent ?? "";
+    // 面板标题的范围必须与实际查询的范围一致
+    const args = lastArgs("get_summary") as { from: string; to: string };
+    expect(title).toContain(args.from);
+    expect(title).toContain(args.to);
   });
 
   it("点已选中的同一格回到全部", async () => {
@@ -146,7 +166,7 @@ describe("SummaryPage", () => {
     fireEvent.click(screen.getByTestId("cell-2026-10-03"));
     await waitFor(() => {
       expect(lastArgs("get_summary")).toMatchObject({
-        from: "2026-10-01",
+        from: "2025-10-05",
         to: "2026-10-05",
       });
     });
@@ -199,7 +219,7 @@ describe("SummaryPage", () => {
   it("范围 chip 跟随选中更新文案", async () => {
     render(<SummaryPage />);
     await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
-    expect(screen.getByTestId("range-chip").textContent).toContain("全部");
+    expect(screen.getByTestId("range-chip").textContent).toContain("近一年");
     fireEvent.click(screen.getByTestId("cell-2026-10-03"));
     await waitFor(() =>
       expect(screen.getByTestId("range-chip").textContent).toContain("2026-10-03"),
@@ -264,7 +284,8 @@ describe("SummaryPage", () => {
     visible = true;
     render(<SummaryPage />);
     await waitFor(() => expect(getTopTitles).toHaveBeenCalled());
-    expect(getTopTitles).toHaveBeenCalledWith("2026-10-01", "2026-10-05", 10);
+    // 默认范围是 53 周窗口，标题排名跟的是同一个范围
+    expect(getTopTitles).toHaveBeenCalledWith("2025-10-05", "2026-10-05", 10);
     expect(await screen.findByText("无标题")).toBeTruthy();
   });
 
