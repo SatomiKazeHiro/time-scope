@@ -100,6 +100,92 @@ fn get_segment_titles(
     Ok(titles::titles_for(&state.conn, &event_ids))
 }
 
+/// 汇总页的热力图数据。**无参数** —— 热力图永远渲染全部数据，
+/// 不受选中范围影响（spec §2.3）。
+///
+/// 库为空时返回 `None`：那是「刚装完还没跑满一天」的真实状态，
+/// 前端据此显示空状态，而不是拿到 first/last 为空串的半成品。
+#[tauri::command]
+fn get_daily_calendar(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<activity_storage::DailyCalendar>, String> {
+    let c = state.writer.conn();
+    activity_storage::daily_calendar(&c).map_err(|e| e.to_string())
+}
+
+/// `get_summary` 的返回形状。storage 的两个结果结构在这里合成一个 ——
+/// 前端要的是一个对象，不是两个。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SummaryOut {
+    total_ms: i64,
+    active_ms: i64,
+    idle_ms: i64,
+    segment_count: i64,
+    switch_count: i64,
+    hourly_ms: Vec<i64>,
+    donut: Vec<activity_storage::DonutSlice>,
+    top_apps: Vec<activity_storage::AppSlice>,
+}
+
+/// 汇总页顶部指标。`from` / `to` 都是 `YYYY-MM-DD` 的**闭区间**
+/// （点「某一天」时两者相同），内部转成半开区间。
+#[tauri::command]
+fn get_summary(
+    state: tauri::State<'_, AppState>,
+    from: String,
+    to: String,
+) -> Result<SummaryOut, String> {
+    let offset = local_offset()?;
+    let (start_ms, _) = day_range_ms(&from, offset)?;
+    // `day_range_ms(to)` 的第二个返回值就是「to 那天的次日零点」，
+    // 正好是闭区间 [from, to] 转半开区间 [from00:00, to+1 00:00) 的终点。
+    // 不必自己给日期加一天 —— 加一天要碰 Date::next_day，day_range_ms 已经做了。
+    let (_, end_ms) = day_range_ms(&to, offset)?;
+    let offset_secs = offset.whole_seconds();
+
+    let c = state.writer.conn();
+    let totals =
+        activity_storage::range_totals(&c, start_ms, end_ms).map_err(|e| e.to_string())?;
+    let pacing = activity_storage::range_pacing(&c, start_ms, end_ms, offset_secs)
+        .map_err(|e| e.to_string())?;
+
+    Ok(SummaryOut {
+        total_ms: totals.total_ms,
+        active_ms: totals.active_ms,
+        idle_ms: totals.idle_ms,
+        segment_count: totals.segment_count,
+        switch_count: pacing.switch_count,
+        // Vec 而非 [i64; 24]：前端拿到的就是 24 个数的普通数组。
+        hourly_ms: pacing.hourly_ms.to_vec(),
+        donut: totals.donut,
+        top_apps: totals.top_apps,
+    })
+}
+
+/// 窗口标题排名。**懒加载**——底部面板进入视口才发这一发（spec §3.3）。
+///
+/// 不设范围上限：当前 5 天数据实测 199ms；按每天 10,092 事件外推，
+/// 一年约 3.7M 行 → 约 15s。这是 spec §9 第 7 条记录的已知代价。
+#[tauri::command]
+fn get_top_titles(
+    state: tauri::State<'_, AppState>,
+    from: String,
+    to: String,
+    limit: Option<usize>,
+) -> Result<Vec<title_norm::MergedTitle>, String> {
+    const DEFAULT_LIMIT: usize = 10;
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(50);
+    let offset = local_offset()?;
+    let (start_ms, _) = day_range_ms(&from, offset)?;
+    let (_, end_ms) = day_range_ms(&to, offset)?;
+
+    let c = state.writer.conn();
+    let raw = activity_storage::title_counts_in_range(&c, start_ms, end_ms)
+        .map_err(|e| e.to_string())?;
+    Ok(title_norm::merge_top_titles(raw, limit))
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         // 必须第一个注册（spec §12）：它靠抢全局锁判定"是不是第一个实例"，
@@ -202,7 +288,13 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_segments, get_segment_titles])
+        .invoke_handler(tauri::generate_handler![
+            get_segments,
+            get_segment_titles,
+            get_daily_calendar,
+            get_summary,
+            get_top_titles,
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
