@@ -33,13 +33,25 @@ static EDGE_PROFILE: LazyLock<Regex> = LazyLock::new(|| {
 static WHITESPACE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s+").expect("编译期常量正则"));
 
+/// 剥掉零宽字符：U+200B ZWSP / U+200C ZWNJ / U+200D ZWJ / U+FEFF BOM。
+///
+/// **必须在最前面跑。** Edge 的窗口标题是 `Microsoft<ZWSP> Edge`，
+/// 而 `\s` **匹配不了零宽字符**——不先剥掉，`EDGE_PROFILE` 里那个
+/// `(?:...Microsoft\s*Edge\s*)?$` 可选组就永远匹配不上，整条规则
+/// 连带失效。实测 2026-10-05：真实库里排第一的 Edge 标题全都带着
+/// `- 个人 - Microsoft<ZWSP> Edge` 没被剥掉。
+static ZERO_WIDTH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new("[\u{200B}\u{200C}\u{200D}\u{FEFF}]").expect("编译期常量正则")
+});
+
 /// 归一化一条窗口标题。返回 `None` 表示「剥完没有内容」，调用方应跳过它——
 /// 空串会占掉 Top N 的一个坑。
 ///
-/// 规则按顺序应用（spec §4.1），**顺序不能换**：先剥计数器再剥前导符，
-/// 否则 Edge 标题里 `和另外` 前面的空白会先被前导规则吃掉一部分。
+/// 规则按顺序应用（spec §4.1），**顺序不能换**：零宽字符最先剥，
+/// 然后是计数器、前导符、尾部配置名、空白。
 pub fn normalize_title(raw: &str) -> Option<String> {
-    let s = TAB_GROUP.replace_all(raw, "");
+    let s = ZERO_WIDTH.replace_all(raw, "");
+    let s = TAB_GROUP.replace_all(&s, "");
     let s = LEADING_SYMBOL.replace_all(&s, "");
     let s = EDGE_PROFILE.replace_all(&s, "");
     let s = WHITESPACE.replace_all(&s, " ");
@@ -106,6 +118,39 @@ mod tests {
             n("New Tab 和另外 33 个页面 - 个人 - Microsoft Edge"),
             "New Tab"
         );
+    }
+
+    #[test]
+    fn zero_width_characters_are_stripped() {
+        // Edge 的窗口标题里 Microsoft<ZWSP> Edge —— 中间是 U+200B 零宽空格，
+        // **\s 匹配不了它**。不先剥掉，后面的规则在真实数据上全部失效。
+        let n = |s: &str| normalize_title(s).expect("应归一化出非空结果");
+        assert_eq!(
+            n("无标题 和另外 31 个页面 - 个人 - Microsoft\u{200b} Edge"),
+            "无标题"
+        );
+        assert_eq!(
+            n("main.rs - Visual Studio Code\u{feff}"),
+            "main.rs - Visual Studio Code"
+        );
+        assert_eq!(n("a\u{200c}b\u{200d}c"), "abc");
+    }
+
+    #[test]
+    fn real_edge_titles_from_the_live_db_normalize() {
+        // 真实库（2026-10-05）里排第一的那几条，逐条钉住。
+        // 之前这条规则只在**普通空格**的假数据上测过，真实标题里是零宽空格，
+        // 于是整条规则在真机上完全没生效 —— 测试验的是我以为的输入。
+        let n = |s: &str| normalize_title(s).expect("应归一化出非空结果");
+        assert_eq!(
+            n("无标题 和另外 31 个页面 - 个人 - Microsoft\u{200b} Edge"),
+            "无标题"
+        );
+        assert_eq!(
+            n("New Tab 和另外 31 个页面 - 个人 - Microsoft\u{200b} Edge"),
+            "New Tab"
+        );
+        assert_eq!(n("◐ 项目与 uv Python 管理"), "项目与 uv Python 管理");
     }
 
     #[test]
