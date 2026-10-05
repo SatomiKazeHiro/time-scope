@@ -361,3 +361,107 @@ fn idle_segments_do_not_enter_the_hourly_profile() {
         "1 小时挂机不该把「活跃时间段」画满"
     );
 }
+
+use activity_core::{Event, EventType, WindowFocusPayload, WindowTitleChangePayload};
+use activity_storage::{insert_events, title_counts_in_range};
+
+fn title_event(id: &str, ts: i64, title: Option<&str>) -> Event {
+    let mut e = Event::new(
+        EventType::WindowTitleChange(WindowTitleChangePayload {
+            process_name: "msedge.exe".into(),
+            window_title: title.map(|t| t.into()),
+        }),
+        ts,
+    );
+    e.id = id.into();
+    e
+}
+
+#[test]
+fn titles_are_grouped_by_raw_string() {
+    let conn = open_in_memory();
+    insert_events(
+        &conn,
+        &[
+            title_event("e1", 1_000, Some("a")),
+            title_event("e2", 2_000, Some("a")),
+            title_event("e3", 3_000, Some("b")),
+        ],
+    )
+    .unwrap();
+    let counts = title_counts_in_range(&conn, 0, 10_000).unwrap();
+    assert_eq!(
+        counts,
+        vec![("a".to_string(), 2), ("b".to_string(), 1)]
+    );
+}
+
+#[test]
+fn null_titles_are_excluded() {
+    let conn = open_in_memory();
+    insert_events(
+        &conn,
+        &[
+            title_event("e1", 1_000, Some("a")),
+            title_event("e2", 2_000, None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(title_counts_in_range(&conn, 0, 10_000).unwrap().len(), 1);
+}
+
+#[test]
+fn non_window_event_types_are_excluded() {
+    // 心跳 / 空闲事件没有窗口标题，进不了排名
+    let conn = open_in_memory();
+    let mut idle = Event::new(EventType::SystemIdle, 1_000);
+    idle.id = "i1".into();
+    insert_events(&conn, &[idle, title_event("e1", 2_000, Some("a"))]).unwrap();
+    assert_eq!(
+        title_counts_in_range(&conn, 0, 10_000).unwrap(),
+        vec![("a".to_string(), 1)]
+    );
+}
+
+#[test]
+fn window_focus_titles_are_included_too() {
+    let conn = open_in_memory();
+    let mut e = Event::new(
+        EventType::WindowFocus(WindowFocusPayload {
+            process_name: "msedge.exe".into(),
+            window_title: Some("focus".into()),
+            exe_path: None,
+        }),
+        1_000,
+    );
+    e.id = "f1".into();
+    insert_events(&conn, &[e]).unwrap();
+    assert_eq!(
+        title_counts_in_range(&conn, 0, 10_000).unwrap(),
+        vec![("focus".to_string(), 1)]
+    );
+}
+
+#[test]
+fn title_range_is_half_open() {
+    let conn = open_in_memory();
+    insert_events(
+        &conn,
+        &[
+            title_event("e1", 1_000, Some("inside")),
+            title_event("e2", 5_000, Some("outside")),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        title_counts_in_range(&conn, 0, 5_000).unwrap(),
+        vec![("inside".to_string(), 1)]
+    );
+}
+
+#[test]
+fn empty_title_range_yields_empty_vec() {
+    let conn = open_in_memory();
+    insert_events(&conn, &[title_event("e1", 1_000, Some("a"))]).unwrap();
+    assert!(title_counts_in_range(&conn, 9_000, 1_000).unwrap().is_empty());
+}

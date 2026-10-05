@@ -277,3 +277,36 @@ fn add_to_hours(buckets: &mut [i64; 24], start_ms: i64, end_ms: i64, offset_secs
         t = seg_end;
     }
 }
+
+/// 范围内按**原始**字符串分组的窗口标题及其次数。
+///
+/// 只返回原始计数，**不做归一化** —— 归一化在 app 层（`title_norm.rs`），
+/// 因为它要 `regex` 和脱敏占位符，两者都不属于 storage 的职责。
+///
+/// 两段式的原因：先在 SQL 里把 3.7M 行压成约 1000 行，再在 Rust 里归一化
+/// 合并。反过来（先取全部行到内存再归一化）会把整库拉进进程。
+pub fn title_counts_in_range(
+    conn: &Connection,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<(String, i64)>, rusqlite::Error> {
+    if start_ms >= end_ms {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for row in conn.prepare(
+        "SELECT json_extract(payload,'$.window_title') AS t, COUNT(*) AS n
+         FROM events
+         WHERE type IN ('window_focus','window_title_change')
+           AND timestamp >= ?1 AND timestamp < ?2
+           AND json_extract(payload,'$.window_title') IS NOT NULL
+         GROUP BY t
+         ORDER BY n DESC",
+    )?
+    .query_map(rusqlite::params![start_ms, end_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        out.push(row?);
+    }
+    Ok(out)
+}

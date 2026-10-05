@@ -10,7 +10,8 @@ pub use activity::{
 pub use query::{get_events_in_range, insert_events, now_ms, StoredEvent};
 pub use schema::{apply_pragmas, current_version, migrate, SCHEMA_VERSION};
 pub use summary::{
-    daily_calendar, range_pacing, range_totals, AppSlice, DailyCalendar, DayCell, DonutSlice,
+    daily_calendar, range_pacing, range_totals, title_counts_in_range, AppSlice, DailyCalendar,
+    DayCell, DonutSlice,
     RangePacing, RangeTotals,
 };
 pub use writer::BatchWriter;
