@@ -60,12 +60,12 @@ export default function DayPartChart({ hourlyMs, compact = false }: DayPartChart
             <line
               x1={(t / 24) * PLOT_W} y1={H}
               x2={(t / 24) * PLOT_W} y2={H + 4}
-              stroke="var(--line)" strokeWidth="1"
+              stroke="var(--color-line)" strokeWidth="1"
             />
             {/* 首尾两个刻度靠边对齐：居中会让「24」有一半落在 viewBox 外被切掉 */}
             <text
               x={(t / 24) * PLOT_W} y={H + 15}
-              fill="var(--ink-faint)" fontSize="9"
+              fill="var(--color-ink-faint)" fontSize="9"
               textAnchor={t === 0 ? "start" : t === 24 ? "end" : "middle"}
             >
               {String(t).padStart(2, "0")}

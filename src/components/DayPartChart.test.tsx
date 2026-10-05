@@ -1,6 +1,19 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { render } from "@testing-library/react";
 import DayPartChart from "./DayPartChart";
+
+const THEME_CSS = readFileSync("src/styles/theme.css", "utf8");
+/** 每个 var() 引用都得在 theme.css 里被定义过。 */
+function assertTokensDefined(uses: string[]) {
+  for (const u of uses) {
+    const name = /var\((--[a-z0-9-]+)\)/i.exec(u)?.[1];
+    if (!name) continue;
+    expect(THEME_CSS, `theme.css 未定义 ${name}`).toMatch(
+      new RegExp(`\\s${name}\\s*:`),
+    );
+  }
+}
 
 const HOUR = 3_600_000;
 
@@ -68,6 +81,13 @@ describe("DayPartChart", () => {
   });
 
   // 截图暴露的两个问题：条被 w-full 摊得太散，刻度被一起放大
+  it("刻度线与刻度字的 var() 引用在 theme.css 里存在", () => {
+    // stroke="var(--line)" 之前写成不存在的 token：刻度线直接消失，
+    // 刻度字退回黑色，深色底上 00/06/12/18/24 全部看不见。
+    const { container } = render(<DayPartChart hourlyMs={new Array(24).fill(0)} />);
+    assertTokensDefined(container.innerHTML.match(/var\([^)]+\)/g) ?? []);
+  });
+
   it("限制最大宽度，不跟着面板无限拉宽", () => {
     const { container } = render(<DayPartChart hourlyMs={new Array(24).fill(0)} />);
     // SVG 元素的 .className 是 SVGAnimatedString，要读 attribute。

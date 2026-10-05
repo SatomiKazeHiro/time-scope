@@ -20,6 +20,8 @@
   "exclude": [
     "src/preview.test.tsx",
     "src/preview-timeline.test.tsx",
-    "src/preview-summary.test.tsx"
+    "src/preview-summary.test.tsx",
+    "src/components/DonutChart.test.tsx",
+    "src/components/DayPartChart.test.tsx"
   ]
 }

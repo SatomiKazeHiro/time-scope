@@ -79,7 +79,9 @@ export interface WallCell {
 export interface WallLayout {
   cells: WallCell[];
   weeks: number;
-  monthLabels: Array<{ col: number; label: string }>;
+  /** `date` 是**该月第一天**，不是那一列的列首日期 —— 月首常落在周中，
+   *  拿列首去推 rangeFor("month") 会选中上一个月。 */
+  monthLabels: Array<{ col: number; label: string; date: string }>;
 }
 
 /**
@@ -104,7 +106,7 @@ export function buildWall(days: DayCell[]): WallLayout {
   const total = days.length + lead + (6 - weekdayOf(last));
 
   const cells: WallCell[] = [];
-  const monthLabels: Array<{ col: number; label: string }> = [];
+  const monthLabels: Array<{ col: number; label: string; date: string }> = [];
   let cursor = shiftDate(first, -lead);
   let lastMonth = -1;
   let lastLabelCol = -MONTH_LABEL_MIN_GAP;
@@ -128,7 +130,7 @@ export function buildWall(days: DayCell[]): WallLayout {
       if (month !== lastMonth) {
         // 一个月只标一次；离上一个标签太近就不画（GitHub 的做法）
         if (col - lastLabelCol >= MONTH_LABEL_MIN_GAP) {
-          monthLabels.push({ col, label: `${month}月` });
+          monthLabels.push({ col, label: `${month}月`, date: cursor });
           lastLabelCol = col;
         }
         lastMonth = month;

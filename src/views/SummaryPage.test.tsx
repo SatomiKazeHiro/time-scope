@@ -204,9 +204,31 @@ describe("SummaryPage", () => {
   it("空日历显示空状态，不画墙也不崩（Review Focus #1）", async () => {
     invoke.mockImplementation(() => Promise.resolve(null));
     const { container } = render(<SummaryPage />);
-    await waitFor(() => expect(screen.getByText(/还没有采集数据/)).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getAllByText(/还没有采集数据/).length).toBeGreaterThan(0));
     expect(container.innerHTML).not.toContain("NaN");
     expect(container.querySelector("[role='grid']")).toBeNull();
+  });
+
+  it("空库时指标卡不是「加载中…」，而是「暂无数据」（Review Focus #1）", async () => {
+    // 库里没有任何段：日历返回 null -> range 为 null -> getSummary 根本不发，
+    // summary 一直是 null、error 一直是 false -> loading={!summary && !error}
+    // 永远为 true。新装用户看到的是一张永远转不出来的卡。
+    invoke.mockImplementation(() => Promise.resolve(null));
+    render(<SummaryPage />);
+    await waitFor(() =>
+      expect(screen.getAllByText(/还没有采集数据/).length).toBeGreaterThan(0));
+    expect(screen.getByText("暂无数据")).toBeTruthy();
+    expect(screen.queryByText(/加载中/)).toBeNull();
+  });
+
+  it("空库时范围 chip 与标题面板也给出结论，不是永远等", async () => {
+    invoke.mockImplementation(() => Promise.resolve(null));
+    render(<SummaryPage />);
+    await waitFor(() =>
+      expect(screen.getAllByText(/还没有采集数据/).length).toBeGreaterThan(0));
+    expect(screen.getByTestId("range-chip").textContent).toContain("—");
+    expect(screen.queryByText("向下滚动加载")).toBeNull();
   });
 
   it("get_summary 失败时显示错误而不是白屏", async () => {

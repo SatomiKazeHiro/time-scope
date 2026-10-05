@@ -53,8 +53,8 @@ export default function ContributionWall({
       {/* 月份标签：浮在每月首次出现的那一列上方 */}
       <div className="relative mb-1 h-3" style={{ width }}>
         {layout.monthLabels.map((m) => {
-          const d = firstPresentOf(m.col);
-          if (!d) return null;
+          // 用标签自带的该月首日，不是那一列的第一个有数据的格子
+          const d = m.date;
           return (
             <button
               key={`${m.label}-${m.col}`}

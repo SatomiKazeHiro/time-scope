@@ -21,6 +21,7 @@
 | 13 | 挂机两小时，专注度却显示很高 | **曾经是真 bug。** `idle` 是一个类别，被当成桶内主导类别就算进了专注度 → 100%「高度专注」。空闲不是"不专注"，是"没在工作" | 已修：专注度分母改为**非空闲时长**，全是空闲的桶不涂色，头部平均只对有活动的桶加权。回归测试 `focus ignores idle time entirely` |
 | 14 | 热力图只有 5 档、0 档是轨道色，看着像「少了 6 档」 | **0 档是「0 活跃」**，就该看起来是空的。与 MASTER §2.5「没有活动的桶不画，露出轨道色」同一处理 | 别给 0 档也上紫阶 |
 | 15 | 选中框的宽窄是随手调的 | **框宽 = 跨的格数**（日 1 / 周 1 列 / 月 N 列），框的宽窄就是档位标识 | 别改成逐格描边 |
+| 17 | 组件里写 `var(--ink)` / `var(--line)` 看着像能用 | **不存在**。真名是 `--color-ink` / `--color-line`。不可解析的 var() 让属性失效、`fill` 退回黑色，深色底上直接隐形 | 两个组件的测试会读 `theme.css` 逐个 `var()` 断言存在 |
 | 16 | 「按天分组」用 SQL 的 `localtime` 在 DST 地区会差一小时 | **跟随全项目既有的固定 offset 假设**（`day_range_ms` 同款）。单做 DST 正确会制造「只有汇总页对、其他页错」 | 用户不在 UTC+8 时修；见 §4.2 |
 
 ### 待重构（现在别动，但确实该做）
@@ -137,7 +138,7 @@ Phase 1 分三步。**三步都已完成**，另加一轮 UI 设计系统（§1.
 
 ```
 Rust  37 文件 / 5854 行（不含测试）  TS/TSX  19 文件 / 2404 行（不含测试）
-测试  299 Rust + 231 前端 = 530 条用例，全绿，0 warning
+测试  299 Rust + 234 前端 = 533 条用例，全绿，0 warning
 提交  46 个（main..phase1-polish），**未合并**
 ```
 
@@ -195,7 +196,7 @@ time-scope/
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 299 passed
-pnpm test                                                      # 231 passed
+pnpm test                                                      # 234 passed
 pnpm build                                                     # 无 tsc 报错
 node design-system/time-scope/verify-palette.mjs               # 色板校验，exit 0
 ```

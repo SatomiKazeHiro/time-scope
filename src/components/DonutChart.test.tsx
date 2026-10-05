@@ -1,7 +1,21 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { render, screen } from "@testing-library/react";
 import DonutChart from "./DonutChart";
 import type { DonutSlice } from "../types";
+
+const THEME_CSS = readFileSync("src/styles/theme.css", "utf8");
+/** `var(--foo)` 里的名字必须在 theme.css 里被定义过，否则浏览器解析失败
+ *  —— 不可解析的 var() 会让属性失效，fill 退回黑色，在深色底上等于隐形。 */
+function assertTokensDefined(uses: string[]) {
+  for (const u of uses) {
+    const name = /var\((--[a-z0-9-]+)\)/i.exec(u)?.[1];
+    if (!name) continue;
+    expect(THEME_CSS, `theme.css 未定义 ${name}`).toMatch(
+      new RegExp(`\\s${name}\\s*:`),
+    );
+  }
+}
 
 const DONUT: DonutSlice[] = [
   { key: "work", ms: 5_700_000 },
@@ -16,12 +30,15 @@ describe("DonutChart", () => {
     expect(container.querySelectorAll("[data-arc]")).toHaveLength(4);
   });
 
-  it("中心写监控总时长，且用已有 token 上色（不依赖未定义的 class）", () => {
+  it("中心写监控总时长，且用的 token 在 theme.css 里真的存在", () => {
+    // 之前写的是 var(--ink) —— theme.css 里只有 --color-ink。
+    // 不可解析的 var() 让 fill 失效退回黑色，深色底上环心读数整个消失。
     const { container } = render(<DonutChart donut={DONUT} totalMs={54_000_000} />);
     const center = screen.getByText("15h");
-    expect(center.getAttribute("fill")).toBe("var(--ink)");
+    assertTokensDefined([center.getAttribute("fill") ?? ""]);
     expect(center.getAttribute("class")).toBeNull();
-    // 整个组件不得引用 theme.css 里没有的 class
+    // 组件里每一个 var() 引用都得存在
+    assertTokensDefined(container.innerHTML.match(/var\([^)]+\)/g) ?? []);
     expect(container.innerHTML).not.toContain("ring-total");
     expect(container.innerHTML).not.toContain("ring-sub");
   });

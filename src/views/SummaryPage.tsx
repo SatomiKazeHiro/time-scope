@@ -32,6 +32,14 @@ export default function SummaryPage() {
   const [days, setDays] = useState<DayCell[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState(false);
+  /**
+   * 日历是空库（还没产出任何段）还是仍在取。
+   *
+   * 两者都让 `summary === null`，但呈现必须不同：空库时指标卡写
+   * 「暂无数据」，在取时写「加载中…」。曾经只靠 `!summary && !error` 判加载，
+   * 空库时没有任何请求在飞，那张卡就永远转不出来 —— 新装用户的第一屏。
+   */
+  const [loaded, setLoaded] = useState(false);
   const [titles, setTitles] = useState<MergedTitle[]>([]);
   const [titleBusy, setTitleBusy] = useState(false);
 
@@ -42,13 +50,14 @@ export default function SummaryPage() {
     getDailyCalendar()
       .then((cal) => {
         if (dead) return;
+        setLoaded(true);
         if (!cal) return;                       // 库为空：保持 all=null，走空状态
         setAll({ kind: "all", from: cal.first, to: cal.last, label: "全部" });
         setDays(
           fillDays(cal.first, cal.last, new Map(cal.days.map((d) => [d.date, d.totalMs]))),
         );
       })
-      .catch(() => { if (!dead) setError(true); });
+      .catch(() => { if (!dead) { setLoaded(true); setError(true); } });
     return () => { dead = true; };
   }, []);
 
@@ -137,9 +146,11 @@ export default function SummaryPage() {
   }, [titles]);
   const titleEmpty = titleBusy
     ? "统计中…"
-    : titles.length === 0
-      ? "向下滚动加载"
-      : "这个范围没有记录";
+    : !range
+      ? "还没有采集数据"
+      : titles.length === 0
+        ? "向下滚动加载"
+        : "这个范围没有记录";
 
   const appItems: RankedItem[] = useMemo(() => {
     const apps = summary?.topApps ?? [];
@@ -180,7 +191,7 @@ export default function SummaryPage() {
         </div>
       )}
 
-      <MetricRow summary={summary} loading={!summary && !error} />
+      <MetricRow summary={summary} loading={!summary && !error && !loaded} />
 
       <section className="panel p-4" aria-label="监控时长热力图">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">

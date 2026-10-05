@@ -70,13 +70,13 @@ export default function DonutChart({ donut, totalMs }: DonutChartProps) {
             就等于没样式，SVG 默认黑字在深色底上等于隐形），也不新增 token。 */}
         <text
           x="32" y="30" textAnchor="middle"
-          fill="var(--ink)" fontSize="10" fontWeight="600"
+          fill="var(--color-ink)" fontSize="10" fontWeight="600"
         >
           {fmtHours(totalMs)}
         </text>
         <text
           x="32" y="38" textAnchor="middle"
-          fill="var(--ink-faint)" fontSize="6"
+          fill="var(--color-ink-faint)" fontSize="6"
         >
           监控
         </text>
