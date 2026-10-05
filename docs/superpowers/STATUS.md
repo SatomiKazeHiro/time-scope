@@ -24,7 +24,8 @@
 | 25 | 星期标签列正常占宽度（ + 间距） | **绝对占宽度会让网格比 query container 窄 18px**，而 --cw 用 100cqw 量容器整宽 —— 每列多算 0.34px，累到第 52 列正好偏一列，周框看起来落到下一列。标签必须  + 容器  让出位置 | 标签不许回到布局流 |
 | 26 | query container 当包含块给绝对定位用 | **不会**。Chrome 里 container-type: inline-size 不建立 containing block，星期标签会跑到页面根上压住页头 | 容器上必须显式写 relative |
 | 27 | 测试里写死 53 周窗口的日期 | 窗口随「今天」滚动，写死就**每天挂一次** | 用 wallWindow(todayString()) 推 |
-| 24 | 左侧星期标签（GitHub 那样只标一/三/五） | **row 0 = 周日**，所以标的是第 1/3/5 行 = 周一/三/五。标签列顶部有与月份标签行同高的占位块，否则绝对定位原点比格子高 16px、整体错半行 | 别删那个占位块 |
+| 24 | 热力图的行顺序 | **行 0 = 周一**，行 6 = 周日。用 rowOf() 换算（JS 的 weekdayOf 是 0=周日，两个下标别混用）。一周从周一起 | 别改回周日开头 |
+| 28 | 左侧只标一/三/五三个星期 | LABELLED_ROWS = [0,2,4]（Mon/Wed/Fri），与 GitHub 一致。标签列顶部有与月份标签行同高的占位块，否则绝对定位原点比格子高 16px、整体错半行 | 别删那个占位块 |
 | 23 | 范围 chip 写「全部」 | 默认范围**就是墙铺的那 53 周窗口**，不是「有数据的全部」。叫「全部」会和那 5 天混淆，读者会以为指标覆盖了一年 | 三处口径（墙 / chip / 指标）必须同源 |
 | 18 | 热力图只有 5 天数据时就只画 2 列、1 个月份标签，像渲染坏了 | **墙铺固定 53 周**（GitHub 的形状），最后一格是今天，窗口内没数据的日子画成空的 | 别改回「按数据跨度」 |
 | 19 | 热力图 53 列写死 11px，右边空一大片 | **列宽用 cqw（容器查询单位）跟着容器走**， 显式给 7 行。不写行高时 grid-auto-flow:column 只排一行、整面墙高度塌 0 | 别把行高改回 auto |
@@ -148,7 +149,7 @@ Phase 1 分三步。**三步都已完成**，另加一轮 UI 设计系统（§1.
 
 ```
 Rust  37 文件 / 5854 行（不含测试）  TS/TSX  19 文件 / 2404 行（不含测试）
-测试  301 Rust + 259 前端 = 560 条用例，全绿，0 warning
+测试  301 Rust + 267 前端 = 568 条用例，全绿，0 warning
 提交  46 个（main..phase1-polish），**未合并**
 ```
 
@@ -206,7 +207,7 @@ time-scope/
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 299 passed
-pnpm test                                                      # 259 passed
+pnpm test                                                      # 267 passed
 pnpm build                                                     # 无 tsc 报错
 node design-system/time-scope/verify-palette.mjs               # 色板校验，exit 0
 ```
