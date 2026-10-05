@@ -105,3 +105,75 @@ export function parsePayload<T>(raw: string): T | null {
 function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
+
+/* ---------- 汇总页（spec 2026-10-05） ---------- */
+
+/** 热力图的一格：某一天的监控总时长（含 idle）。 */
+export interface DayCell {
+  date: string;
+  totalMs: number;
+}
+
+/**
+ * 热力图的数据源。`days` **只含有记录的日期** ——
+ * 空缺日期由 `lib/summary.ts` 的 `fillDays` 补齐（后端的 `GROUP BY`
+ * 会跳过没开机的那天，直接用它的结果排格子会整片错位）。
+ */
+export interface DailyCalendar {
+  first: string;
+  last: string;
+  days: DayCell[];
+}
+
+/** 圆环的档位。后端恒返回这四项、顺序固定。 */
+export type DonutKey = "work" | "browsing" | "idle" | "unknown";
+
+export interface DonutSlice {
+  key: DonutKey;
+  ms: number;
+}
+
+export interface AppSlice {
+  name: string;
+  ms: number;
+}
+
+/** 顶部指标。`from` / `to` 都是 `YYYY-MM-DD` 的**闭区间**。 */
+export interface Summary {
+  totalMs: number;
+  activeMs: number;
+  idleMs: number;
+  segmentCount: number;
+  switchCount: number;
+  /** 24 个桶，按本地小时切。只含非 idle 时长。 */
+  hourlyMs: number[];
+  donut: DonutSlice[];
+  topApps: AppSlice[];
+}
+
+/** 归一化后的窗口标题。`redacted` 由后端判定，前端不硬编码占位符。 */
+export interface MergedTitle {
+  title: string;
+  hits: number;
+  redacted: boolean;
+}
+
+/** 热力图的数据。**无参数** —— 热力图永远渲染全部数据，不受选中范围影响。 */
+export async function getDailyCalendar(): Promise<DailyCalendar | null> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<DailyCalendar | null>("get_daily_calendar");
+}
+
+export async function getSummary(from: string, to: string): Promise<Summary> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<Summary>("get_summary", { from, to });
+}
+
+export async function getTopTitles(
+  from: string,
+  to: string,
+  limit = 10,
+): Promise<MergedTitle[]> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<MergedTitle[]>("get_top_titles", { from, to, limit });
+}
