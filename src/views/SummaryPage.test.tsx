@@ -153,14 +153,30 @@ describe("SummaryPage", () => {
   });
 
   it("点周条选那一周", async () => {
+    // 墙现在是固定 53 周，列的位置不再有意义 —— 按 aria-label 里的日期找
+    render(<SummaryPage />);
+    // 日历是异步取的，得等墙画出来
+    const week = await screen.findByRole("button", { name: "选择 2026-10-04 那一周" });
+    fireEvent.click(week);
+    await waitFor(() => {
+      expect(lastArgs("get_summary")).toMatchObject({
+        from: "2026-10-04",
+        to: "2026-10-10",
+      });
+    });
+  });
+
+  it("53 个周条都可选，空周也选得到（选过去看的是零，不是禁止）", async () => {
     render(<SummaryPage />);
     await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
-    fireEvent.click(screen.getAllByTestId("week-strip-btn")[0]);
+    // 2025-10-05 那一周整周没有任何活动
+    const empty = await screen.findByRole("button", { name: "选择 2025-10-05 那一周" });
+    expect((empty as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(empty);
     await waitFor(() => {
-      // 首列的周日是 2026-09-27，该周是 09-27..10-03
       expect(lastArgs("get_summary")).toMatchObject({
-        from: "2026-09-27",
-        to: "2026-10-03",
+        from: "2025-10-05",
+        to: "2025-10-11",
       });
     });
   });
@@ -168,8 +184,11 @@ describe("SummaryPage", () => {
   it("点月标签选那一月", async () => {
     render(<SummaryPage />);
     await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
-    fireEvent.click(screen.getByTestId("month-label-10"));
+    // 53 周跨两年，有两个 10 月标签；按年月定位 2026 那个
+    fireEvent.click(screen.getByTestId("month-label-2026-10"));
     await waitFor(() => {
+      // 关键回归：月首常落在周中，10月1日那列的周日是 9-27。
+      // 拿列首日期推算会选中 9 月。
       expect(lastArgs("get_summary")).toMatchObject({
         from: "2026-10-01",
         to: "2026-10-31",

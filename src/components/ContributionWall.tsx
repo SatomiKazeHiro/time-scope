@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
-  buildWall, selectionFrame, CELL, GAP, PITCH, scaleColor, type DateRange,
+  buildWall, selectionFrame, CELL, GAP, PITCH, scaleColor, scaleStroke,
+  type DateRange,
 } from "../lib/summary";
 import type { DayCell } from "../types";
 
@@ -34,10 +35,6 @@ export default function ContributionWall({
     return <p className="text-sm text-ink-faint">还没有采集数据。</p>;
   }
 
-  /** 某列里第一个有数据的格子。没有任何格子有数据的列返回 undefined。 */
-  const firstPresentOf = (ci: number): string | undefined =>
-    layout.cells.find((c) => c.col === ci && c.present)?.date;
-
   /**
    * 某列的**周日**（row 0）。补齐位也有真实日期，所以每周都拿得到 ——
    * 这才是 `onSelectWeek` 声明的那个参数。`rangeFor("week", …)` 内部
@@ -59,7 +56,7 @@ export default function ContributionWall({
             <button
               key={`${m.label}-${m.col}`}
               type="button"
-              data-testid={`month-label-${m.label.replace("月", "")}`}
+              data-testid={`month-label-${m.date.slice(0, 7)}`}
               onClick={() => onSelectMonth(d)}
               className="absolute cursor-pointer text-[9px] whitespace-nowrap text-ink-faint hover:text-ink"
               style={{ left: m.col * PITCH }}
@@ -98,7 +95,7 @@ export default function ContributionWall({
                 title={`${c.date} · ${Math.round((c.totalMs / 3_600_000) * 10) / 10}h`}
                 onClick={() => onSelectDay(c.date)}
                 className="cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
-                style={{ background: scaleColor(c.step) }}
+                style={{ background: scaleColor(c.step), boxShadow: scaleStroke(c.step) }}
               />
             ) : (
               <span key={c.date} aria-hidden style={{ background: "transparent" }} />
@@ -128,16 +125,16 @@ export default function ContributionWall({
         className="mt-1.5 grid"
         style={{ gridTemplateColumns: `repeat(${layout.weeks}, ${CELL}px)`, columnGap: GAP }}
       >
+        {/* 53 周全是真实日历周，都可选 —— 选一个空周看到的是零，不是禁止 */}
         {Array.from({ length: layout.weeks }, (_, ci) => {
           const s = sundayOf(ci);
-          const hasData = firstPresentOf(ci) !== undefined;
           return (
             <button
               key={ci}
               type="button"
               data-testid="week-strip-btn"
-              aria-label={s ? `选择 ${s} 那一周` : "这一周没有数据"}
-              disabled={!s || !hasData}
+              aria-label={s ? `选择 ${s} 那一周` : "这一周"}
+              disabled={!s}
               onClick={() => s && onSelectWeek(s)}
               className="h-1 cursor-pointer rounded-sm bg-surface-2 transition-colors hover:bg-ink-ghost disabled:cursor-default"
             />

@@ -122,7 +122,7 @@ describe("ContributionWall", () => {
 
   it("点月标签回调那个月的首日", () => {
     const { onSelectMonth } = setup();
-    fireEvent.click(screen.getByTestId("month-label-10"));
+    fireEvent.click(screen.getByTestId("month-label-2026-10"));
     expect(onSelectMonth).toHaveBeenCalledWith("2026-10-01");
   });
 

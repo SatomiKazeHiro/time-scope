@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildWall, endOfMonth, fillDays, rangeFor, scaleColor, scaleStep,
-  selectionFrame, startOfWeek, weekdayOf,
+  selectionFrame, startOfWeek, wallWindow, weekdayOf,
   type DateRange,
 } from "./summary";
 import type { DayCell } from "../types";
@@ -84,6 +84,75 @@ describe("scaleStep", () => {
     expect(scaleColor(0)).toBe("var(--color-surface-2)");
     expect(scaleColor(1)).toBe("var(--color-scale-1)");
     expect(scaleColor(5)).toBe("var(--color-scale-5)");
+  });
+});
+
+describe("wallWindow", () => {
+  // 热力图铺**固定 12 个月**，不随数据量伸缩 —— GitHub 就是这样。
+  // 以前是「首个有数据的日子 → 今天」，所以 5 天数据只有 2 列 1 个月份标签。
+  const W = wallWindow("2026-10-05");
+  const WEEKS = 53;
+
+  it("窗口是 53 周", () => {
+    expect(W.weeks).toBe(WEEKS);
+  });
+
+  it("最后一格是给定的那天", () => {
+    expect(W.end).toBe("2026-10-05");
+  });
+
+  it("第一格是周日（列从周日起算）", () => {
+    expect(weekdayOf(W.start)).toBe(0);
+  });
+
+  it("首格距本周周日正好 52 周", () => {
+    // start 是**本周周日**往前 52 周，不是距今天 52 周 ——
+    // 距今天是 364 + weekday(today) 天，锚在周日才能让每列对齐。
+    const [y, m, d] = W.start.split("-").map(Number);
+    const startDate = new Date(y, m - 1, d);
+    const sunday = new Date(2026, 9, 4);       // 2026-10-04，本周周日
+    expect(Math.round((sunday.getTime() - startDate.getTime()) / 86_400_000))
+      .toBe((WEEKS - 1) * 7);
+  });
+});
+
+describe("buildWall 的固定跨度", () => {
+  it("只有 5 天数据时，墙仍然是 53 列", () => {
+    // 回归：以前按数据跨度画，5 天 -> 2 列 1 个月份标签，看着像坏了
+    const w = wallWindow("2026-10-05");
+    const five = days([
+      ["2026-10-01", 1], ["2026-10-02", 2], ["2026-10-03", 3],
+      ["2026-10-04", 4], ["2026-10-05", 5],
+    ]);
+    const filled = fillDays(w.start, w.end, new Map(five.map((d) => [d.date, d.totalMs])));
+    const layout = buildWall(filled);
+    expect(layout.weeks).toBe(53);
+    // 网格是满的 53×7；末列的补齐位由 buildWall 补，present 的是窗口内真实日子
+    expect(layout.cells).toHaveLength(53 * 7);
+    // 网格末格是补齐到周六的 10-10；最后一个**有数据的**格子才是今天
+    expect(layout.cells.at(-1)!.col).toBe(52);
+    const lastReal = layout.cells.filter((c) => c.present).at(-1)!;
+    expect(lastReal.date).toBe("2026-10-05");
+    // 10-05 是周一 -> 第 1 行
+    expect(lastReal.row).toBe(1);
+  });
+
+  it("窗口里没数据的日子是 0 档（轨道色），不是缺席", () => {
+    const w = wallWindow("2026-10-05");
+    const filled = fillDays(w.start, w.end, new Map([["2026-10-03", 3_600_000]]));
+    const layout = buildWall(filled);
+    const byDate = Object.fromEntries(layout.cells.map((c) => [c.date, c.step]));
+    expect(byDate["2026-10-03"]).toBeGreaterThan(0);
+    expect(byDate["2026-01-15"]).toBe(0);
+  });
+
+  it("12 个月里 12 个月份标签都在（列距够）", () => {
+    const w = wallWindow("2026-10-05");
+    const filled = fillDays(w.start, w.end, new Map());
+    const labels = buildWall(filled).monthLabels.map((m) => m.label);
+    expect(labels.length).toBeGreaterThanOrEqual(12);
+    expect(labels).toContain("1月");
+    expect(labels).toContain("10月");
   });
 });
 

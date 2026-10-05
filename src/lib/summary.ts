@@ -27,6 +27,25 @@ export const PITCH = CELL + GAP;
  */
 const MONTH_LABEL_MIN_GAP = 2;
 
+/** 热力图铺多少周。GitHub 的贡献墙是 53 周。 */
+export const WALL_WEEKS = 53;
+
+/**
+ * 热力图的横轴窗口：**固定 53 周，最后一格是 `today`**。
+ *
+ * 固定跨度而不是「首个有数据的日子 → 今天」：那样只有 5 天数据时整面墙
+ * 只有 2 列 1 个月份标签，看起来像渲染坏了。GitHub 不管你有多少数据都
+ * 铺满一整年，没数据的日子是空的 —— 那个「空」本身就是「我那时候还没
+ * 开始用」的信息。
+ *
+ * 首格从今天所在周的周日往前推 52 周，所以每列都对齐周。
+ */
+export function wallWindow(today: string): { start: string; end: string; weeks: number } {
+  const end = today;
+  const start = shiftDate(startOfWeek(end), -(WALL_WEEKS - 1) * 7);
+  return { start, end, weeks: WALL_WEEKS };
+}
+
 /** `YYYY-MM-DD` 的本地星期，0 = 周日。 */
 export function weekdayOf(date: string): number {
   const [y, m, d] = date.split("-").map(Number);
@@ -63,6 +82,18 @@ export function scaleStep(ms: number, maxMs: number): number {
 /** 档位 -> CSS 颜色。0 用轨道色，1..5 用指标模式那套紫阶。 */
 export function scaleColor(step: number): string {
   return step === 0 ? "var(--color-surface-2)" : `var(--color-scale-${step})`;
+}
+
+/**
+ * 0 档格子的内描边。
+ *
+ * `--color-surface-2` 在浅色主题下是 #f4f5f7，压在 #ffffff 的面板上
+ * 几乎看不见 —— 「哪天没活动」就变成了「哪里是空白」，读不出信息。
+ * MASTER §2.4 对「颜色太淡看不见」有既定解法：1px 内描边，用
+ * `--color-line-strong`，**不新增 token**。
+ */
+export function scaleStroke(step: number): string | undefined {
+  return step === 0 ? "inset 0 0 0 1px var(--color-line-strong)" : undefined;
 }
 
 export interface WallCell {

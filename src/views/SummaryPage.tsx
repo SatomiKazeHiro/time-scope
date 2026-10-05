@@ -3,13 +3,14 @@ import ContributionWall from "../components/ContributionWall";
 import MetricRow from "../components/MetricRow";
 import RankedList, { type RankedItem } from "../components/RankedList";
 import {
-  fillDays, rangeFor, rangeLabel, type DateRange, type RangeKind,
+  fillDays, rangeFor, rangeLabel, wallWindow, type DateRange, type RangeKind,
 } from "../lib/summary";
 import { formatDuration } from "../lib/bucket";
 import {
   getDailyCalendar, getSummary, getTopTitles,
   type DayCell, type MergedTitle, type Summary,
 } from "../types";
+import { todayString } from "../types";
 
 /** 标题排名的条数。 */
 const TITLE_LIMIT = 10;
@@ -53,8 +54,12 @@ export default function SummaryPage() {
         setLoaded(true);
         if (!cal) return;                       // 库为空：保持 all=null，走空状态
         setAll({ kind: "all", from: cal.first, to: cal.last, label: "全部" });
+        // 墙铺**固定 53 周**（GitHub 的形状），不是数据跨度 ——
+        // 只有 5 天数据时整面墙只有 2 列 1 个月份标签，看着像渲染坏了。
+        // 窗口内没数据的日子照样在序列里，totalMs=0 画成空的。
+        const w = wallWindow(todayString());
         setDays(
-          fillDays(cal.first, cal.last, new Map(cal.days.map((d) => [d.date, d.totalMs]))),
+          fillDays(w.start, w.end, new Map(cal.days.map((d) => [d.date, d.totalMs]))),
         );
       })
       .catch(() => { if (!dead) { setLoaded(true); setError(true); } });
