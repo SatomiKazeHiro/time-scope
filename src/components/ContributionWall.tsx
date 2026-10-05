@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import {
-  buildWall, selectionFrame, CELL, GAP, PITCH, scaleColor, scaleStroke,
+  buildWall, selectionFrame, uninstalledColor, CELL, GAP, PITCH, scaleColor, scaleStroke,
   type DateRange,
 } from "../lib/summary";
 import type { DayCell } from "../types";
@@ -8,6 +8,11 @@ import type { DayCell } from "../types";
 interface ContributionWallProps {
   /** **连续升序**的日期序列（`lib/summary.ts` 的 `fillDays` 产出） */
   days: DayCell[];
+  /**
+   * 首个有记录的日子。这之前的格子画成「还没装」——
+   * 和「装了但当天没活动」是两回事（见 `uninstalledColor`）。
+   */
+  trackedFrom?: string;
   /** `null` = 当前是「全部」，不框 */
   selection: DateRange | null;
   onSelectDay(date: string): void;
@@ -23,9 +28,9 @@ interface ContributionWallProps {
  * 框外**不压暗**：聚光灯方案会让远处月份的对比度跌破 3:1。
  */
 export default function ContributionWall({
-  days, selection, onSelectDay, onSelectWeek, onSelectMonth,
+  days, trackedFrom, selection, onSelectDay, onSelectWeek, onSelectMonth,
 }: ContributionWallProps) {
-  const layout = useMemo(() => buildWall(days), [days]);
+  const layout = useMemo(() => buildWall(days, trackedFrom), [days, trackedFrom]);
   const frame = useMemo(
     () => (selection ? selectionFrame(layout, selection.from, selection.to) : null),
     [layout, selection],
@@ -92,10 +97,17 @@ export default function ContributionWall({
                 role="gridcell"
                 data-date={c.date}
                 data-testid={`cell-${c.date}`}
-                title={`${c.date} · ${Math.round((c.totalMs / 3_600_000) * 10) / 10}h`}
+                title={
+                  c.tracked
+                    ? `${c.date} · ${Math.round((c.totalMs / 3_600_000) * 10) / 10}h`
+                    : `${c.date} · 还没装 Time Scope`
+                }
                 onClick={() => onSelectDay(c.date)}
                 className="cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
-                style={{ background: scaleColor(c.step), boxShadow: scaleStroke(c.step) }}
+                style={{
+                  background: c.tracked ? scaleColor(c.step) : uninstalledColor(),
+                  boxShadow: c.tracked ? scaleStroke(c.step) : undefined,
+                }}
               />
             ) : (
               <span key={c.date} aria-hidden style={{ background: "transparent" }} />
@@ -136,6 +148,8 @@ export default function ContributionWall({
               aria-label={s ? `选择 ${s} 那一周` : "这一周"}
               disabled={!s}
               onClick={() => s && onSelectWeek(s)}
+              // 同样的毛病：surface-2 在浅色下等于透明。MASTER §2.4 的既定解法。
+              style={{ boxShadow: "inset 0 0 0 1px var(--color-line-strong)" }}
               className="h-1 cursor-pointer rounded-sm bg-surface-2 transition-colors hover:bg-ink-ghost disabled:cursor-default"
             />
           );

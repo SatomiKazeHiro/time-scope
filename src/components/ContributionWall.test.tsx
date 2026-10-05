@@ -176,6 +176,21 @@ describe("ContributionWall", () => {
     }
   });
 
+  it("周条有内描边，否则浅色主题下 53 根细条看不见", () => {
+    // 和 0 档格子同一个毛病：--color-surface-2 在 #ffffff 面板上等于透明。
+    // 周条是「点一下选一周」的唯一入口，看不见就等于没有。
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const strip = container.querySelectorAll("[data-testid='week-strip-btn']");
+    expect(strip.length).toBeGreaterThan(0);
+    for (const b of strip) {
+      expect((b as HTMLElement).style.boxShadow)
+        .toContain("--color-line-strong");
+    }
+  });
+
   it("0 小时的格子用轨道色而不是紫阶 1", () => {
     const { container } = render(
       <ContributionWall days={DAYS} selection={null}

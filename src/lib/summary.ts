@@ -85,7 +85,20 @@ export function scaleColor(step: number): string {
 }
 
 /**
- * 0 档格子的内描边。
+ * 还没装 Time Scope 的那段日子画成什么。
+ *
+ * **它和「装了但当天没活动」是两件事，必须分开。** GitHub 的空格有意义是因为
+ * GitHub 一直存在；Time Scope 三个月前还不存在，那段日子的空格读作「我一整年
+ * 几乎没用过」——而事实是「我 5 天前才装上」。
+ *
+ * 用面板色（等于背景）、且不描边：读作「什么都没有」。0 档那格是轨道色 + 描边，
+ * 读作「有个空方块」。两种空一眼能分开，且不新增 token。
+ */
+export function uninstalledColor(): string {
+  return "var(--color-surface-1)";
+}
+
+/** 0 档格子的内描边。
  *
  * `--color-surface-2` 在浅色主题下是 #f4f5f7，压在 #ffffff 的面板上
  * 几乎看不见 —— 「哪天没活动」就变成了「哪里是空白」，读不出信息。
@@ -102,8 +115,13 @@ export interface WallCell {
   col: number;
   /** 0 = 周日 */
   row: number;
-  /** false = 补齐位（数据范围之外），不渲染但占位，保证不整列错位 */
+  /** false = 补齐位（窗口之外），不渲染但占位，保证不整列错位 */
   present: boolean;
+  /**
+   * 这天是否在 Time Scope 的运行期内。
+   * false = 还没装（`uninstalledColor()`），true = 装了但可能没活动（0 档）。
+   */
+  tracked: boolean;
   step: number;
 }
 
@@ -125,12 +143,14 @@ export interface WallLayout {
  * （末列位置由 `days[last].date` 决定）。调用方用 `fillDays` 产出，
  * 它保证连续；`totalMs` 为 0 的日子照样在序列里。
  */
-export function buildWall(days: DayCell[]): WallLayout {
+export function buildWall(days: DayCell[], trackedFrom?: string): WallLayout {
   if (days.length === 0) return { cells: [], weeks: 0, monthLabels: [] };
 
-  const maxMs = Math.max(...days.map((d) => d.totalMs), 0);
   const first = days[0].date;
   const last = days[days.length - 1].date;
+  const maxMs = Math.max(...days.map((d) => d.totalMs), 0);
+  // 缺省为「从窗口第一天起就在运行」——调用方不传时不做未安装期区分。
+  const since = trackedFrom ?? first;
   const lead = weekdayOf(first);
   // 首列往前补 lead 天到周日，末列往后补 (6 - weekday(last)) 天到周六。
   // 这三项相加恒是 7 的倍数（补齐后不留半列）。
@@ -153,6 +173,7 @@ export function buildWall(days: DayCell[]): WallLayout {
       col,
       row,
       present,
+      tracked: present && cursor >= since,
       step: scaleStep(totalMs, maxMs),
     });
 

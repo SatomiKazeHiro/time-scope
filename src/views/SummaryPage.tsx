@@ -207,6 +207,7 @@ export default function SummaryPage() {
         </div>
         <ContributionWall
           days={days}
+          trackedFrom={all?.from}
           selection={kind === "all" ? null : range}
           onSelectDay={select("day")}
           onSelectWeek={select("week")}
@@ -245,6 +246,25 @@ function ScaleLegendSteps() {
         />
       ))}
       <span>多</span>
+      <span className="ml-3 flex items-center gap-1.5">
+        <i
+          data-legend-empty
+          aria-hidden
+          className="size-2.5 rounded-[2px]"
+          style={{ background: "var(--color-surface-1)" }}
+        />
+        还没装
+        <i
+          data-legend-zero
+          aria-hidden
+          className="size-2.5 rounded-[2px]"
+          style={{
+            background: "var(--color-surface-2)",
+            boxShadow: "inset 0 0 0 1px var(--color-line-strong)",
+          }}
+        />
+        当天没活动
+      </span>
     </span>
   );
 }

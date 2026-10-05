@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildWall, endOfMonth, fillDays, rangeFor, scaleColor, scaleStep,
-  selectionFrame, startOfWeek, wallWindow, weekdayOf,
+  scaleStroke, selectionFrame, startOfWeek, wallWindow, weekdayOf,
   type DateRange,
 } from "./summary";
 import type { DayCell } from "../types";
@@ -13,6 +13,12 @@ function days(spec: Array<[string, number]>): DayCell[] {
 }
 
 /** 从 `from` 起连续 `count` 天的 [date, 1] 序列。 */
+/** 复刻组件里给格子算 style 的那段逻辑，测它而不测 DOM。 */
+function cellStyle(c: { tracked: boolean; step: number }): string {
+  if (!c.tracked) return "bg: surface-1";
+  return `bg: ${scaleColor(c.step)}; box-shadow: ${scaleStroke(c.step) ?? "none"}`;
+}
+
 function range(from: string, count: number): Array<[string, number]> {
   const [y, m, d] = from.split("-").map(Number);
   return Array.from({ length: count }, (_, i) => {
@@ -153,6 +159,43 @@ describe("buildWall 的固定跨度", () => {
     expect(labels.length).toBeGreaterThanOrEqual(12);
     expect(labels).toContain("1月");
     expect(labels).toContain("10月");
+  });
+});
+
+describe("未安装期", () => {
+  // GitHub 的空格有意义是因为 GitHub 一直存在。Time Scope 三个月前还不存在，
+  // 那段日子的空格读作「我一整年几乎没用过」——而事实是「我 5 天前才装上」。
+  // 两种「空」必须分开：还没装 vs 装了没活动。
+  const w = wallWindow("2026-10-05");
+  // 10-03 特意给 0：装了但那天完全没活动
+  const five = days([
+    ["2026-10-01", 3_600_000], ["2026-10-02", 7_200_000], ["2026-10-03", 0],
+    ["2026-10-04", 14_400_000], ["2026-10-05", 1_800_000],
+  ]);
+  const filled = fillDays(w.start, w.end, new Map(five.map((d) => [d.date, d.totalMs])));
+  const layout = buildWall(filled, "2026-10-01");
+  const byDate = Object.fromEntries(layout.cells.map((c) => [c.date, c]));
+
+  it("首次采集之前的日期标为未安装", () => {
+    expect(byDate["2026-05-15"].tracked).toBe(false);
+    expect(byDate["2026-09-30"].tracked).toBe(false);
+  });
+  it("从首次采集当天起标为已跟踪（哪怕当天 0 时长）", () => {
+    expect(byDate["2026-10-01"].tracked).toBe(true);
+    expect(byDate["2026-10-05"].tracked).toBe(true);
+  });
+  it("未安装不参与色阶：再大的 max 也不改变它的样子", () => {
+    expect(byDate["2026-05-15"].step).toBe(0);
+  });
+  it("两种空的样式不同", () => {
+    // 未安装 = 面板色、无描边（读作「什么都没有」）
+    expect(cellStyle(byDate["2026-05-15"])).not.toContain("line-strong");
+    // 装了没活动 = 轨道色 + 描边（读作「有个空方块」）
+    const noActivity = Object.entries(byDate).find(
+      ([, c]) => c.tracked && c.totalMs === 0,
+    )?.[1];
+    expect(noActivity).toBeDefined();
+    expect(cellStyle(noActivity!)).toContain("line-strong");
   });
 });
 
