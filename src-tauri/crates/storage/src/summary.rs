@@ -65,3 +65,142 @@ pub fn daily_calendar(conn: &Connection) -> Result<Option<DailyCalendar>, rusqli
         .unwrap_or_else(|| first.clone());
     Ok(Some(DailyCalendar { first, last, days }))
 }
+
+/// 圆环的一档。**只有 4 种 key**，前端的 `DonutChart` 按下标取色，
+/// 所以顺序固定为 work / browsing / idle / unknown。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DonutSlice {
+    pub key: String,
+    pub ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSlice {
+    pub name: String,
+    pub ms: i64,
+}
+
+/// 范围内 SQL 能一次算完的那些指标。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RangeTotals {
+    pub total_ms: i64,
+    pub active_ms: i64,
+    pub idle_ms: i64,
+    pub segment_count: i64,
+    pub donut: Vec<DonutSlice>,
+    pub top_apps: Vec<AppSlice>,
+}
+
+/// 圆环只画 4 档。其余四个类别（学习/娱乐/社交/生活）并入 `unknown` ——
+/// spec §6：那样环才是完整 360°，且 `rules.toml` 命中它们时不至于无处可去。
+const DONUT_KEYS: [&str; 4] = ["work", "browsing", "idle", "unknown"];
+
+const TOP_APPS_LIMIT: i64 = 5;
+
+/// `[start_ms, end_ms)` 半开区间内的时长三件套、段数、圆环、应用 Top。
+///
+/// 区间倒置（`start_ms >= end_ms`）不是错误，返回全 0 —— 公开的 IPC
+/// 可能收到这种输入，让它炸没有好处。
+pub fn range_totals(
+    conn: &Connection,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<RangeTotals, rusqlite::Error> {
+    if start_ms >= end_ms {
+        return Ok(RangeTotals {
+            total_ms: 0,
+            active_ms: 0,
+            idle_ms: 0,
+            segment_count: 0,
+            donut: empty_donut(),
+            top_apps: Vec::new(),
+        });
+    }
+
+    let mut by_category: Vec<(String, i64)> = Vec::new();
+    for row in conn.prepare(
+        "SELECT category, SUM(end_at - start_at) AS ms FROM activities
+         WHERE start_at >= ?1 AND start_at < ?2
+         GROUP BY category",
+    )?
+    .query_map(rusqlite::params![start_ms, end_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        by_category.push(row?);
+    }
+
+    let total_ms: i64 = by_category.iter().map(|(_, ms)| ms).sum();
+    let idle_ms: i64 = by_category
+        .iter()
+        .filter(|(c, _)| c == "idle")
+        .map(|(_, ms)| ms)
+        .sum();
+
+    // 四档恒定存在，缺的补 0 —— 前端不用处理「档位数量会变」。
+    let donut: Vec<DonutSlice> = DONUT_KEYS
+        .iter()
+        .map(|key| DonutSlice {
+            key: (*key).to_string(),
+            ms: by_category
+                .iter()
+                .filter(|(cat, _)| donut_bucket(cat) == *key)
+                .map(|(_, ms)| ms)
+                .sum(),
+        })
+        .collect();
+
+    let mut top_apps: Vec<AppSlice> = Vec::new();
+    for row in conn.prepare(
+        "SELECT application, SUM(end_at - start_at) AS ms FROM activities
+         WHERE start_at >= ?1 AND start_at < ?2 AND application IS NOT NULL
+         GROUP BY application ORDER BY ms DESC LIMIT ?3",
+    )?
+    .query_map(rusqlite::params![start_ms, end_ms, TOP_APPS_LIMIT], |r| {
+        Ok(AppSlice {
+            name: r.get::<_, String>(0)?,
+            ms: r.get::<_, i64>(1)?,
+        })
+    })? {
+        top_apps.push(row?);
+    }
+
+    let segment_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM activities WHERE start_at >= ?1 AND start_at < ?2",
+        rusqlite::params![start_ms, end_ms],
+        |r| r.get(0),
+    )?;
+
+    Ok(RangeTotals {
+        total_ms,
+        active_ms: total_ms - idle_ms,
+        idle_ms,
+        segment_count,
+        donut,
+        top_apps,
+    })
+}
+
+/// 类别落在圆环的哪一档。`work` / `browsing` / `idle` 各归各位，
+/// **其余全部并入 `unknown`**（含 `unknown` 自己）。
+fn donut_bucket(category: &str) -> &'static str {
+    match category {
+        "work" => "work",
+        "browsing" => "browsing",
+        "idle" => "idle",
+        _ => "unknown",
+    }
+}
+
+/// 四档全 0。空范围时用。
+fn empty_donut() -> Vec<DonutSlice> {
+    DONUT_KEYS
+        .iter()
+        .map(|k| DonutSlice {
+            key: (*k).to_string(),
+            ms: 0,
+        })
+        .collect()
+}

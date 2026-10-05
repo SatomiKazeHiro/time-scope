@@ -1,4 +1,6 @@
-use activity_storage::{daily_calendar, insert_segments, open_in_memory, StoredSegment};
+use activity_storage::{
+    daily_calendar, insert_segments, open_in_memory, range_totals, StoredSegment,
+};
 
 fn seg(id: &str, start_ms: i64, end_ms: i64) -> StoredSegment {
     StoredSegment {
@@ -122,5 +124,138 @@ fn segments_are_bucketed_by_start_at_not_by_overlap() {
         cal.days[0].total_ms,
         end - start,
         "整段时长算给开始那天"
+    );
+}
+
+fn segc(
+    id: &str,
+    start_ms: i64,
+    end_ms: i64,
+    category: &str,
+    app: Option<&str>,
+) -> StoredSegment {
+    StoredSegment {
+        id: id.into(),
+        start_at: start_ms,
+        end_at: end_ms,
+        category: category.into(),
+        application: app.map(|a| a.into()),
+        confidence: 1.0,
+        classifier: "rule".into(),
+        classifier_version: "1".into(),
+        evidence_event_ids: Vec::new(),
+    }
+}
+
+#[test]
+fn totals_split_active_and_idle() {
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("a", 0, 3_600_000, "work", Some("Code.exe")),
+            segc("b", 3_600_000, 5_400_000, "idle", None),
+        ],
+    );
+    let t = range_totals(&conn, 0, 10_000_000).unwrap();
+    assert_eq!(t.total_ms, 5_400_000);
+    assert_eq!(t.active_ms, 3_600_000);
+    assert_eq!(t.idle_ms, 1_800_000);
+    assert_eq!(t.segment_count, 2);
+}
+
+#[test]
+fn donut_always_has_exactly_four_slices_in_fixed_order() {
+    // 前端按数组下标取色，顺序不能随数据变。
+    let conn = open_in_memory();
+    let t = range_totals(&conn, 0, 10_000_000).unwrap();
+    let keys: Vec<&str> = t.donut.iter().map(|d| d.key.as_str()).collect();
+    assert_eq!(keys, vec!["work", "browsing", "idle", "unknown"]);
+    assert!(
+        t.donut.iter().all(|d| d.ms == 0),
+        "空范围时四档都该是 0"
+    );
+}
+
+#[test]
+fn donut_folds_four_categories_into_unknown() {
+    // spec §6：学习/娱乐/社交/生活 并入「未分类」那一档，环才是完整 360°。
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("a", 0, 1_000, "work", Some("Code.exe")),
+            segc("b", 2_000, 3_000, "study", Some("Zed.exe")),
+            segc("c", 4_000, 5_000, "entertainment", Some("cloudmusic.exe")),
+            segc("d", 6_000, 7_000, "communication", Some("WeChat.exe")),
+            segc("e", 8_000, 9_000, "life", Some("explorer.exe")),
+            segc("f", 10_000, 11_000, "unknown", Some("mstsc.exe")),
+        ],
+    );
+    let t = range_totals(&conn, 0, 20_000_000).unwrap();
+    let by = |k: &str| t.donut.iter().find(|d| d.key == k).unwrap().ms;
+    assert_eq!(by("work"), 1_000);
+    assert_eq!(
+        by("unknown"),
+        5_000,
+        "study+entertainment+communication+life+unknown 都要并进来"
+    );
+    assert_eq!(
+        t.donut.iter().map(|d| d.ms).sum::<i64>(),
+        t.total_ms,
+        "并档不改变总时长"
+    );
+}
+
+#[test]
+fn top_apps_ranked_desc_and_nulls_dropped() {
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("a", 0, 1_000, "browsing", Some("msedge.exe")),
+            segc("b", 2_000, 12_000, "work", Some("Code.exe")),
+            segc("c", 14_000, 17_000, "work", Some("Code.exe")),
+            segc("d", 20_000, 30_000, "idle", None), // 没有 application
+        ],
+    );
+    let t = range_totals(&conn, 0, 40_000_000).unwrap();
+    assert_eq!(t.top_apps.len(), 2, "application IS NULL 的段要丢掉");
+    assert_eq!(t.top_apps[0].name, "Code.exe");
+    assert_eq!(t.top_apps[0].ms, 13_000);
+    assert_eq!(t.top_apps[1].name, "msedge.exe");
+}
+
+#[test]
+fn empty_range_yields_zeros_not_error() {
+    // Review Focus #3：from > to 是公开 IPC 能收到的输入，不许炸。
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![segc("a", 5_000_000, 6_000_000, "work", Some("Code.exe"))],
+    );
+    let t = range_totals(&conn, 9_000_000, 1_000_000).unwrap();
+    assert_eq!(t.total_ms, 0);
+    assert_eq!(t.segment_count, 0);
+    assert!(t.top_apps.is_empty());
+}
+
+#[test]
+fn range_is_half_open() {
+    // 终点上的段不计入：与 get_segments_in_range 同一个半开约定。
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![segc("a", 1_000_000, 2_000_000, "work", Some("Code.exe"))],
+    );
+    assert_eq!(
+        range_totals(&conn, 0, 2_000_000).unwrap().segment_count,
+        1,
+        "start_at 等于 end 时不计入"
+    );
+    assert_eq!(
+        range_totals(&conn, 2_000_000, 3_000_000).unwrap().segment_count,
+        0,
+        "start_at 恰好等于 end 时不计入"
     );
 }

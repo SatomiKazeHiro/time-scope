@@ -9,7 +9,9 @@ pub use activity::{
 };
 pub use query::{get_events_in_range, insert_events, now_ms, StoredEvent};
 pub use schema::{apply_pragmas, current_version, migrate, SCHEMA_VERSION};
-pub use summary::{daily_calendar, DailyCalendar, DayCell};
+pub use summary::{
+    daily_calendar, range_totals, AppSlice, DailyCalendar, DayCell, DonutSlice, RangeTotals,
+};
 pub use writer::BatchWriter;
 
 use rusqlite::Connection;
