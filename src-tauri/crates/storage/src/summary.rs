@@ -204,3 +204,76 @@ fn empty_donut() -> Vec<DonutSlice> {
         })
         .collect()
 }
+
+/// 相邻两个段之间空多久算「切换了一次」。
+///
+/// 阈值**固定 5 分钟，不读 `config.toml`** —— `idle_threshold_s` 改的是
+/// 「多久算空闲」，会改变哪些段被归成 idle、进而改变段本身。让两个指标
+/// 耦合在一个可调参数上，改一次配置会让两个数字的历史不可比（spec §3.2）。
+const SWITCH_GAP_MS: i64 = 5 * 60_000;
+
+const HOUR_MS: i64 = 3_600_000;
+
+/// 范围内必须逐段算的两项。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RangePacing {
+    pub switch_count: i64,
+    pub hourly_ms: [i64; 24],
+}
+
+/// 切换次数与 24h 活跃分布。
+///
+/// `offset_secs` 是本地 UTC 偏移的**秒数**，由 app 层从
+/// `UtcOffset::whole_seconds()` 传进来 —— storage crate 不依赖 `time`。
+pub fn range_pacing(
+    conn: &Connection,
+    start_ms: i64,
+    end_ms: i64,
+    offset_secs: i32,
+) -> Result<RangePacing, rusqlite::Error> {
+    let mut hourly_ms = [0i64; 24];
+    if start_ms >= end_ms {
+        return Ok(RangePacing {
+            switch_count: 0,
+            hourly_ms,
+        });
+    }
+
+    // 已按 start_at 升序（get_segments_in_range 保证）。
+    let segs = crate::activity::get_segments_in_range(conn, start_ms, end_ms)?;
+
+    let mut switch_count = 0i64;
+    for pair in segs.windows(2) {
+        if pair[1].start_at - pair[0].end_at >= SWITCH_GAP_MS {
+            switch_count += 1;
+        }
+    }
+
+    // 24h 分布：逐段按本地小时边界劈开，跨小时的段分给两桶。
+    for s in &segs {
+        if s.category == "idle" {
+            continue;
+        }
+        add_to_hours(&mut hourly_ms, s.start_at, s.end_at, offset_secs);
+    }
+
+    Ok(RangePacing {
+        switch_count,
+        hourly_ms,
+    })
+}
+
+/// 把 `[start_ms, end_ms)` 按本地小时边界劈开，累加进 `buckets`。
+fn add_to_hours(buckets: &mut [i64; 24], start_ms: i64, end_ms: i64, offset_secs: i32) {
+    let shift = (offset_secs as i64) * 1000;
+    let mut t = start_ms;
+    while t < end_ms {
+        let local = t + shift;
+        // 到「当前这一小时」的末尾，不是到下一个整点起点
+        let to_boundary = t + (HOUR_MS - local.rem_euclid(HOUR_MS));
+        let seg_end = to_boundary.min(end_ms);
+        buckets[local.div_euclid(HOUR_MS).rem_euclid(24) as usize] += seg_end - t;
+        t = seg_end;
+    }
+}

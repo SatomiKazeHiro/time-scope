@@ -259,3 +259,105 @@ fn range_is_half_open() {
         "start_at 恰好等于 end 时不计入"
     );
 }
+
+use activity_storage::range_pacing;
+
+/// 本组测试固定东八区，不依赖运行机器的时区。
+const CST: i32 = 8 * 3600;
+
+#[test]
+fn short_gaps_are_not_switches() {
+    let conn = open_in_memory();
+    // 间隔 4 分钟、间隔 6 分钟 -> 只算 1 次切换
+    put(
+        &conn,
+        vec![
+            segc("a", 0, 60_000, "work", Some("Code.exe")),
+            segc("b", 4 * 60_000, 5 * 60_000, "work", Some("Code.exe")),
+            segc("c", 11 * 60_000, 12 * 60_000, "work", Some("Code.exe")),
+        ],
+    );
+    assert_eq!(
+        range_pacing(&conn, 0, 3_600_000, CST).unwrap().switch_count,
+        1,
+        "4 分钟不算，6 分钟算"
+    );
+}
+
+#[test]
+fn single_segment_has_no_switches() {
+    let conn = open_in_memory();
+    put(&conn, vec![segc("a", 0, 60_000, "work", Some("Code.exe"))]);
+    assert_eq!(
+        range_pacing(&conn, 0, 3_600_000, CST).unwrap().switch_count,
+        0
+    );
+}
+
+#[test]
+fn empty_range_yields_zero_switches_and_flat_profile() {
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![segc("a", 5_000_000, 6_000_000, "work", Some("Code.exe"))],
+    );
+    let p = range_pacing(&conn, 9_000_000, 1_000_000, CST).unwrap();
+    assert_eq!(p.switch_count, 0);
+    assert_eq!(p.hourly_ms, [0i64; 24]);
+}
+
+#[test]
+fn hourly_buckets_use_local_hour_not_utc() {
+    // 东八区下，一个 UTC 时刻的段必须落进本地 8 小时后的桶。
+    let ts = 1_770_000_000_000i64;
+    let conn = open_in_memory();
+    put(&conn, vec![segc("a", ts, ts + 600_000, "work", Some("Code.exe"))]);
+    let p = range_pacing(&conn, 0, i64::MAX, CST).unwrap();
+    let expect = (((ts + (CST as i64) * 1000).div_euclid(3_600_000)).rem_euclid(24)) as usize;
+    assert_eq!(p.hourly_ms[expect], 600_000, "UTC 偏移必须换算成东八区");
+    assert_eq!(
+        p.hourly_ms.iter().sum::<i64>(),
+        600_000,
+        "总量不因换算丢失或重复"
+    );
+}
+
+#[test]
+fn segment_spanning_hour_boundaries_is_split() {
+    // 01:00 -> 04:20，跨 3 个整小时 + 20 分钟。
+    // 这里刻意用 **offset 0**：本条只验「跨边界要劈开」，时区换算是
+    // 上一条 `hourly_buckets_use_local_hour_not_utc` 的职责。传 CST 会让
+    // 段整体挪 8 个桶，下标就对不上了。
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![segc(
+            "a",
+            3_600_000,
+            4 * 3_600_000 + 20 * 60_000,
+            "work",
+            Some("Code.exe"),
+        )],
+    );
+    let p = range_pacing(&conn, 0, i64::MAX, 0).unwrap();
+    assert_eq!(p.hourly_ms[1], 60 * 60_000);
+    assert_eq!(p.hourly_ms[2], 60 * 60_000);
+    assert_eq!(p.hourly_ms[3], 60 * 60_000);
+    assert_eq!(p.hourly_ms[4], 20 * 60_000);
+    assert_eq!(
+        p.hourly_ms.iter().sum::<i64>(),
+        3 * 3_600_000 + 20 * 60_000
+    );
+}
+
+#[test]
+fn idle_segments_do_not_enter_the_hourly_profile() {
+    // spec §3.2：hourlyMs 只记非 idle 时长。
+    let conn = open_in_memory();
+    put(&conn, vec![segc("i", 0, 3_600_000, "idle", None)]);
+    assert_eq!(
+        range_pacing(&conn, 0, i64::MAX, CST).unwrap().hourly_ms,
+        [0i64; 24],
+        "1 小时挂机不该把「活跃时间段」画满"
+    );
+}
