@@ -175,12 +175,14 @@ describe("SummaryPage", () => {
     // 墙现在是固定 53 周，列的位置不再有意义 —— 按 aria-label 里的日期找
     render(<SummaryPage />);
     // 日历是异步取的，得等墙画出来
-    const week = await screen.findByRole("button", { name: "选择 2026-10-04 那一周" });
+    // 一周从周一开始：含 10-04（周日）的那一周起点是 10-04? 不 —— 10-04 是周日，
+    // 它归 09-28（周一）那一周
+    const week = await screen.findByRole("button", { name: "选择 2026-09-28 那一周" });
     fireEvent.click(week);
     await waitFor(() => {
       expect(lastArgs("get_summary")).toMatchObject({
-        from: "2026-10-04",
-        to: "2026-10-10",
+        from: "2026-09-28",
+        to: "2026-10-04",
       });
     });
   });

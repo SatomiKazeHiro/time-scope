@@ -73,7 +73,7 @@ describe("ContributionWall", () => {
   });
 
   it("格子的 DOM 顺序按列优先，且总数含补齐位", () => {
-    // 10-01(周四)..10-03(周六) 共 3 天，首列往前补 4 格到周日、
+    // 10-01(周四)..10-03(周六) 共 3 天，首列往前补 3 格到周一、
     // 末格已是周六不用补 -> 整面墙正好 1 列 7 格
     const { container } = render(
       <ContributionWall days={DAYS} selection={null}
@@ -81,11 +81,12 @@ describe("ContributionWall", () => {
     );
     const all = container.querySelectorAll("[role='grid'] > *");
     expect(all.length).toBe(7);
-    // 补齐位没有 data-date，但仍在网格里占着
-    expect(all[4].getAttribute("data-date")).toBe("2026-10-01");
+    // 补齐位没有 data-date，但仍在网格里占着。行 0 = 周一，
+    // 10-01 是周四 -> 第 3 格。
+    expect(all[3].getAttribute("data-date")).toBe("2026-10-01");
   });
 
-  it("10-01 落在第 0 列的第 4 行（周四），不是第 0 行", () => {
+  it("10-01 落在第 0 列的第 3 行（周四），不是第 0 行", () => {
     // 这是上一条的真实后果：补齐位被删就会跑到第 0 行去
     const { container } = render(
       <ContributionWall days={DAYS} selection={null}
@@ -93,8 +94,8 @@ describe("ContributionWall", () => {
     );
     const cells = [...container.querySelectorAll("[role='grid'] > *")];
     const idx = cells.findIndex((c) => c.getAttribute("data-date") === "2026-10-01");
-    expect(idx).toBe(4);                 // 4 个补齐位之后
-    expect(idx % 7).toBe(4);             // 第 4 行 = 周四
+    expect(idx).toBe(3);                 // 3 个补齐位之后
+    expect(idx % 7).toBe(3);             // 第 3 行 = 周四
   });
 
   it("补齐位不可见也不可点", () => {
@@ -120,8 +121,8 @@ describe("ContributionWall", () => {
   it("点周条回调那一周的周日", () => {
     const { onSelectWeek } = setup();
     fireEvent.click(screen.getAllByTestId("week-strip-btn")[0]);
-    // 2026-10-01 是周四，首列的周日是 2026-09-27
-    expect(onSelectWeek).toHaveBeenCalledWith("2026-09-27");
+    // 2026-10-01 是周四，首列从**周一** 2026-09-28 起
+    expect(onSelectWeek).toHaveBeenCalledWith("2026-09-28");
   });
 
   it("点月标签回调那个月的首日", () => {
@@ -150,14 +151,14 @@ describe("ContributionWall", () => {
     const { container } = render(
       <ContributionWall
         days={DAYS}
-        selection={{ kind: "week", from: "2026-09-27", to: "2026-10-03", label: "" }}
+        selection={{ kind: "week", from: "2026-09-28", to: "2026-10-04", label: "" }}
         onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP}
       />,
     );
     const f = container.querySelector("[data-frame]") as HTMLElement;
     // 1 列 × 7 行；位置由 --cw 算，跟着列宽一起缩放
     expect(f.style.width).toContain("var(--cw)");
-    expect(f.style.height).toContain("7");
+    expect(f.style.height).toContain("* 7 +");
   });
 
   it("没有选中时不画框", () => {
@@ -245,8 +246,8 @@ describe("ContributionWall", () => {
     );
     const labels = [...container.querySelectorAll("[data-weekday]")];
     expect(labels.map((l) => l.textContent)).toEqual(["一", "三", "五"]);
-    // 0 = 周日，所以第 1/3/5 行是 周一/周三/周五
-    expect(labels.map((l) => l.getAttribute("data-weekday"))).toEqual(["1", "3", "5"]);
+    // 行 0 = 周一，所以标第 0/2/4 行 = 周一/周三/周五
+    expect(labels.map((l) => l.getAttribute("data-weekday"))).toEqual(["0", "2", "4"]);
   });
 
   it("星期标签跟着 --cw 定位，不会跟格子错行", () => {
@@ -254,12 +255,12 @@ describe("ContributionWall", () => {
       <ContributionWall days={DAYS} selection={null}
         onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
     );
-    const three = container.querySelector("[data-weekday='3']") as HTMLElement;
-    const one = container.querySelector("[data-weekday='1']") as HTMLElement;
+    const wed = container.querySelector("[data-weekday='2']") as HTMLElement;
+    const mon = container.querySelector("[data-weekday='0']") as HTMLElement;
     // 相邻两行差一个 (cw + gap)
     const d = (el: HTMLElement) =>
       Number(/\* (\d+)/.exec(el.style.top)?.[1] ?? -1);
-    expect(d(three) - d(one)).toBe(2);
+    expect(d(wed) - d(mon)).toBe(2);
   });
 
   it("星期标签列顶部有与月份标签行同高的占位，否则整体偏上半行", () => {

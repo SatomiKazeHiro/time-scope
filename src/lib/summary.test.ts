@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildWall, endOfMonth, fillDays, rangeFor, scaleColor, scaleStep,
   scaleStroke, uninstalledStroke, selectionFrame, startOfWeek, wallWindow, weekdayOf,
-  WEEKDAY_LABELS,
+  rowOf, LABELLED_ROWS, WEEKDAY_LABELS,
   type DateRange,
 } from "./summary";
 import type { DayCell } from "../types";
@@ -45,11 +45,65 @@ describe("weekdayOf", () => {
   });
 });
 
-describe("WEEKDAY_LABELS", () => {
-  it("下标 0 是周日，6 是周六", () => {
-    expect(WEEKDAY_LABELS).toEqual(["日", "一", "二", "三", "四", "五", "六"]);
-    expect(WEEKDAY_LABELS[weekdayOf("2026-10-04")]).toBe("日");
-    expect(WEEKDAY_LABELS[weekdayOf("2026-10-01")]).toBe("四");   // 周四
+describe("行顺序：周一开头", () => {
+  it("WEEKDAY_LABELS 下标 0 是周一，6 是周日", () => {
+    expect(WEEKDAY_LABELS).toEqual(["一", "二", "三", "四", "五", "六", "日"]);
+  });
+
+  it("rowOf 把 JS 的星期（0=日）翻成行号（0=一）", () => {
+    expect(rowOf("2026-10-05")).toBe(0);   // 周一
+    expect(rowOf("2026-10-08")).toBe(3);   // 周四
+    expect(rowOf("2026-10-10")).toBe(5);   // 周六
+    expect(rowOf("2026-10-04")).toBe(6);   // 周日
+  });
+
+  it("startOfWeek 返回**周一**", () => {
+    // 2026-10-08 是周四，它那周的周一是 10-05
+    expect(startOfWeek("2026-10-08")).toBe("2026-10-05");
+    // 10-04 是周日，归上一周（10-05 在它前面）
+    expect(startOfWeek("2026-10-04")).toBe("2026-09-28");
+    // 10-05 本身是周一
+    expect(startOfWeek("2026-10-05")).toBe("2026-10-05");
+  });
+
+  it("LABELLED_ROWS 标 Mon/Wed/Fri = 第 0/2/4 行", () => {
+    expect([...LABELLED_ROWS]).toEqual([0, 2, 4]);
+  });
+
+  it("buildWall 的第 0 行是周一、末行是周日", () => {
+    const w = wallWindow("2026-10-05");
+    const lay = buildWall(fillDays(w.start, w.end, new Map()), w.start);
+    const at = (r: number) => lay.cells.find((c) => c.row === r && c.present)!.date;
+    expect(weekdayOf(at(0))).toBe(1);   // 周一
+    expect(weekdayOf(at(6))).toBe(0);   // 周日
+  });
+
+  it("首列往前补到周一：单日落在周六时前面补 5 格", () => {
+    // 2026-10-10 是周六 -> row 5，前面补 5 格
+    const lay = buildWall(days([["2026-10-10", 1]]));
+    const col0 = lay.cells.filter((c) => c.col === 0);
+    expect(col0).toHaveLength(7);
+    expect(col0.slice(0, 5).every((c) => c.present === false)).toBe(true);
+    expect(col0[5]).toMatchObject({ date: "2026-10-10", present: true, row: 5 });
+  });
+
+  it("单日落在周日时前面补 6 格", () => {
+    // 2026-10-04 是周日 -> row 6
+    const lay = buildWall(days([["2026-10-04", 1]]));
+    const col0 = lay.cells.filter((c) => c.col === 0);
+    expect(col0.slice(0, 6).every((c) => c.present === false)).toBe(true);
+    expect(col0[6]).toMatchObject({ date: "2026-10-04", present: true, row: 6 });
+  });
+
+  it("墙的窗口首格是周一", () => {
+    const w = wallWindow("2026-10-05");
+    expect(weekdayOf(w.start)).toBe(1);
+  });
+
+  it("周范围从周一开始", () => {
+    const r = rangeFor("week", "2026-10-08", ALL);
+    expect(r.from).toBe("2026-10-05");
+    expect(r.to).toBe("2026-10-11");
   });
 });
 
@@ -116,17 +170,16 @@ describe("wallWindow", () => {
     expect(W.end).toBe("2026-10-05");
   });
 
-  it("第一格是周日（列从周日起算）", () => {
-    expect(weekdayOf(W.start)).toBe(0);
+  it("第一格是周一（列从周一起算）", () => {
+    expect(weekdayOf(W.start)).toBe(1);
   });
 
-  it("首格距本周周日正好 52 周", () => {
-    // start 是**本周周日**往前 52 周，不是距今天 52 周 ——
-    // 距今天是 364 + weekday(today) 天，锚在周日才能让每列对齐。
+  it("首格距本周周一正好 52 周", () => {
+    // start 是**本周周一**往前 52 周，锚在周一才能让每列对齐。
     const [y, m, d] = W.start.split("-").map(Number);
     const startDate = new Date(y, m - 1, d);
-    const sunday = new Date(2026, 9, 4);       // 2026-10-04，本周周日
-    expect(Math.round((sunday.getTime() - startDate.getTime()) / 86_400_000))
+    const monday = new Date(2026, 9, 5);       // 2026-10-05，本周周一
+    expect(Math.round((monday.getTime() - startDate.getTime()) / 86_400_000))
       .toBe((WEEKS - 1) * 7);
   });
 });
@@ -148,8 +201,9 @@ describe("buildWall 的固定跨度", () => {
     expect(layout.cells.at(-1)!.col).toBe(52);
     const lastReal = layout.cells.filter((c) => c.present).at(-1)!;
     expect(lastReal.date).toBe("2026-10-05");
-    // 10-05 是周一 -> 第 1 行
-    expect(lastReal.row).toBe(1);
+    // 10-05 是周一 -> 第 0 行
+    expect(lastReal.row).toBe(0);
+    expect(rowOf(lastReal.date)).toBe(lastReal.row);
   });
 
   it("窗口里没数据的日子是 0 档（轨道色），不是缺席", () => {
@@ -216,30 +270,30 @@ describe("未安装期", () => {
 });
 
 describe("buildWall", () => {
-  it("第一行是周日", () => {
+  it("第一行是周一", () => {
     const w = buildWall(days([["2026-10-01", 1], ["2026-10-02", 2], ["2026-10-03", 3]]));
     for (const c of w.cells.filter((x) => x.row === 0)) {
-      expect(weekdayOf(c.date)).toBe(0);
+      expect(weekdayOf(c.date)).toBe(1);
     }
   });
 
-  it("每一行的 date 的星期都等于 row", () => {
+  it("每一行的 date 都对得上 rowOf", () => {
     const w = buildWall(days([["2026-09-20", 1], ["2026-10-11", 2]]));
     for (const c of w.cells) {
-      expect(weekdayOf(c.date)).toBe(c.row);
+      expect(rowOf(c.date)).toBe(c.row);
     }
   });
 
-  it("首列往前补齐到周日：10-01 是周四，首列前 4 格是补齐位", () => {
+  it("首列往前补齐到周一：10-01 是周四，首列前 3 格是补齐位", () => {
     const w = buildWall(days([["2026-10-01", 1]]));
     const col0 = w.cells.filter((c) => c.col === 0);
     expect(col0).toHaveLength(7);
-    // 周四 -> row 4；row 0..3 是补齐位
-    expect(col0.slice(0, 4).every((c) => c.present === false)).toBe(true);
-    expect(col0[4]).toMatchObject({ date: "2026-10-01", present: true, row: 4 });
+    // 周四 -> row 3；row 0..2 是补齐位
+    expect(col0.slice(0, 3).every((c) => c.present === false)).toBe(true);
+    expect(col0[3]).toMatchObject({ date: "2026-10-01", present: true, row: 3 });
   });
 
-  it("末列往后补齐到周六", () => {
+  it("末列往后补齐到周日", () => {
     const w = buildWall(days([["2026-10-05", 1]]));   // 周一
     const lastCol = w.cells.filter((c) => c.col === w.weeks - 1);
     const present = lastCol.filter((c) => c.present);
@@ -312,14 +366,15 @@ describe("selectionFrame", () => {
   const w = buildWall(days(range("2026-10-01", 10)));
 
   it("选中单日 = 1 格", () => {
+    // 2026-10-02 是周五 -> 行 4
     expect(selectionFrame(w, "2026-10-02", "2026-10-02")).toEqual({
-      col: 0, row: 5, cols: 1, rows: 1,
+      col: 0, row: 4, cols: 1, rows: 1,
     });
   });
 
   it("选中一个自然周 = 1 列 × 7 格", () => {
-    // 10-04 是周日，10-04..10-10 才是完整的一周
-    const f = selectionFrame(w, "2026-10-04", "2026-10-10");
+    // 一周从周一开始：10-05..10-11 才是完整的一周
+    const f = selectionFrame(w, "2026-10-05", "2026-10-11");
     expect(f).not.toBeNull();
     expect(f!.cols).toBe(1);
     expect(f!.rows).toBe(7);
@@ -361,10 +416,11 @@ describe("selectionFrame", () => {
 });
 
 describe("范围推导", () => {
-  it("startOfWeek 从周日起算", () => {
-    // 2026-10-01 周四 -> 上一个周日 2026-09-27
-    expect(startOfWeek("2026-10-01")).toBe("2026-09-27");
-    expect(startOfWeek("2026-10-04")).toBe("2026-10-04");  // 本身是周日
+  it("startOfWeek 从周一起算", () => {
+    // 2026-10-01 周四 -> 本周周一 2026-09-28
+    expect(startOfWeek("2026-10-01")).toBe("2026-09-28");
+    expect(startOfWeek("2026-10-05")).toBe("2026-10-05");  // 本身是周一
+    expect(startOfWeek("2026-10-11")).toBe("2026-10-05");  // 周日归上一周
   });
 
   it("endOfMonth 取当月最后一天", () => {
@@ -379,10 +435,10 @@ describe("范围推导", () => {
     expect(r.to).toBe("2026-10-03");
   });
 
-  it("rangeFor week 覆盖整周", () => {
+  it("rangeFor week 覆盖整周（周一起）", () => {
     const r = rangeFor("week", "2026-10-01", ALL);
-    expect(r.from).toBe("2026-09-27");
-    expect(r.to).toBe("2026-10-03");
+    expect(r.from).toBe("2026-09-28");
+    expect(r.to).toBe("2026-10-04");
   });
 
   it("rangeFor month 覆盖整月", () => {
