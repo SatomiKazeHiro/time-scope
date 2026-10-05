@@ -27,6 +27,18 @@ export const PITCH = CELL + GAP;
  */
 const MONTH_LABEL_MIN_GAP = 2;
 
+/**
+ * 一行的星期标签。**下标 0 = 周日**，与 `weekdayOf` 和墙的行号一致。
+ * （之前当死代码删过，热力图左侧要标星期时又回来了。）
+ */
+export const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"] as const;
+
+/**
+ * 左侧要标哪几行。GitHub 的贡献墙只标 Mon / Wed / Fri 三行 ——
+ * 7 行全标太密，3 行足够看出「这列偏上还是偏下」。
+ */
+export const LABELLED_ROWS = [1, 3, 5] as const;
+
 /** 热力图铺多少周。GitHub 的贡献墙是 53 周。 */
 export const WALL_WEEKS = 53;
 

@@ -238,6 +238,60 @@ describe("ContributionWall", () => {
     expect(f.style.width).toContain("var(--cw)");
   });
 
+  it("左侧有星期标签，和 GitHub 一样只标一/三/五行", () => {
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const labels = [...container.querySelectorAll("[data-weekday]")];
+    expect(labels.map((l) => l.textContent)).toEqual(["一", "三", "五"]);
+    // 0 = 周日，所以第 1/3/5 行是 周一/周三/周五
+    expect(labels.map((l) => l.getAttribute("data-weekday"))).toEqual(["1", "3", "5"]);
+  });
+
+  it("星期标签跟着 --cw 定位，不会跟格子错行", () => {
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const three = container.querySelector("[data-weekday='3']") as HTMLElement;
+    const one = container.querySelector("[data-weekday='1']") as HTMLElement;
+    // 相邻两行差一个 (cw + gap)
+    const d = (el: HTMLElement) =>
+      Number(/\* (\d+)/.exec(el.style.top)?.[1] ?? -1);
+    expect(d(three) - d(one)).toBe(2);
+  });
+
+  it("星期标签列顶部有与月份标签行同高的占位，否则整体偏上半行", () => {
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const spacer = container.querySelector("[data-weekday-spacer]") as HTMLElement;
+    expect(spacer).toBeTruthy();
+    // 撑起的高度必须和月份标签行一致（h-3 + mb-1 = 12 + 4px），
+    // 否则星期标签的绝对定位原点比格子高 16px，整体错半行。
+    expect(spacer.className).toContain("h-3");
+    expect(spacer.className).toContain("mb-1");
+    const monthRow = container.querySelector(".h-3.w-full") as HTMLElement;
+    expect(monthRow).toBeTruthy();
+    expect(monthRow.className).toContain("h-3");
+    // 占位必须在定位原点**里面**（它是原点的流内兄弟，靠它把原点推下去）
+    const origin = container.querySelector("[data-weekday-origin]") as HTMLElement;
+    expect(origin.previousElementSibling).toBe(spacer);
+  });
+
+  it("星期标签不抢焦点也不可点（纯说明）", () => {
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    for (const l of container.querySelectorAll("[data-weekday]")) {
+      expect(l.tagName).toBe("SPAN");
+      expect(l.getAttribute("aria-hidden")).toBe("true");
+    }
+  });
+
   it("0 小时的格子用轨道色而不是紫阶 1", () => {
     const { container } = render(
       <ContributionWall days={DAYS} selection={null}

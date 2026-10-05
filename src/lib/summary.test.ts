@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildWall, endOfMonth, fillDays, rangeFor, scaleColor, scaleStep,
   scaleStroke, uninstalledStroke, selectionFrame, startOfWeek, wallWindow, weekdayOf,
+  WEEKDAY_LABELS,
   type DateRange,
 } from "./summary";
 import type { DayCell } from "../types";
@@ -41,6 +42,14 @@ describe("weekdayOf", () => {
       const s = `2026-10-${String(d).padStart(2, "0")}`;
       expect(weekdayOf(s)).toBe(new Date(2026, 9, d).getDay());
     }
+  });
+});
+
+describe("WEEKDAY_LABELS", () => {
+  it("下标 0 是周日，6 是周六", () => {
+    expect(WEEKDAY_LABELS).toEqual(["日", "一", "二", "三", "四", "五", "六"]);
+    expect(WEEKDAY_LABELS[weekdayOf("2026-10-04")]).toBe("日");
+    expect(WEEKDAY_LABELS[weekdayOf("2026-10-01")]).toBe("四");   // 周四
   });
 });
 

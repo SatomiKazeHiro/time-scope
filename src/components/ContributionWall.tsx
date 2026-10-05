@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import {
   buildWall, selectionFrame, uninstalledColor, uninstalledStroke,
-  GAP, scaleColor, scaleStroke,
+  GAP, scaleColor, scaleStroke, LABELLED_ROWS, WEEKDAY_LABELS,
   type DateRange,
 } from "../lib/summary";
 import type { DayCell } from "../types";
@@ -69,6 +69,31 @@ export default function ContributionWall({
     // 内层才能拿到「一列多宽」。
     <div className="w-full" style={{ containerType: "inline-size" }}>
       <div className="w-full" style={gridVars(layout.weeks)}>
+      {/* 左侧星期标签 + 墙。GitHub 只标 Mon/Wed/Fri 三行。 */}
+      <div className="flex items-start gap-1.5">
+      <div className="w-3 shrink-0 text-[9px] leading-none text-ink-faint">
+        {/* 占位：与月份标签行同高。绝对定位的原点是这一块的顶部，
+            少了它星期标签会比格子整体偏上 16px。 */}
+        <div aria-hidden className="mb-1 h-3" data-weekday-spacer="" />
+        <div className="relative" data-weekday-origin="">
+          {LABELLED_ROWS.map((row) => (
+            <span
+              key={row}
+              data-weekday={row}
+              aria-hidden
+              className="absolute right-0"
+              /* 行 r 的中线：r 行之前是 r*(cw+gap)，再加半行高 */
+              style={{
+                top: `calc(var(--cw) * ${row} + var(--gap) * ${row} + var(--cw) / 2)`,
+                transform: "translateY(-50%)",
+              }}
+            >
+              {WEEKDAY_LABELS[row]}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="min-w-0 flex-1">
       <div className="relative mb-1 h-3 w-full">
         {layout.monthLabels.map((m) => (
           <button
@@ -176,8 +201,10 @@ export default function ContributionWall({
       </div>
 
       <p className="mt-1 text-[10px] text-ink-faint">
-        左起为周日 → 周六，一列一周。点格子选一天，点下方细条选一周，点月份选整月。
+        一列一周，上到下是周一到周日。点格子选一天，点下方细条选一周，点月份选整月。
       </p>
+      </div>
+      </div>
       </div>
     </div>
   );
