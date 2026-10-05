@@ -25,6 +25,7 @@ mod exit_flush;
 mod rules;
 mod single_instance;
 mod titles;
+mod title_norm;
 
 use activity_collector::signals::RawSignal;
 use activity_storage::{open_file_shared, BatchWriter, StoredSegment};
