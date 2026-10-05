@@ -7,6 +7,7 @@ import SegmentDetail from "./components/EventDetail";
 import MetricPicker, { ScaleLegend } from "./components/MetricPicker";
 import SettingsPage from "./components/SettingsPage";
 import Sidebar, { type View } from "./components/Sidebar";
+import SummaryPage from "./views/SummaryPage";
 import { DEFAULT_GRANULARITY } from "./lib/bucket";
 import { bucketMetrics } from "./lib/metrics";
 import { getSegments, shiftDate, todayString, type Segment } from "./types";
@@ -102,6 +103,8 @@ export default function App() {
       <main className="flex min-w-0 flex-1 flex-col gap-3 p-4">
         {view === "settings" ? (
           <SettingsPage />
+        ) : view === "summary" ? (
+          <SummaryPage />
         ) : (
           <>
             {/* 身份 | 控件 —— 一行。原来分三行，700px 的窗口里 260px（37%）

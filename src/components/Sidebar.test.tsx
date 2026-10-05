@@ -11,7 +11,13 @@ function Harness() {
   return (
     <>
       <Sidebar view={view} onViewChange={setView} />
-      {view === "settings" ? <SettingsPage /> : <p>页面正文</p>}
+      {view === "settings" ? (
+        <SettingsPage />
+      ) : view === "summary" ? (
+        <p>汇总页正文</p>
+      ) : (
+        <p>页面正文</p>
+      )}
     </>
   );
 }
@@ -22,11 +28,26 @@ beforeEach(() => {
 });
 
 describe("Sidebar", () => {
-  it("上下两层：上层一个导航，下层两个工具", () => {
+  it("上下两层：上层两个导航，下层两个工具", () => {
     const { container } = render(<Harness />);
     const nav = container.querySelector("nav")!;
     expect(nav.getAttribute("aria-label")).toBe("主导航");
-    expect(screen.getAllByRole("button")).toHaveLength(3);
+    expect(screen.getAllByRole("button")).toHaveLength(4);
+  });
+
+  it("汇总排在监控采集上面", () => {
+    render(<Harness />);
+    const labels = screen
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(labels.indexOf("汇总")).toBeGreaterThanOrEqual(0);
+    expect(labels.indexOf("汇总")).toBeLessThan(labels.indexOf("监控采集"));
+  });
+
+  it("点汇总切到 summary 视图", () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "汇总" }));
+    expect(screen.getByText("汇总页正文")).toBeTruthy();
   });
 
   it("按钮本身只有图标，文字在悬浮提示里", () => {

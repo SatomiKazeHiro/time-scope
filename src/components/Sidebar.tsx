@@ -1,9 +1,9 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { Activity, BarChart3, Monitor, Moon, Settings, Sun } from "lucide-react";
 import { useTheme, THEME_LABEL } from "../design/useTheme";
 
-/** 左侧导航目前只有两个落点；设置页是空壳，等有内容再扩。 */
-export type View = "monitor" | "settings";
+/** 左侧导航目前有三个落点；设置页是空壳，等有内容再扩。 */
+export type View = "summary" | "monitor" | "settings";
 
 const THEME_ICON = { system: Monitor, light: Sun, dark: Moon } as const;
 
@@ -32,6 +32,14 @@ export default function Sidebar({ view, onViewChange }: SidebarProps) {
       /* sticky + self-start：内容超高时页面滚动，侧边栏不会跟着滚走 */
       className="sticky top-0 z-10 flex h-screen w-[72px] shrink-0 flex-col items-center gap-1 border-r border-line bg-surface-1 py-3"
     >
+      {/* 汇总排在监控采集**上面**（spec §2.1）：它是更常用的回顾入口，
+          监控采集是「现在正在发生什么」。 */}
+      <SidebarItem
+        icon={BarChart3}
+        label="汇总"
+        active={view === "summary"}
+        onClick={() => onViewChange("summary")}
+      />
       <SidebarItem
         icon={Activity}
         label="监控采集"
