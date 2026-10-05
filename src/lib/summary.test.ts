@@ -165,9 +165,16 @@ describe("buildWall", () => {
     expect(labels).toEqual(["9月"]);
   });
 
-  it("列距不足 4 列时后一个月不画（不叠在一起）", () => {
-    // 8-25..9-01 只有 2 列，9 月紧跟在 8 月标签后面 -> 跳过
-    const w = buildWall(days(range("2026-08-25", 8)));
+  it("相邻月只隔 2 列也要标出来（标签宽 ~18px，2 列 = 28px，够放）", () => {
+    // 之前用 min gap 4，5 月(col0) 和 6 月(col2) 差 2 就被吞掉了 ——
+    // 看着像「怎么只有 10 月的」。GitHub 判的是像素不是列数。
+    const w = buildWall(days(range("2026-05-18", 140)));
+    expect(w.monthLabels.map((m) => m.label))
+      .toEqual(["5月", "6月", "7月", "8月", "9月", "10月"]);
+  });
+
+  it("只隔 1 列时仍不标（两个标签会叠在一起）", () => {
+    const w = buildWall(days(range("2026-08-31", 4)));
     expect(w.monthLabels.map((m) => m.label)).toEqual(["8月"]);
   });
 });

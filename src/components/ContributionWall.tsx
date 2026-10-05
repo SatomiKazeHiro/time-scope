@@ -83,19 +83,27 @@ export default function ContributionWall({
             gap: GAP,
           }}
         >
-          {layout.cells.filter((c) => c.present).map((c) => (
-            <button
-              key={c.date}
-              type="button"
-              role="gridcell"
-              data-date={c.date}
-              data-testid={`cell-${c.date}`}
-              title={`${c.date} · ${Math.round((c.totalMs / 3_600_000) * 10) / 10}h`}
-              onClick={() => onSelectDay(c.date)}
-              className="cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
-              style={{ background: scaleColor(c.step) }}
-            />
-          ))}
+          {/* 补齐位**必须留在 DOM 里占槽位**。网格是 grid-auto-flow:column
+              按列填的，删掉开头的补齐位会让整面墙往上错位 lead 行 ——
+              10-01（周四）会画到第 0 行（周日），整个星期对错 4 天。
+              它们透明、aria-hidden、不可点，但占着。 */}
+          {layout.cells.map((c) =>
+            c.present ? (
+              <button
+                key={c.date}
+                type="button"
+                role="gridcell"
+                data-date={c.date}
+                data-testid={`cell-${c.date}`}
+                title={`${c.date} · ${Math.round((c.totalMs / 3_600_000) * 10) / 10}h`}
+                onClick={() => onSelectDay(c.date)}
+                className="cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
+                style={{ background: scaleColor(c.step) }}
+              />
+            ) : (
+              <span key={c.date} aria-hidden style={{ background: "transparent" }} />
+            ),
+          )}
         </div>
 
         {/* 选中框：一整块。宽 = 跨的列数 × PITCH - GAP */}

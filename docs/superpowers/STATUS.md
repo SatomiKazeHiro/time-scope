@@ -136,8 +136,8 @@ Phase 1 分三步。**三步都已完成**，另加一轮 UI 设计系统（§1.
 ## 二、代码规模与状态
 
 ```
-Rust  37 文件 / 5854 行（不含测试）  TS/TSX  19 文件 / 2281 行（不含测试）
-测试  299 Rust + 224 前端 = 523 条用例，全绿，0 warning
+Rust  37 文件 / 5854 行（不含测试）  TS/TSX  19 文件 / 2404 行（不含测试）
+测试  299 Rust + 231 前端 = 530 条用例，全绿，0 warning
 提交  46 个（main..phase1-polish），**未合并**
 ```
 
@@ -195,7 +195,7 @@ time-scope/
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 299 passed
-pnpm test                                                      # 224 passed
+pnpm test                                                      # 231 passed
 pnpm build                                                     # 无 tsc 报错
 node design-system/time-scope/verify-palette.mjs               # 色板校验，exit 0
 ```

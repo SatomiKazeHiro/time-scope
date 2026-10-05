@@ -1,6 +1,8 @@
 interface DayPartChartProps {
   /** 24 个桶，按本地小时切。只含非 idle 时长。 */
   hourlyMs: number[];
+  /** 指标卡里的窄版：去掉底部说明、刻度只留 00/12/24 */
+  compact?: boolean;
 }
 
 const H = 56;              // 绘图区高度（px）
@@ -17,7 +19,7 @@ const HOUR_MS = 3_600_000;
  * 范围是「全部」时这条几乎是一条直线（5 天里既有熬夜的也有白天的，
  * 一平均就抵消了）。那不是 bug：平是诚实结果，点某天/某周就有波形。
  */
-export default function DayPartChart({ hourlyMs }: DayPartChartProps) {
+export default function DayPartChart({ hourlyMs, compact = false }: DayPartChartProps) {
   // 长度不是 24 时补齐，别让调用方的畸形输入越界
   const h = hourlyMs.length === 24 ? hourlyMs : new Array(24).fill(0);
   const max = Math.max(...h, 1);
@@ -30,7 +32,7 @@ export default function DayPartChart({ hourlyMs }: DayPartChartProps) {
         viewBox={`0 0 ${PLOT_W} ${H + 18}`}
         /* 限宽而不是 w-full：面板 1100+px 宽时全拉会让 24 根柱摊成
            一排孤立的针，刻度字也跟着放大到 14px。 */
-        className="block w-full max-w-[760px]"
+        className={compact ? "block w-full" : "block w-full max-w-[760px]"}
         role="img"
         aria-label="24 小时活跃分布"
       >
@@ -53,7 +55,7 @@ export default function DayPartChart({ hourlyMs }: DayPartChartProps) {
             </rect>
           );
         })}
-        {[0, 6, 12, 18, 24].map((t) => (
+        {(compact ? [0, 12, 24] : [0, 6, 12, 18, 24]).map((t) => (
           <g key={t}>
             <line
               x1={(t / 24) * PLOT_W} y1={H}
@@ -71,9 +73,11 @@ export default function DayPartChart({ hourlyMs }: DayPartChartProps) {
           </g>
         ))}
       </svg>
-      <p className="text-[10px] text-ink-faint">
-        24h 时段分布 · 非空闲时长。主打「什么时间在活跃」。
-      </p>
+      {!compact && (
+        <p className="text-[10px] text-ink-faint">
+          24h 时段分布 · 非空闲时长。主打「什么时间在活跃」。
+        </p>
+      )}
     </div>
   );
 }

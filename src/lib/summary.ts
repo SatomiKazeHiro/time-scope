@@ -17,8 +17,15 @@ export const GAP = 3;
 /** 格子在一行里占的宽度（含间隙）—— 选中框用它算绝对定位。 */
 export const PITCH = CELL + GAP;
 
-/** 一个月至少隔这么多列才画第二个月份标签，否则标签会叠在一起。 */
-const MONTH_LABEL_MIN_GAP = 4;
+/**
+ * 一个月至少隔这么多列才画第二个月份标签，否则标签会叠在一起。
+ *
+ * 2 而不是 4：标签「10月」在 9px 字下约 18px 宽，一列 14px，
+ * 隔 2 列（28px）就放得下。原先设 4 把只隔 2 列的相邻月吞掉了——
+ * 5 个月的数据只标出 5/7/8/9/10，看着像「怎么只有 10 月的」。
+ * GitHub 判的是像素，不是列数。
+ */
+const MONTH_LABEL_MIN_GAP = 2;
 
 /** `YYYY-MM-DD` 的本地星期，0 = 周日。 */
 export function weekdayOf(date: string): number {

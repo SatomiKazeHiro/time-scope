@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ContributionWall from "../components/ContributionWall";
-import DayPartChart from "../components/DayPartChart";
 import MetricRow from "../components/MetricRow";
 import RankedList, { type RankedItem } from "../components/RankedList";
 import {
@@ -197,9 +196,6 @@ export default function SummaryPage() {
           onSelectWeek={select("week")}
           onSelectMonth={select("month")}
         />
-        <div className="mt-3 border-t border-line pt-3">
-          <DayPartChart hourlyMs={summary?.hourlyMs ?? []} />
-        </div>
       </section>
 
       <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2" ref={bottomRef}>

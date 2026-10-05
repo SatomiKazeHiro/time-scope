@@ -20,6 +20,29 @@ const S: Summary = {
 };
 
 describe("MetricRow", () => {
+  it("五张卡：总时长 / 活跃·空闲 / 圆环 / 段数·切换 / 24h 分布", () => {
+    // 24h 时段分布是**指标卡**，不是热力图下面的全宽条
+    const { container } = render(<MetricRow summary={S} loading={false} />);
+    expect(screen.getByText("24h 时段分布")).toBeTruthy();
+    expect(container.querySelector("[data-bar]")).toBeTruthy();
+    const row = container.querySelector("[data-metric-row]") as HTMLElement;
+    expect(row.className).toContain("grid-cols-6");
+  });
+
+  it("圆环卡跨两列，否则图例被压成竖排单字", () => {
+    // 5 张卡在 1200px 下每张只有 215px，环 64px + 四行图例放不下
+    render(<MetricRow summary={S} loading={false} />);
+    const donut = screen.getByText("类别构成").closest("div") as HTMLElement;
+    expect(donut.className).toContain("col-span-2");
+  });
+
+  it("24h 卡在窄窗口下折行，不被压扁", () => {
+    const { container } = render(<MetricRow summary={S} loading={false} />);
+    const row = container.querySelector("[data-metric-row]") as HTMLElement;
+    expect(row.className).toContain("lg:grid-cols-6");
+    expect(row.className).toContain("grid-cols-1");
+  });
+
   it("四张卡：总时长 / 活跃·空闲 / 圆环 / 段数·切换", () => {
     const { container } = render(<MetricRow summary={S} loading={false} />);
     expect(screen.getByText("监控总时长")).toBeTruthy();
