@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import SummaryPage from "./SummaryPage";
+import { wallWindow } from "../lib/summary";
+import { shiftDate, todayString } from "../types";
 import type { DailyCalendar, Summary } from "../types";
+
+/** 53 周窗口随「今天」滚动，测试不能把它写死 —— 写死就每天挂一次。 */
+const W = wallWindow(todayString());
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
@@ -134,10 +139,7 @@ describe("SummaryPage", () => {
     // 指标就按同一个窗口算。以前 chip 写「全部」而实际是 5 天，墙上却是 53 周。
     render(<SummaryPage />);
     await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
-    expect(lastArgs("get_summary")).toMatchObject({
-      from: "2025-10-05",
-      to: "2026-10-05",
-    });
+    expect(lastArgs("get_summary")).toMatchObject({ from: W.start, to: W.end });
   });
 
   it("范围 chip 默认写「近一年」，不写「全部」", async () => {
@@ -165,10 +167,7 @@ describe("SummaryPage", () => {
     await waitFor(() => expect(callsTo("get_summary")).toBe(2));
     fireEvent.click(screen.getByTestId("cell-2026-10-03"));
     await waitFor(() => {
-      expect(lastArgs("get_summary")).toMatchObject({
-        from: "2025-10-05",
-        to: "2026-10-05",
-      });
+      expect(lastArgs("get_summary")).toMatchObject({ from: W.start, to: W.end });
     });
   });
 
@@ -189,14 +188,15 @@ describe("SummaryPage", () => {
   it("53 个周条都可选，空周也选得到（选过去看的是零，不是禁止）", async () => {
     render(<SummaryPage />);
     await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
-    // 2025-10-05 那一周整周没有任何活动
-    const empty = await screen.findByRole("button", { name: "选择 2025-10-05 那一周" });
+    // 窗口最早那一周（W.start）整周都没有活动 —— 用 W.start 而不是写死的日期，
+    // 窗口随「今天」滚动，写死就每天挂一次。
+    const empty = await screen.findByRole("button", { name: `选择 ${W.start} 那一周` });
     expect((empty as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(empty);
     await waitFor(() => {
       expect(lastArgs("get_summary")).toMatchObject({
-        from: "2025-10-05",
-        to: "2025-10-11",
+        from: W.start,
+        to: shiftDate(W.start, 6),
       });
     });
   });
@@ -285,7 +285,7 @@ describe("SummaryPage", () => {
     render(<SummaryPage />);
     await waitFor(() => expect(getTopTitles).toHaveBeenCalled());
     // 默认范围是 53 周窗口，标题排名跟的是同一个范围
-    expect(getTopTitles).toHaveBeenCalledWith("2025-10-05", "2026-10-05", 10);
+    expect(getTopTitles).toHaveBeenCalledWith(W.start, W.end, 10);
     expect(await screen.findByText("无标题")).toBeTruthy();
   });
 

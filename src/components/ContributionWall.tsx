@@ -65,35 +65,19 @@ export default function ContributionWall({
     layout.cells.find((c) => c.col === ci && c.row === 0)?.date;
 
   return (
-    // 外层是 query container：cqw 量的是**它**的行内尺寸（= 面板内容宽），
-    // 内层才能拿到「一列多宽」。
-    <div className="w-full" style={{ containerType: "inline-size" }}>
+    // **左内边距 + 绝对定位的标签列**，标签不占布局宽度。
+    //
+    // 这不是审美选择，是正确性：--cw 用 `100cqw` 量**这个容器**的
+    // 行内尺寸。若让标签列正常占 12px + 6px 间距，网格会比容器窄 18px，
+    // 而 --cw 仍按整宽算 —— 每列多算 0.34px，累到第 52 列正好偏**一整列**，
+    // 周框看起来就落到下一列去了。
+    <div
+      /* relative 不能省：container-type 在 Chrome 里**不会**给绝对定位的
+         后代当包含块，星期标签会跑到页面根上去（压住页头）。 */
+      className="relative w-full pl-4"
+      style={{ containerType: "inline-size" }}
+    >
       <div className="w-full" style={gridVars(layout.weeks)}>
-      {/* 左侧星期标签 + 墙。GitHub 只标 Mon/Wed/Fri 三行。 */}
-      <div className="flex items-start gap-1.5">
-      <div className="w-3 shrink-0 text-[9px] leading-none text-ink-faint">
-        {/* 占位：与月份标签行同高。绝对定位的原点是这一块的顶部，
-            少了它星期标签会比格子整体偏上 16px。 */}
-        <div aria-hidden className="mb-1 h-3" data-weekday-spacer="" />
-        <div className="relative" data-weekday-origin="">
-          {LABELLED_ROWS.map((row) => (
-            <span
-              key={row}
-              data-weekday={row}
-              aria-hidden
-              className="absolute right-0"
-              /* 行 r 的中线：r 行之前是 r*(cw+gap)，再加半行高 */
-              style={{
-                top: `calc(var(--cw) * ${row} + var(--gap) * ${row} + var(--cw) / 2)`,
-                transform: "translateY(-50%)",
-              }}
-            >
-              {WEEKDAY_LABELS[row]}
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className="min-w-0 flex-1">
       <div className="relative mb-1 h-3 w-full">
         {layout.monthLabels.map((m) => (
           <button
@@ -204,7 +188,31 @@ export default function ContributionWall({
         一列一周，上到下是周一到周日。点格子选一天，点下方细条选一周，点月份选整月。
       </p>
       </div>
-      </div>
+
+      {/* 星期标签：绝对定位在左侧留白里，GitHub 只标 Mon/Wed/Fri 三行 */}
+      <div
+        data-weekday-column=""
+        aria-hidden
+        className="absolute top-0 left-0 w-3 text-[9px] leading-none text-ink-faint"
+      >
+        {/* 占位：与月份标签行同高，把定位原点推到网格顶端 */}
+        <div className="mb-1 h-3" data-weekday-spacer="" />
+        <div className="relative" data-weekday-origin="">
+          {LABELLED_ROWS.map((row) => (
+            <span
+              key={row}
+              data-weekday={row}
+              className="absolute right-0"
+              /* 行 r 的中线：r 行之前是 r*(cw+gap)，再加半行高 */
+              style={{
+                top: `calc(var(--cw) * ${row} + var(--gap) * ${row} + var(--cw) / 2)`,
+                transform: "translateY(-50%)",
+              }}
+            >
+              {WEEKDAY_LABELS[row]}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );

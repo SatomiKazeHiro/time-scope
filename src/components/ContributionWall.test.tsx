@@ -281,6 +281,37 @@ describe("ContributionWall", () => {
     expect(origin.previousElementSibling).toBe(spacer);
   });
 
+  it("星期标签列绝对定位，不从网格宽度里挖走像素", () => {
+    // 这是「点周框错一列」的真凶：标签列占 12px + 间距 6px 后，网格比
+    // query container 窄 18px，而 --cw 仍按容器整宽算 -> 每列多 0.34px，
+    // 累到第 52 列正好偏一列。标签必须移出布局流（absolute + 容器左内边距）。
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const col = container.querySelector("[data-weekday-column]") as HTMLElement;
+    expect(col.className).toContain("absolute");
+    const host = col.closest('[style*="container-type"]') as HTMLElement;
+    expect(host).toBeTruthy();
+    // 容器用左内边距让出标签的位置，而不是让标签去挤网格
+    expect(host.className).toMatch(/pl-\d/);
+  });
+
+  it("网格容器与 query container 等宽（--cw 的计算基准）", () => {
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const grid = container.querySelector("[role='grid']") as HTMLElement;
+    const host = grid.closest('[style*="container-type"]') as HTMLElement;
+    // 网格不在任何会再吃宽度的 flex 子项里
+    let n: HTMLElement | null = grid.parentElement;
+    while (n && n !== host) {
+      expect(n.className).not.toContain("shrink-0");
+      n = n.parentElement;
+    }
+  });
+
   it("星期标签不抢焦点也不可点（纯说明）", () => {
     const { container } = render(
       <ContributionWall days={DAYS} selection={null}
@@ -288,7 +319,7 @@ describe("ContributionWall", () => {
     );
     for (const l of container.querySelectorAll("[data-weekday]")) {
       expect(l.tagName).toBe("SPAN");
-      expect(l.getAttribute("aria-hidden")).toBe("true");
+      expect(l.closest("[aria-hidden]"), "整列应当对读屏隐藏").toBeTruthy();
     }
   });
 
