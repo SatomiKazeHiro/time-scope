@@ -4,7 +4,9 @@ interface DayPartChartProps {
 }
 
 const H = 56;              // 绘图区高度（px）
-const PLOT_W = 720;        // viewBox 宽，实际宽度由 CSS 拉伸
+const PLOT_W = 720;        // viewBox 宽
+/** 柱宽占一格的比例。一半以下会像一排孤立的针（截图里就是这样）。 */
+const BAR_RATIO = 0.56;
 const HOUR_MS = 3_600_000;
 
 /**
@@ -20,12 +22,15 @@ export default function DayPartChart({ hourlyMs }: DayPartChartProps) {
   const h = hourlyMs.length === 24 ? hourlyMs : new Array(24).fill(0);
   const max = Math.max(...h, 1);
   const colW = PLOT_W / 24;
+  const barW = colW * BAR_RATIO;
 
   return (
     <div>
       <svg
         viewBox={`0 0 ${PLOT_W} ${H + 18}`}
-        className="w-full"
+        /* 限宽而不是 w-full：面板 1100+px 宽时全拉会让 24 根柱摊成
+           一排孤立的针，刻度字也跟着放大到 14px。 */
+        className="block w-full max-w-[760px]"
         role="img"
         aria-label="24 小时活跃分布"
       >
@@ -35,11 +40,11 @@ export default function DayPartChart({ hourlyMs }: DayPartChartProps) {
             <rect
               key={hour}
               data-bar=""
-              x={hour * colW + (colW - 3) / 2}
+              x={hour * colW + (colW - barW) / 2}
               y={H - bh}
-              width="3"
+              width={barW}
               height={bh}
-              rx="1.5"
+              rx="2"
               fill="var(--color-scale-3)"
             >
               <title>
@@ -55,9 +60,11 @@ export default function DayPartChart({ hourlyMs }: DayPartChartProps) {
               x2={(t / 24) * PLOT_W} y2={H + 4}
               stroke="var(--line)" strokeWidth="1"
             />
+            {/* 首尾两个刻度靠边对齐：居中会让「24」有一半落在 viewBox 外被切掉 */}
             <text
               x={(t / 24) * PLOT_W} y={H + 15}
-              fill="var(--ink-faint)" fontSize="9" textAnchor="middle"
+              fill="var(--ink-faint)" fontSize="9"
+              textAnchor={t === 0 ? "start" : t === 24 ? "end" : "middle"}
             >
               {String(t).padStart(2, "0")}
             </text>

@@ -188,7 +188,7 @@ export default function SummaryPage() {
           <span className="panel-title tnum">
             监控时长 · {all ? `${all.from} – ${all.to}` : "暂无"}
           </span>
-          <span className="text-micro text-ink-faint">少 ░▒▓█ 多</span>
+          <ScaleLegendSteps />
         </div>
         <ContributionWall
           days={days}
@@ -211,6 +211,29 @@ export default function SummaryPage() {
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * 色阶图例。**用真的色阶色块**，不用 `░▒▓█` 之类的字符凑 ——
+ * 字符渲染出来是单色，跟墙上实际用的紫阶对不上，读者没法拿图例反推深浅。
+ * 0 档（轨道色）不在图例里：它是「当天没有活动」，不是一档强度。
+ */
+function ScaleLegendSteps() {
+  return (
+    <span className="flex items-center gap-1.5 text-micro text-ink-faint">
+      <span>少</span>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <i
+          key={n}
+          data-legend-step={n}
+          aria-hidden
+          className="size-2.5 rounded-[2px]"
+          style={{ background: `var(--color-scale-${n})` }}
+        />
+      ))}
+      <span>多</span>
+    </span>
   );
 }
 

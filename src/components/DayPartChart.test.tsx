@@ -66,4 +66,32 @@ describe("DayPartChart", () => {
     const { container } = render(<DayPartChart hourlyMs={[]} />);
     expect(bars(container)).toHaveLength(24);
   });
+
+  // 截图暴露的两个问题：条被 w-full 摊得太散，刻度被一起放大
+  it("限制最大宽度，不跟着面板无限拉宽", () => {
+    const { container } = render(<DayPartChart hourlyMs={new Array(24).fill(0)} />);
+    // SVG 元素的 .className 是 SVGAnimatedString，要读 attribute。
+    // w-full + max-w-[760px] 是「先铺满再封顶」，两个都要有。
+    const cls = (container.querySelector("svg") as SVGSVGElement).getAttribute("class") ?? "";
+    expect(cls).toContain("w-full");
+    expect(cls).toContain("max-w-");
+  });
+
+  it("柱宽按格宽的一多半算，太细会像一排孤立的针", () => {
+    const { container } = render(<DayPartChart hourlyMs={new Array(24).fill(HOUR)} />);
+    const viewBoxW = 720;
+    const barW = Number(bars(container)[0].getAttribute("width"));
+    expect(barW).toBeGreaterThan(viewBoxW / 24 / 2);
+    expect(barW).toBeLessThan(viewBoxW / 24);
+  });
+
+  it("末尾刻度不居中，否则「24」有一半被切在 viewBox 外", () => {
+    const { container } = render(<DayPartChart hourlyMs={new Array(24).fill(0)} />);
+    const labels = [...container.querySelectorAll("text")];
+    const last = labels.find((t) => t.textContent === "24")!;
+    expect(last).toBeTruthy();
+    expect(last.getAttribute("text-anchor")).toBe("end");
+    const first = labels.find((t) => t.textContent === "00")!;
+    expect(first.getAttribute("text-anchor")).toBe("start");
+  });
 });

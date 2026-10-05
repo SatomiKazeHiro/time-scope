@@ -242,6 +242,19 @@ describe("SummaryPage", () => {
     expect(getTopTitles).toHaveBeenLastCalledWith("2026-10-03", "2026-10-03", 10);
   });
 
+  it("热力图图例用真色阶色块，不是字符凑的", async () => {
+    render(<SummaryPage />);
+    await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
+    const { container } = { container: document.body };
+    const swatches = container.querySelectorAll("[data-legend-step]");
+    expect(swatches).toHaveLength(5);
+    const fills = [...swatches].map((s) => (s as HTMLElement).style.background);
+    expect(fills).toEqual([1, 2, 3, 4, 5].map((n) => `var(--color-scale-${n})`));
+    // 「少 … 多」两端要有字
+    expect(screen.getByText("少")).toBeTruthy();
+    expect(screen.getByText("多")).toBeTruthy();
+  });
+
   it("标题失败时显示空状态而不是崩", async () => {
     visible = true;
     invoke.mockImplementation((cmd: string) => {
