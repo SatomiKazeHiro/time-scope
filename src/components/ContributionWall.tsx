@@ -1,9 +1,25 @@
 import { useMemo } from "react";
 import {
-  buildWall, selectionFrame, uninstalledColor, CELL, GAP, PITCH, scaleColor, scaleStroke,
+  buildWall, selectionFrame, uninstalledColor, uninstalledStroke,
+  GAP, scaleColor, scaleStroke,
   type DateRange,
 } from "../lib/summary";
 import type { DayCell } from "../types";
+
+/**
+ * 列宽（`--cw`）与间隙。选中框、月份标签、`grid-template-rows` 全从它算，
+ * 墙随容器缩放时它们不会错位。
+ *
+ * 用 **cqw（容器查询单位）** 而不是 `%`：`grid-template-rows` 里的百分比
+ * 解析的是**块向**尺寸（高度），而高度是 auto，于是循环依赖、行高塌成 0。
+ * cqw 解析的是**行内**尺寸（宽度），宽度是定值，所以成立。
+ */
+function gridVars(weeks: number): React.CSSProperties {
+  return {
+    "--cw": `calc((100cqw - (${weeks} - 1) * var(--gap)) / ${weeks})`,
+    "--gap": `${GAP}px`,
+  } as React.CSSProperties;
+}
 
 interface ContributionWallProps {
   /** **连续升序**的日期序列（`lib/summary.ts` 的 `fillDays` 产出） */
@@ -48,38 +64,38 @@ export default function ContributionWall({
   const sundayOf = (ci: number): string | undefined =>
     layout.cells.find((c) => c.col === ci && c.row === 0)?.date;
 
-  const width = layout.weeks * PITCH - GAP;
-
   return (
-    <div className="inline-block">
-      {/* 月份标签：浮在每月首次出现的那一列上方 */}
-      <div className="relative mb-1 h-3" style={{ width }}>
-        {layout.monthLabels.map((m) => {
-          // 用标签自带的该月首日，不是那一列的第一个有数据的格子
-          const d = m.date;
-          return (
-            <button
-              key={`${m.label}-${m.col}`}
-              type="button"
-              data-testid={`month-label-${m.date.slice(0, 7)}`}
-              onClick={() => onSelectMonth(d)}
-              className="absolute cursor-pointer text-[9px] whitespace-nowrap text-ink-faint hover:text-ink"
-              style={{ left: m.col * PITCH }}
-            >
-              {m.label}
-            </button>
-          );
-        })}
+    // 外层是 query container：cqw 量的是**它**的行内尺寸（= 面板内容宽），
+    // 内层才能拿到「一列多宽」。
+    <div className="w-full" style={{ containerType: "inline-size" }}>
+      <div className="w-full" style={gridVars(layout.weeks)}>
+      <div className="relative mb-1 h-3 w-full">
+        {layout.monthLabels.map((m) => (
+          <button
+            key={`${m.label}-${m.col}`}
+            type="button"
+            data-testid={`month-label-${m.date.slice(0, 7)}`}
+            onClick={() => onSelectMonth(m.date)}
+            className="absolute cursor-pointer text-[9px] whitespace-nowrap text-ink-faint hover:text-ink"
+            style={{ left: `calc(var(--cw) * ${m.col} + var(--gap) * ${m.col})` }}
+          >
+            {m.label}
+          </button>
+        ))}
       </div>
 
-      <div className="relative inline-block" style={{ width }}>
+      <div className="relative w-full" style={gridVars(layout.weeks)}>
         <div
           role="grid"
           aria-label="监控时长"
           className="grid"
           style={{
-            gridTemplateColumns: `repeat(${layout.weeks}, ${CELL}px)`,
-            gridTemplateRows: `repeat(7, ${CELL}px)`,
+            // 1fr 均分而不是写死像素：53 列写死 11px 只占 742px，
+            // 在 1080px 的面板上右边空三分之一。
+            gridTemplateColumns: `repeat(${layout.weeks}, minmax(0, 1fr))`,
+            // **行高必须显式给**：不写 grid-template-rows 时
+            // `grid-auto-flow: column` 只排出一行，整面墙的高度塌成 0。
+            gridTemplateRows: `repeat(7, var(--cw))`,
             // 必须列优先：一列自上而下填满 7 行才换列，否则整个周会被打横
             gridAutoFlow: "column",
             gap: GAP,
@@ -106,7 +122,7 @@ export default function ContributionWall({
                 className="cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
                 style={{
                   background: c.tracked ? scaleColor(c.step) : uninstalledColor(),
-                  boxShadow: c.tracked ? scaleStroke(c.step) : undefined,
+                  boxShadow: c.tracked ? scaleStroke(c.step) : uninstalledStroke(),
                 }}
               />
             ) : (
@@ -115,17 +131,17 @@ export default function ContributionWall({
           )}
         </div>
 
-        {/* 选中框：一整块。宽 = 跨的列数 × PITCH - GAP */}
+        {/* 选中框：一整块。跨 cols 列 × rows 行，位置全部由 --cw 算 */}
         {frame && (
           <span
             data-frame=""
             aria-hidden
             className="pointer-events-none absolute rounded-[3px] border-[1.5px] border-ink"
             style={{
-              left: frame.col * PITCH,
-              top: frame.row * PITCH,
-              width: frame.cols * PITCH - GAP,
-              height: frame.rows * PITCH - GAP,
+              left: `calc(var(--cw) * ${frame.col} + var(--gap) * ${frame.col})`,
+              top: `calc(var(--cw) * ${frame.row} + var(--gap) * ${frame.row})`,
+              width: `calc(var(--cw) * ${frame.cols} + var(--gap) * ${frame.cols - 1})`,
+              height: `calc(var(--cw) * ${frame.rows} + var(--gap) * ${frame.rows - 1})`,
             }}
           />
         )}
@@ -134,8 +150,11 @@ export default function ContributionWall({
       {/* 周条：格子下方那条空隙。点了就是选一周。 */}
       <div
         data-testid="week-strip"
-        className="mt-1.5 grid"
-        style={{ gridTemplateColumns: `repeat(${layout.weeks}, ${CELL}px)`, columnGap: GAP }}
+        className="mt-1.5 grid w-full"
+        style={{
+          gridTemplateColumns: `repeat(${layout.weeks}, minmax(0, 1fr))`,
+          columnGap: GAP,
+        }}
       >
         {/* 53 周全是真实日历周，都可选 —— 选一个空周看到的是零，不是禁止 */}
         {Array.from({ length: layout.weeks }, (_, ci) => {
@@ -159,6 +178,7 @@ export default function ContributionWall({
       <p className="mt-1 text-[10px] text-ink-faint">
         左起为周日 → 周六，一列一周。点格子选一天，点下方细条选一周，点月份选整月。
       </p>
+      </div>
     </div>
   );
 }

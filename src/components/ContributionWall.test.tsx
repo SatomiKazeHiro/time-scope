@@ -46,7 +46,11 @@ describe("ContributionWall", () => {
         onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
     );
     const grid = container.querySelector("[role='grid']") as HTMLElement;
+    // 行高必须显式给 7 行。不写 grid-template-rows 时 grid-auto-flow:column
+    // 只排出一行，整面墙高度塌成 0（真踩过）。
     expect(grid.style.gridTemplateRows).toContain("repeat(7");
+    expect(grid.style.gridTemplateRows).toContain("var(--cw)");
+    expect(grid.style.gridAutoFlow).toBe("column");
   });
 
   it("列优先填充：自上而下填满 7 行才换列，否则周会被打横", () => {
@@ -135,8 +139,11 @@ describe("ContributionWall", () => {
       />,
     );
     const f = container.querySelector("[data-frame]") as HTMLElement;
-    expect(f.style.width).toBe("11px");
-    expect(f.style.height).toBe("11px");
+    expect(f.style.width).toContain("var(--cw)");
+    expect(f.style.height).toContain("var(--cw)");
+    // 1 格宽高：宽高表达式里跨的格数都是 1
+    expect(f.style.width).toContain("* 1 +");
+    expect(f.style.height).toContain("* 1 +");
   });
 
   it("选中一周时框是 1 列 × 7 格", () => {
@@ -148,9 +155,9 @@ describe("ContributionWall", () => {
       />,
     );
     const f = container.querySelector("[data-frame]") as HTMLElement;
-    expect(f.style.width).toBe("11px");
-    // 7 行 = 7×PITCH - GAP = 7*14 - 3
-    expect(f.style.height).toBe("95px");
+    // 1 列 × 7 行；位置由 --cw 算，跟着列宽一起缩放
+    expect(f.style.width).toContain("var(--cw)");
+    expect(f.style.height).toContain("7");
   });
 
   it("没有选中时不画框", () => {
@@ -189,6 +196,46 @@ describe("ContributionWall", () => {
       expect((b as HTMLElement).style.boxShadow)
         .toContain("--color-line-strong");
     }
+  });
+
+  it("列宽是响应式的：1fr 均分，不写死像素", () => {
+    // 53 列写死 11px 只有 742px，面板宽 1080px 时右边空三分之一。
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const grid = container.querySelector("[role='grid']") as HTMLElement;
+    // 1fr 均分而不是写死像素
+    expect(grid.style.gridTemplateColumns).toContain("1fr");
+    expect(grid.style.gridTemplateColumns).not.toContain("px");
+    // 行高用 cqw（容器查询单位）：grid-template-rows 里的百分比解析的是
+    // 高度，而高度是 auto -> 循环依赖、行高塌 0
+    expect(grid.style.gridTemplateRows).toContain("var(--cw)");
+    const host = grid.closest('[style*="container-type"]') as HTMLElement;
+    expect(host, "外层必须是 query container，cqw 才有得量").toBeTruthy();
+  });
+
+  it("墙整体占满容器宽度", () => {
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("w-full");
+  });
+
+  it("选中框用 CSS 变量算位置，跟着列宽一起缩放", () => {
+    const { container } = render(
+      <ContributionWall
+        days={DAYS}
+        selection={{ kind: "week", from: "2026-09-27", to: "2026-10-03", label: "" }}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP}
+      />,
+    );
+    const f = container.querySelector("[data-frame]") as HTMLElement;
+    // 位置由 --cw（列宽）算出，不是写死的 col*PITCH
+    expect(f.style.left).toContain("var(--cw)");
+    expect(f.style.width).toContain("var(--cw)");
   });
 
   it("0 小时的格子用轨道色而不是紫阶 1", () => {

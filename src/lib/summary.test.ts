@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildWall, endOfMonth, fillDays, rangeFor, scaleColor, scaleStep,
-  scaleStroke, selectionFrame, startOfWeek, wallWindow, weekdayOf,
+  scaleStroke, uninstalledStroke, selectionFrame, startOfWeek, wallWindow, weekdayOf,
   type DateRange,
 } from "./summary";
 import type { DayCell } from "../types";
@@ -15,8 +15,8 @@ function days(spec: Array<[string, number]>): DayCell[] {
 /** 从 `from` 起连续 `count` 天的 [date, 1] 序列。 */
 /** 复刻组件里给格子算 style 的那段逻辑，测它而不测 DOM。 */
 function cellStyle(c: { tracked: boolean; step: number }): string {
-  if (!c.tracked) return "bg: surface-1";
-  return `bg: ${scaleColor(c.step)}; box-shadow: ${scaleStroke(c.step) ?? "none"}`;
+  const stroke = c.tracked ? scaleStroke(c.step) : uninstalledStroke();
+  return `bg: ${c.tracked ? scaleColor(c.step) : "var(--color-surface-2)"}; shadow: ${stroke ?? "none"}`;
 }
 
 function range(from: string, count: number): Array<[string, number]> {
@@ -187,15 +187,22 @@ describe("未安装期", () => {
   it("未安装不参与色阶：再大的 max 也不改变它的样子", () => {
     expect(byDate["2026-05-15"].step).toBe(0);
   });
-  it("两种空的样式不同", () => {
-    // 未安装 = 面板色、无描边（读作「什么都没有」）
-    expect(cellStyle(byDate["2026-05-15"])).not.toContain("line-strong");
-    // 装了没活动 = 轨道色 + 描边（读作「有个空方块」）
+  it("两种空的描边分两级：都能看见，但强弱不同", () => {
+    // 上一版把未安装做成面板色 = 和空白没区别 -> 白茫茫一片。
+    // 两者共用轨道色底，用描边强弱区分：强的读作「有个空方块」，
+    // 弱的读作「还没装的幽灵格子」。
     const noActivity = Object.entries(byDate).find(
       ([, c]) => c.tracked && c.totalMs === 0,
     )?.[1];
     expect(noActivity).toBeDefined();
-    expect(cellStyle(noActivity!)).toContain("line-strong");
+    const uninstalled = cellStyle(byDate["2026-05-15"]);
+    const active = cellStyle(noActivity!);
+    expect(uninstalled).toContain("--color-line)");
+    expect(uninstalled).not.toContain("line-strong");
+    expect(active).toContain("--color-line-strong)");
+    // 两者的底色相同，只差描边
+    expect(uninstalled).toContain("surface-2");
+    expect(active).toContain("surface-2");
   });
 });
 

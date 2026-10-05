@@ -251,7 +251,10 @@ function ScaleLegendSteps() {
           data-legend-empty
           aria-hidden
           className="size-2.5 rounded-[2px]"
-          style={{ background: "var(--color-surface-1)" }}
+          style={{
+            background: "var(--color-surface-2)",
+            boxShadow: "inset 0 0 0 1px var(--color-line)",
+          }}
         />
         还没装
         <i

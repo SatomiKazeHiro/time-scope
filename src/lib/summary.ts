@@ -85,17 +85,25 @@ export function scaleColor(step: number): string {
 }
 
 /**
- * 还没装 Time Scope 的那段日子画成什么。
+ * 还没装 Time Scope 的那段日子怎么画。
  *
  * **它和「装了但当天没活动」是两件事，必须分开。** GitHub 的空格有意义是因为
  * GitHub 一直存在；Time Scope 三个月前还不存在，那段日子的空格读作「我一整年
  * 几乎没用过」——而事实是「我 5 天前才装上」。
  *
- * 用面板色（等于背景）、且不描边：读作「什么都没有」。0 档那格是轨道色 + 描边，
- * 读作「有个空方块」。两种空一眼能分开，且不新增 token。
+ * 两者**底色相同**（轨道色），只差描边强弱：
+ * - 未安装：弱描边 `--color-line`，读作「还没装的幽灵格子」
+ * - 没活动：强描边 `--color-line-strong`，读作「有个确切的空方块」
+ *
+ * 曾经把未安装做成面板色（等于背景），结果整片白茫茫 —— 看不见就不是区分。
+ * 不新增 token。
  */
 export function uninstalledColor(): string {
-  return "var(--color-surface-1)";
+  return "var(--color-surface-2)";
+}
+
+export function uninstalledStroke(): string {
+  return "inset 0 0 0 1px var(--color-line)";
 }
 
 /** 0 档格子的内描边。
