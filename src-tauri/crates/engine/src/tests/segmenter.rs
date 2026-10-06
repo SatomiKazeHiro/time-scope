@@ -685,3 +685,72 @@ fn a_missing_unlock_does_not_invent_extra_time() {
     let work = segs.iter().find(|s| s.category.as_str() == "work").unwrap();
     assert_eq!(work.end_at, 400_000, "锁屏后的时间不能算进工作段");
 }
+
+// --- pending 顺序（A1）---
+
+#[test]
+fn pending_order_survives_short_segments_being_held_back() {
+    // A1：`keep` 段（够老但无长邻居、压着等下一轮的短段）被 append 到 pending 末尾，
+    // 于是 pending 不再按时间排序，`absorb` 里的 `pending.last()` 取到的是
+    // **十几秒前的老段**而不是刚离开的那一段 —— 把它拉到当前时刻就产出重叠段。
+    //
+    // 默认参数即可触发（min=30 / grace=60 → hold=max(30,60)=60s、give_up=180s），
+    // 所以这里用默认配置。带 min_segment_duration_s(0) 的测试里 keep 恒为空、
+    // 这条路径结构上不可达 —— 这正是漏网的原因。
+    let events = vec![
+        focus(0, "Code.exe"),       // 开 A
+        focus(5_000, "chrome.exe"), // 关 A（5s，短段）；开 B
+        focus(70_000, "Code.exe"),  // 关 B（65s，长）；开 C。A 无长邻居 → 进 keep
+        focus(80_000, "chrome.exe"),// 关 C（10s）；开 D
+        focus(85_000, "Code.exe"),  // 判定为抖动 → absorb
+        // 拖时间把 pending 里的段冲刷出来，否则看不到它们落库
+        heartbeat(200_000, 5),
+        heartbeat(300_000, 5),
+    ];
+    let segs = all_segments(&events, &rules(), &EngineConfig::default());
+
+    for w in segs.windows(2) {
+        assert!(
+            w[0].end_at <= w[1].start_at,
+            "段不应重叠: [{}-{} {}] 与 [{}-{} {}]",
+            w[0].start_at,
+            w[0].end_at,
+            w[0].application.as_deref().unwrap_or("-"),
+            w[1].start_at,
+            w[1].end_at,
+            w[1].application.as_deref().unwrap_or("-"),
+        );
+    }
+}
+
+#[test]
+fn overlapping_segments_never_invent_time() {
+    // A1 的直接后果：`SUM(end_at - start_at)` 重复计数。
+    // 审计里那句「这段 85 s 的序列会算出 160 s」说的就是这个 ——
+    // 旧段被拉到当前时刻，而中间真实的段照样落库，同一段时间被数了两遍。
+    //
+    // 与上一条互补：那条查"有没有重叠"，这条查"总量有没有超出墙钟跨度"。
+    let events = vec![
+        focus(0, "Code.exe"),
+        focus(5_000, "chrome.exe"),
+        focus(70_000, "Code.exe"),
+        focus(80_000, "chrome.exe"),
+        focus(85_000, "Code.exe"),
+        heartbeat(200_000, 5),
+        heartbeat(300_000, 5),
+    ];
+    let segs = all_segments(&events, &rules(), &EngineConfig::default());
+
+    let span = events.last().unwrap().timestamp - events.first().unwrap().timestamp;
+    let total: i64 = segs.iter().map(|s| s.end_at - s.start_at).sum();
+    assert!(
+        total <= span,
+        "段总时长 {}ms 超过墙钟跨度 {}ms —— 重叠被重复计数了：{:?}",
+        total,
+        span,
+        segs.iter()
+            .map(|s| (s.start_at, s.end_at, s.application.as_deref().unwrap_or("-")))
+            .collect::<Vec<_>>()
+    );
+}
+// --- A1：重复计数 ---

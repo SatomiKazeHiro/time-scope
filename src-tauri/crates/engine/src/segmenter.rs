@@ -195,6 +195,10 @@ pub fn reduce(
     );
     st.current_segment = open_after;
     st.pending.extend(keep);
+    // `keep` 是比 `still` **更老**的段，append 到末尾会打乱时间序。
+    // pending 的不变量是"按时间有序"：`fold_short_segments` 靠下标找前驱/后继，
+    // `absorb` 也靠它认"刚离开的那一段"。A1：顺序一破，absorb 会复活错误的那一段。
+    st.pending.sort_by_key(|s| s.start_at);
     closed.sort_by_key(|s| s.start_at);
 
     EngineOutput {
@@ -298,9 +302,7 @@ fn is_absorption(
     if st.previous_application.as_deref() != new_ctx.application.as_deref() {
         return false;
     }
-    let revisitable = st
-        .pending
-        .last()
+    let revisitable = absorption_candidate(st)
         .map(|p| p.application == st.previous_application)
         .unwrap_or(false);
     if !revisitable {
@@ -311,14 +313,36 @@ fn is_absorption(
         .unwrap_or(false)
 }
 
-/// 抖动吸收：丢弃刚开的那段（错误的 context），**复活** pending 末尾的前一段并延长。
+/// 抖动吸收要复活的那一段在 `pending` 里的下标：**时间上紧邻当前段的前驱**
+/// （`end_at` 最大且 `<= 当前段起点`）。
+///
+/// 曾经写成 `pending.last()` —— 那是"假定 pending 按时间排序、且末位就是刚离开的那段"。
+/// A1：`keep` 段（够老但无长邻居的更老短段）会 append 到 pending 末尾，把顺序打破，
+/// 于是这里取到十几秒前的老段，拉到当前时刻就**产出互相重叠的段**。
+/// 按"相邻"定位而不是按位置猜，这条路径就对顺序不敏感了。
+fn absorption_candidate_idx(st: &EngineState) -> Option<usize> {
+    let cur_start = st.current_segment.as_ref()?.start_at;
+    st.pending
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.end_at <= cur_start)
+        .max_by_key(|(_, p)| p.end_at)
+        .map(|(i, _)| i)
+}
+
+fn absorption_candidate(st: &EngineState) -> Option<&ActivitySegment> {
+    absorption_candidate_idx(st).map(|i| &st.pending[i])
+}
+
+/// 抖动吸收：丢弃刚开的那段（错误的 context），**复活**紧邻的前一段并延长。
 ///
 /// 关键：如果只是"不切段"而把当前段留着，活下来的会是那个一闪而过的错误 context
 /// （Code -> chrome(2s) -> Code 会留下一个 chrome 段），与用户实际经历不符。
 fn absorb(st: &mut EngineState, ts: i64, evidence_id: String) {
-    let Some(mut prev) = st.pending.pop() else {
+    let Some(idx) = absorption_candidate_idx(st) else {
         return;
     };
+    let mut prev = st.pending.remove(idx);
     let dropped = st.current_segment.take();
 
     prev.end_at = prev.end_at.max(ts);
