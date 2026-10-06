@@ -73,15 +73,25 @@ pub struct MergedTitle {
     pub redacted: bool,
 }
 
-/// 把「原始标题 + 次数」归一化、合并、取前 `limit` 名。
+/// 把「原始标题 + 次数」脱敏、归一化、合并、取前 `limit` 名。
 ///
 /// **先合并再截断**——反过来的话「取前 10 条原始行再归一化」会把 10 行
 /// 塌成 2 行，白白丢掉 8 个名额。
-pub fn merge_top_titles(raw: Vec<(String, i64)>, limit: usize) -> Vec<MergedTitle> {
+///
+/// **脱敏排在归一化/合并之前**（spec §11，A4）。`title_counts_in_range` 从
+/// `events.payload` 里 GROUP BY 出的是**原文**——配了 `[[redact]]` 的用户
+/// 在这里照样看到明文客户名/订单号。先脱敏再合并还有个附带好处：只在敏感
+/// 片段上不同的标题会先塌成一条再累加计数，而不是各自占一个坑。
+pub fn merge_top_titles(
+    raw: Vec<(String, i64)>,
+    limit: usize,
+    redactor: &crate::redact::Redactor,
+) -> Vec<MergedTitle> {
     let mut merged: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for (raw_title, hits) in raw {
+        let safe = redactor.redact(&raw_title);
         // 剥空则跳过：空串会占掉 Top N 的一个坑（Review Focus #4）
-        if let Some(norm) = normalize_title(&raw_title) {
+        if let Some(norm) = normalize_title(&safe) {
             *merged.entry(norm).or_insert(0) += hits;
         }
     }
@@ -211,7 +221,7 @@ mod tests {
             ("无标题 和另外 33 个页面 - 个人 - Microsoft Edge".to_string(), 913),
             ("New Tab 和另外 31 个页面 - 个人 - Microsoft Edge".to_string(), 1274),
         ];
-        let top = merge_top_titles(raw, 10);
+        let top = merge_top_titles(raw, 10, &crate::redact::Redactor::default());
         assert_eq!(top.len(), 2, "四条应塌成两条");
         assert_eq!(top[0].title, "无标题");
         assert_eq!(top[0].hits, 1316 + 1099 + 913, "计数要加起来");
@@ -236,7 +246,7 @@ mod tests {
             raw.push((name.to_string(), 5000 + i as i64));
         }
 
-        let top = merge_top_titles(raw, 10);
+        let top = merge_top_titles(raw, 10, &crate::redact::Redactor::default());
         assert_eq!(top.len(), 10, "先合并才有 10 个桶可取");
         // 10 条塌成的一桶累加了全部 hits，合计远大于任何单条 B..K，
         // 所以它排第一本身就是「合并真的发生了」的证据。
@@ -256,7 +266,7 @@ mod tests {
             ("   ".to_string(), 999),
             ("真标题".to_string(), 3),
         ];
-        let top = merge_top_titles(raw, 10);
+        let top = merge_top_titles(raw, 10, &crate::redact::Redactor::default());
         assert_eq!(top.len(), 1);
         assert_eq!(top[0].title, "真标题");
         assert_eq!(top[0].hits, 3);
@@ -266,7 +276,7 @@ mod tests {
     fn merge_marks_redacted_titles() {
         // 归一化不碰占位符，所以这里能直接判
         let raw = vec![("客户 42 - [redacted] - Code".to_string(), 7)];
-        let top = merge_top_titles(raw, 10);
+        let top = merge_top_titles(raw, 10, &crate::redact::Redactor::default());
         assert!(top[0].redacted, "脱敏标记必须穿透到汇总页（spec §3.3）");
     }
 
@@ -279,7 +289,7 @@ mod tests {
             ("无标题".to_string(), 7086),
             ("New Tab".to_string(), 3722),
         ];
-        let top = merge_top_titles(raw, 10);
+        let top = merge_top_titles(raw, 10, &crate::redact::Redactor::default());
         assert_eq!(top.len(), 2);
         assert_eq!(top[0].title, "无标题");
         assert_eq!(top[0].hits, 7086);
@@ -291,7 +301,7 @@ mod tests {
         let raw: Vec<(String, i64)> = (0..50)
             .map(|i| (format!("t{i}"), 1000 - i))
             .collect();
-        assert_eq!(merge_top_titles(raw, 10).len(), 10);
+        assert_eq!(merge_top_titles(raw, 10, &crate::redact::Redactor::default()).len(), 10);
     }
 
     #[test]
@@ -302,8 +312,53 @@ mod tests {
             ("a".to_string(), 5),
             ("c".to_string(), 9),
         ];
-        let top = merge_top_titles(raw, 10);
+        let top = merge_top_titles(raw, 10, &crate::redact::Redactor::default());
         assert_eq!(top.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(),
                    vec!["c", "a", "b"]);
+    }
+
+    // --- A4：标题排行的读路径也要过 Redactor ---
+
+    fn redactor(patterns: &[&str]) -> crate::redact::Redactor {
+        crate::redact::Redactor::new(
+            &patterns.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn top_titles_stored_before_the_rules_existed_are_still_redacted() {
+        // A4。`title_counts_in_range` 从 events.payload 里 GROUP BY 出**原文**，
+        // 配了 [[redact]] 的用户照样在这里看到明文客户名/订单号。
+        let raw = vec![("客户88712 号订单 - Chrome".to_string(), 7)];
+        let top = merge_top_titles(raw, 10, &redactor(&[r"客户\d+"]));
+        assert!(
+            !top[0].title.contains("88712"),
+            "明文订单号泄漏到汇总页：{:?}",
+            top[0].title
+        );
+        assert!(top[0].redacted);
+    }
+
+    #[test]
+    fn top_titles_are_redacted_before_normalizing_and_merging() {
+        // 脱敏必须在归一化/合并**之前**：这样只在敏感片段上不同的几条会先塌成
+        // 一条再累加计数，而不是各自占一个坑。
+        let raw = vec![
+            ("客户111 - 个人 - Microsoft\u{200b} Edge".to_string(), 10),
+            ("客户222 - 个人 - Microsoft\u{200b} Edge".to_string(), 4),
+        ];
+        let top = merge_top_titles(raw, 10, &redactor(&[r"客户\d+"]));
+        assert_eq!(top.len(), 1, "脱敏后应塌成一条：{:?}", top);
+        assert_eq!(top[0].hits, 14, "计数要相加");
+        assert!(!top[0].title.contains("111"));
+        assert!(!top[0].title.contains("222"));
+    }
+
+    #[test]
+    fn an_empty_redactor_leaves_top_titles_untouched() {
+        let raw = vec![("客户88712 - Chrome".to_string(), 7)];
+        let top = merge_top_titles(raw, 10, &crate::redact::Redactor::default());
+        assert_eq!(top[0].title, "客户88712 - Chrome");
+        assert!(!top[0].redacted);
     }
 }

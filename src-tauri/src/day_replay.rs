@@ -70,8 +70,13 @@ fn replay_day(
         rows.iter()
             .filter_map(|stored| {
                 // **对历史数据再脱敏一次**：脱敏功能上线前落库的标题不会被回溯改写，
-                // 但重放时经过这里，界面上就不会再露出旧数据里的敏感片段。
+                // 重放时经过这里能让**引擎看到的** context 不含敏感片段。
                 // events 表里的原始行保持不变（不做数据改写）。
+                //
+                // 注意这只覆盖了引擎这一侧。**界面**读的是 events.payload 的原文，
+                // 由 `titles_for` / `merge_top_titles` 各自再脱敏一次（A4）。
+                // 这里曾经是唯一的脱敏出口，注释也就跟着写了「界面上就不会再露出
+                // 旧数据里的敏感片段」——那句话当时是错的。
                 let payload = redactor
                     .redact_payload(&stored.payload)
                     .unwrap_or_else(|| stored.payload.clone());

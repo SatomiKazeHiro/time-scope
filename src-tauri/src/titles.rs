@@ -6,7 +6,7 @@
 //! **脱敏标记由后端判定**：前端不该硬编码 `[redacted]` 这个占位符，
 //! 否则改了占位符就会出现"标记失效但数据仍脱敏"的诡异状态。
 
-use crate::redact::PLACEHOLDER;
+use crate::redact::{Redactor, PLACEHOLDER};
 use activity_core::EventType;
 use activity_storage::SharedConn;
 use serde::Serialize;
@@ -25,7 +25,19 @@ pub struct SegmentTitle {
 ///
 /// 传入的 id 里有些可能已经查不到（事件被删、id 拼错），那些会被静默跳过——
 /// 一条缺标题不该让整个详情面板报错。
-pub fn titles_for(conn: &SharedConn, event_ids: &[String]) -> Vec<SegmentTitle> {
+///
+/// **返回前每条标题都会再过一遍 `redactor`（spec §11，A4）。**
+/// 写入路径的脱敏（consumer 入队前）只保证「配好 `[[redact]]` 之后采到的
+/// 数据」是脱敏的；而默认规则文件里一条脱敏规则都没有，所以正常用户库里
+/// 躺着的是**配规则之前**采到的明文标题。不在读路径补这一道，配好正则的
+/// 用户会在详情面板里看到明文客户名/订单号，而他已经以为规则生效了。
+///
+/// 脱敏在去重**之前**：只在敏感片段上不同的标题会先塌成一条再累加计数。
+pub fn titles_for(
+    conn: &SharedConn,
+    event_ids: &[String],
+    redactor: &Redactor,
+) -> Vec<SegmentTitle> {
     if event_ids.is_empty() {
         return Vec::new();
     }
@@ -55,9 +67,10 @@ pub fn titles_for(conn: &SharedConn, event_ids: &[String]) -> Vec<SegmentTitle> 
                 EventType::WindowTitleChange(p) => p.window_title.clone(),
                 _ => None,
             };
-            let Some(title) = raw_title.filter(|t| !t.trim().is_empty()) else {
+            let Some(raw_title) = raw_title.filter(|t| !t.trim().is_empty()) else {
                 continue;
             };
+            let title = redactor.redact(&raw_title).into_owned();
             let redacted = title.contains(PLACEHOLDER);
             match out.iter_mut().find(|t| t.title == title) {
                 Some(existing) => existing.count += 1,
@@ -120,7 +133,7 @@ mod tests {
                 title_event("e3", 3, "lib.rs - Code"),
             ],
         );
-        let out = titles_for(&conn, &ids);
+        let out = titles_for(&conn, &ids, &crate::redact::Redactor::default());
         assert_eq!(out.len(), 2, "去重后应只剩 2 个标题");
         assert_eq!(out[0].title, "main.rs - Code");
         assert_eq!(out[0].count, 2, "同一标题出现两次应合并计数");
@@ -139,7 +152,7 @@ mod tests {
                 focus_event("e3", 3, "third"),
             ],
         );
-        let out = titles_for(&conn, &ids);
+        let out = titles_for(&conn, &ids, &crate::redact::Redactor::default());
         let order: Vec<&str> = out.iter().map(|t| t.title.as_str()).collect();
         assert_eq!(order, vec!["first", "second", "third"]);
     }
@@ -154,7 +167,7 @@ mod tests {
                 focus_event("e2", 2, "plain.rs - Code"),
             ],
         );
-        let out = titles_for(&conn, &ids);
+        let out = titles_for(&conn, &ids, &crate::redact::Redactor::default());
         let r = out.iter().find(|t| t.title.contains("redacted")).unwrap();
         assert!(r.redacted, "含占位符的标题应被标记");
         let plain = out.iter().find(|t| !t.title.contains("redacted")).unwrap();
@@ -167,21 +180,21 @@ mod tests {
         let conn = open_in_memory_shared();
         let title = format!("a {} b", PLACEHOLDER);
         let ids = seed(&conn, vec![focus_event("e1", 1, &title)]);
-        let out = titles_for(&conn, &ids);
+        let out = titles_for(&conn, &ids, &crate::redact::Redactor::default());
         assert!(out[0].redacted);
     }
 
     #[test]
     fn empty_input_yields_nothing() {
         let conn = open_in_memory_shared();
-        assert!(titles_for(&conn, &[]).is_empty());
+        assert!(titles_for(&conn, &[], &crate::redact::Redactor::default()).is_empty());
     }
 
     #[test]
     fn unknown_event_ids_are_skipped_silently() {
         let conn = open_in_memory_shared();
         seed(&conn, vec![focus_event("e1", 1, "known")]);
-        let out = titles_for(&conn, ["e1".to_string(), "nope".to_string()].as_ref());
+        let out = titles_for(&conn, ["e1".to_string(), "nope".to_string()].as_ref(), &crate::redact::Redactor::default());
         assert_eq!(out.len(), 1, "查不到的 id 不该让整体失败");
         assert_eq!(out[0].title, "known");
     }
@@ -202,7 +215,7 @@ mod tests {
             window_title: Some("   ".into()),
         });
         let ids = seed(&conn, vec![focus_event("e3", 3, "real"), null_title, blank]);
-        let out = titles_for(&conn, &ids);
+        let out = titles_for(&conn, &ids, &crate::redact::Redactor::default());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].title, "real");
     }
@@ -214,8 +227,67 @@ mod tests {
         let mut idle = idle;
         idle.id = "e1".into();
         let ids = seed(&conn, vec![idle, focus_event("e2", 2, "real")]);
-        let out = titles_for(&conn, &ids);
+        let out = titles_for(&conn, &ids, &crate::redact::Redactor::default());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].title, "real");
+    }
+
+    // --- A4：读路径也要过 Redactor ---
+
+    fn redactor(patterns: &[&str]) -> crate::redact::Redactor {
+        crate::redact::Redactor::new(
+            &patterns.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn titles_stored_before_the_rules_existed_are_still_redacted_on_read() {
+        // A4。脱敏只做在**写入**路径（consumer 入队前），那是「用户配好
+        // [[redact]] 之后」才有的保证。而默认规则文件里一条脱敏规则都没有
+        // （DEFAULT_RULES_TOML 明确不预置），所以正常用户库里躺着的就是
+        // 配规则之前采到的明文标题。用户配好正则后，详情面板仍显示明文
+        // 客户名/订单号 —— 他以为规则生效了。
+        let conn = open_in_memory_shared();
+        let ids = seed(
+            &conn,
+            vec![focus_event("e1", 1, "客户88712 号订单 - Chrome")],
+        );
+        let out = titles_for(&conn, &ids, &redactor(&[r"客户\d+"]));
+        assert!(
+            !out[0].title.contains("88712"),
+            "明文订单号泄漏到界面：{:?}",
+            out[0].title
+        );
+        assert!(out[0].title.contains(PLACEHOLDER));
+        assert!(out[0].redacted, "读路径改写过的标题必须被标记");
+    }
+
+    #[test]
+    fn redacting_on_read_also_merges_variants_that_differed_only_in_the_secret() {
+        // 去重发生在脱敏之后，所以两条只在敏感片段上不同的标题会并成一条，
+        // 计数相加 —— 与「同一条规则让它们变成同一个东西」是一致的。
+        let conn = open_in_memory_shared();
+        let ids = seed(
+            &conn,
+            vec![
+                focus_event("e1", 1, "客户111 - Chrome"),
+                focus_event("e2", 2, "客户222 - Chrome"),
+            ],
+        );
+        let out = titles_for(&conn, &ids, &redactor(&[r"客户\d+"]));
+        assert_eq!(out.len(), 1, "脱敏后应塌成一条：{:?}", out);
+        assert_eq!(out[0].count, 2);
+        assert!(!out[0].title.contains("111"));
+        assert!(!out[0].title.contains("222"));
+    }
+
+    #[test]
+    fn an_empty_redactor_leaves_stored_titles_untouched() {
+        // 没有任何 [[redact]] 时行为必须和以前完全一样（默认规则就是空的）
+        let conn = open_in_memory_shared();
+        let ids = seed(&conn, vec![focus_event("e1", 1, "客户88712 - Chrome")]);
+        let out = titles_for(&conn, &ids, &crate::redact::Redactor::default());
+        assert_eq!(out[0].title, "客户88712 - Chrome");
+        assert!(!out[0].redacted);
     }
 }

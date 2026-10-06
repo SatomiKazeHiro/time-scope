@@ -92,12 +92,15 @@ fn get_segments(
 ///
 /// 标题存在 events 表里，段本身不存——一个段可能对应几十个标题。
 /// 返回值已去重并带 `redacted` 标记，前端据此做视觉区分，不必硬编码占位符。
+///
+/// `titles_for` 返回前会再过一遍脱敏器（A4）：落库时没脱敏的历史明文标题
+/// 也在此刻被遮住，界面上不会露出。
 #[tauri::command]
 fn get_segment_titles(
     state: tauri::State<'_, AppState>,
     event_ids: Vec<String>,
 ) -> Result<Vec<SegmentTitle>, String> {
-    Ok(titles::titles_for(&state.conn, &event_ids))
+    Ok(titles::titles_for(&state.conn, &event_ids, &state.redactor))
 }
 
 /// 汇总页的热力图数据。**无参数** —— 热力图永远渲染全部数据，
@@ -183,7 +186,10 @@ fn get_top_titles(
     let c = state.writer.conn();
     let raw = activity_storage::title_counts_in_range(&c, start_ms, end_ms)
         .map_err(|e| e.to_string())?;
-    Ok(title_norm::merge_top_titles(raw, limit))
+    // A4：`title_counts_in_range` 给的是 events.payload 里的**原文**，
+    // 合并前必须再过一遍脱敏器，否则配了 [[redact]] 的用户在这里
+    // 仍然看得到明文客户名/订单号。
+    Ok(title_norm::merge_top_titles(raw, limit, &state.redactor))
 }
 
 pub fn run() {
