@@ -36,10 +36,13 @@ const MONTH_LABEL_MIN_GAP = 2;
 export const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
 
 /**
- * 左侧要标哪几行：Mon / Wed / Fri（沿用 GitHub 的**标注习惯**），
- * 周一开头时它们是第 0/2/4 行。
+ * 左侧标**全部 7 行**。
+ *
+ * GitHub 只标 Mon / Wed / Fri，那是因为它两侧都挤。我们左边是整条留白，
+ * 7 行各有名字更好读，而且「行 0 = 周一」一眼就确认了，不用靠猜。
+ * 只补一个「日」而中间空着反而更怪。
  */
-export const LABELLED_ROWS = [0, 2, 4] as const;
+export const LABELLED_ROWS = [0, 1, 2, 3, 4, 5, 6] as const;
 
 /** 热力图铺多少周。GitHub 的贡献墙是 53 周。 */
 export const WALL_WEEKS = 53;

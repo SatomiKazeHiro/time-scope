@@ -48,8 +48,8 @@ describe("行顺序：ISO 8601（周一开头）", () => {
     expect(startOfWeek("2026-10-04")).toBe("2026-09-28");  // 周日归上一周
   });
 
-  it("LABELLED_ROWS 标 Mon/Wed/Fri = 第 0/2/4 行", () => {
-    expect([...LABELLED_ROWS]).toEqual([0, 2, 4]);
+  it("LABELLED_ROWS 标全部 7 行（行 0 = 周一，末行 = 周日）", () => {
+    expect([...LABELLED_ROWS]).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
   it("buildWall 的第 0 行是周一、末行是周日", () => {

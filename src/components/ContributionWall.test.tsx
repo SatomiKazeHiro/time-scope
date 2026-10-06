@@ -177,15 +177,15 @@ describe("ContributionWall", () => {
   });
 
 
-  it("左侧有星期标签，和 GitHub 一样只标一/三/五行", () => {
+  it("左侧 7 行全标，从周一到周日", () => {
     const { container } = render(
       <ContributionWall days={DAYS} selection={null}
         onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
     );
     const labels = [...container.querySelectorAll("[data-weekday]")];
-    expect(labels.map((l) => l.textContent)).toEqual(["一", "三", "五"]);
-    // 行 0 = 周一，所以标第 0/2/4 行 = 周一/周三/周五
-    expect(labels.map((l) => l.getAttribute("data-weekday"))).toEqual(["0", "2", "4"]);
+    expect(labels.map((l) => l.textContent)).toEqual(["一","二","三","四","五","六","日"]);
+    expect(labels.map((l) => l.getAttribute("data-weekday")))
+      .toEqual(["0", "1", "2", "3", "4", "5", "6"]);
   });
 
   it("星期标签跟着 --cw 定位，不会跟格子错行", () => {
