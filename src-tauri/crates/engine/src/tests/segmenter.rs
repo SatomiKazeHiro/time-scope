@@ -822,3 +822,109 @@ fn a_timestamp_exactly_on_the_grace_boundary_is_not_absorbed() {
         "恰好等于 grace 窗口宽度不该被吸收成两段"
     );
 }
+
+// --- B12：合并短段必须真的紧邻 ---
+
+fn mk(id: &str, start: i64, end: i64, cat: &str) -> crate::ActivitySegment {
+    crate::ActivitySegment {
+        id: id.into(),
+        start_at: start,
+        end_at: end,
+        category: crate::Category::from_str(cat).expect("合法类别"),
+        application: Some("Code.exe".into()),
+        confidence: 1.0,
+        classifier: "rule".into(),
+        classifier_version: "v".into(),
+        evidence_event_ids: vec![format!("ev-{id}")],
+    }
+}
+
+#[test]
+fn a_short_segment_is_never_merged_across_a_gap() {
+    // B12。原来 `merge_into` 直接取 `min(start)` / `max(end)`，
+    // **不校验两段是否相邻** —— 一旦中间有 4 分钟空档，那段空档就被
+    // 记进了合并后的长段（空档被算成 work）。
+    //
+    // 审计没能构造出经由 `reduce` 的可达路径，所以直接测这个纯函数：
+    // ready = [长 A 0–60s, 短 S 300–310s, 长 B 600–660s]。
+    // S 的"前驱长邻居"是 A，但两者相隔 240 秒 —— 不许并。
+    let (closed, keep, _open) = crate::segmenter::fold_short_segments(
+        vec![
+            mk("a", 0, 60_000, "work"),
+            mk("s", 300_000, 310_000, "work"),
+            mk("b", 600_000, 660_000, "work"),
+        ],
+        None,
+        30_000,   // min_ms：a/b 是长段，s 是短段
+        700_000,  // now
+        180_000,  // give_up_ms
+        true,
+    );
+    let all: Vec<_> = closed.iter().chain(keep.iter()).collect();
+
+    let stretched = all
+        .iter()
+        .find(|s| s.start_at == 0 && s.end_at > 60_000);
+    assert!(
+        stretched.is_none(),
+        "A 被拉长到 {:?} —— 中间 240 秒的空档被记成了 work",
+        stretched.map(|s| (s.start_at, s.end_at))
+    );
+    assert!(
+        all.iter().any(|s| s.id == "s"),
+        "短段不该被吞掉：它要么原样放行、要么退回 pending 等下一轮"
+    );
+}
+
+#[test]
+fn an_adjacent_short_segment_is_still_merged() {
+    // 与上一条互补：守住「紧邻的照并」。把合并一刀禁掉会让短段永远
+    // 单飞，spec §7.3 的"并入相邻长段"就没了。
+    let (closed, keep, _open) = crate::segmenter::fold_short_segments(
+        vec![mk("a", 0, 60_000, "work"), mk("s", 60_000, 61_000, "work")],
+        None,
+        30_000,
+        700_000,
+        180_000,
+        true,
+    );
+    let merged = closed
+        .iter()
+        .chain(keep.iter())
+        .find(|s| s.id == "a")
+        .expect("长段应当还在");
+    assert_eq!(
+        (merged.start_at, merged.end_at),
+        (0, 61_000),
+        "紧邻的短段仍然要并进去"
+    );
+    assert!(
+        !closed.iter().chain(keep.iter()).any(|s| s.id == "s"),
+        "并进去之后不该还留着一个 s"
+    );
+}
+
+#[test]
+fn an_idle_short_segment_is_not_merged_into_work() {
+    // B12 的第二半：idle 是「没在工作」，把它并进 work 段等于把空闲
+    // 时间算成工作时间。idle 段要么自己留下，要么并进另一个 idle 段。
+    let (closed, keep, _open) = crate::segmenter::fold_short_segments(
+        vec![mk("w", 0, 60_000, "work"), mk("i", 60_000, 61_000, "idle")],
+        None,
+        30_000,
+        700_000,
+        180_000,
+        true,
+    );
+    let all: Vec<_> = closed.iter().chain(keep.iter()).collect();
+    let work = all.iter().find(|s| s.id == "w").expect("work 段应当还在");
+    assert_eq!(
+        (work.start_at, work.end_at),
+        (0, 60_000),
+        "idle 短段不该把 work 段撑长"
+    );
+    assert!(
+        all.iter().any(|s| s.id == "i"),
+        "idle 段不该消失"
+    );
+}

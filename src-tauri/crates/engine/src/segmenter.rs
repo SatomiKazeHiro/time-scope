@@ -218,7 +218,7 @@ pub fn reduce(
 ///   且没有别的段还卡在 pending 里——否则会跨过中间那段时间被并错
 /// - 两侧都找不到长邻居时**放回 pending 等下一轮**，而不是硬并（宁可不并，不可并错）
 /// - 等满 `give_up_ms` 仍无邻居，则原样放行
-fn fold_short_segments(
+pub(crate) fn fold_short_segments(
     ready: Vec<ActivitySegment>,
     mut open: Option<OpenSegment>,
     min_ms: i64,
@@ -249,9 +249,16 @@ fn fold_short_segments(
         let next = long_positions.iter().find(|p| **p > i).copied();
 
         if let Some(t) = prev.or(next) {
-            merge_into(&mut out[t], seg);
-            dropped.push(i);
-            continue;
+            // **必须真的紧邻才并**（B12）。`prev`/`next` 是按**下标**找的，
+            // 而 `ready` 的顺序只在 pending 有序时才等于时间序；两者一旦
+            // 不一致，下标邻居可能隔着几分钟空档。`merge_into` 取
+            // min/max 会把那段空档一起吞进来 —— 空档被记成了 work。
+            // 宁可不并（退回 pending 等下一轮），不可凭空造出时间。
+            if mergeable(&out[t], seg) {
+                merge_into(&mut out[t], seg);
+                dropped.push(i);
+                continue;
+            }
         }
 
         // 唯一的候选是正在生长的段，且必须真正紧邻：它要是 ready 的最后一个，
@@ -280,6 +287,18 @@ fn fold_short_segments(
         .map(|(_, s)| s)
         .collect();
     (closed, keep, open)
+}
+
+/// 这两段能不能并进同一段里（B12）。**两个条件都要满足**：
+///
+/// 1. **时间上相邻**（相交或首尾相接）。否则 `merge_into` 的 min/max 会把
+///    中间那段空档一起吞进来，凭空造出一段并不存在的时间。
+/// 2. **idle 与非 idle 不并**。idle 是"没在工作"，并进 work 段等于把空闲
+///    时间算成工作时间。
+fn mergeable(target: &ActivitySegment, extra: &ActivitySegment) -> bool {
+    let adjacent = extra.end_at >= target.start_at && extra.start_at <= target.end_at;
+    let same_idleness = (target.category == Category::Idle) == (extra.category == Category::Idle);
+    adjacent && same_idleness
 }
 
 fn merge_into(target: &mut ActivitySegment, extra: &ActivitySegment) {
