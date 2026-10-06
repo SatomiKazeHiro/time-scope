@@ -5,8 +5,8 @@ pub mod summary;
 pub mod writer;
 
 pub use activity::{
-    get_segment_spans_in_range, SegmentSpan,
-    delete_segments_for_day, get_segments_in_range, insert_segments, StoredSegment,
+    delete_segments_for_day, get_segment_spans_in_range, get_segments_in_range, insert_segments,
+    replace_day_segments, SegmentSpan, StoredSegment,
 };
 pub use query::{get_events_in_range, insert_events, now_ms, StoredEvent};
 pub use schema::{apply_pragmas, current_version, migrate, SCHEMA_VERSION};

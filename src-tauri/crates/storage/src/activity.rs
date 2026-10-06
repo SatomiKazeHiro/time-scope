@@ -29,33 +29,7 @@ pub fn insert_segments(
         return Ok(());
     }
     let tx = conn.unchecked_transaction()?;
-    {
-        let mut ins = tx.prepare(
-            "INSERT OR REPLACE INTO activities
-                (id, start_at, end_at, category, application, confidence, classifier, version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        )?;
-        let mut del = tx.prepare("DELETE FROM activity_evidence WHERE activity_id = ?1")?;
-        let mut ev = tx.prepare(
-            "INSERT OR IGNORE INTO activity_evidence (activity_id, event_id) VALUES (?1, ?2)",
-        )?;
-        for (s, evidence) in segments {
-            ins.execute(rusqlite::params![
-                &s.id,
-                s.start_at,
-                s.end_at,
-                &s.category,
-                &s.application,
-                s.confidence,
-                &s.classifier,
-                &s.classifier_version,
-            ])?;
-            del.execute(rusqlite::params![&s.id])?;
-            for e in evidence {
-                ev.execute(rusqlite::params![&s.id, e])?;
-            }
-        }
-    }
+    write_all(&tx, segments)?;
     tx.commit()
 }
 
@@ -70,20 +44,74 @@ pub fn delete_segments_for_day(
     end_ms: i64,
 ) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
-    {
-        // 证据表的外键指向 activities，SQLite 不会级联删除引用方，所以手动清。
-        let mut del_ev = tx.prepare(
-            "DELETE FROM activity_evidence
-             WHERE activity_id IN (
-                 SELECT id FROM activities WHERE start_at < ?2 AND end_at > ?1
-             )",
-        )?;
-        del_ev.execute(rusqlite::params![start_ms, end_ms])?;
-        let mut del =
-            tx.prepare("DELETE FROM activities WHERE start_at < ?2 AND end_at > ?1")?;
-        del.execute(rusqlite::params![start_ms, end_ms])?;
-    }
+    delete_intersecting(&tx, start_ms, end_ms)?;
     tx.commit()
+}
+
+/// **单事务**「删掉与 `[start_ms, end_ms)` 相交的段 + 写入新段」。
+///
+/// 拆成"删一个事务、写另一个事务"会有一个很难看的中间态：删成功、写失败
+/// （`SQLITE_FULL`、磁盘满、进程被杀）→ 那天被清空，而且调用方通常已经把
+/// 这一天标记成"处理过了"，于是**本进程内再也不会重放**，用户看到空白直到
+/// 重启（审计 §3 B5）。合成一个事务后，要么全成、要么全不成。
+pub fn replace_day_segments(
+    conn: &Connection,
+    start_ms: i64,
+    end_ms: i64,
+    segments: &[(StoredSegment, Vec<String>)],
+) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    delete_intersecting(&tx, start_ms, end_ms)?;
+    write_all(&tx, segments)?;
+    tx.commit()
+}
+
+/// 在已有事务里删掉相交的段及其证据。
+fn delete_intersecting(tx: &rusqlite::Transaction<'_>, start_ms: i64, end_ms: i64) -> rusqlite::Result<()> {
+    // 证据表的外键指向 activities，SQLite 不会级联删除引用方，所以手动清。
+    tx.prepare(
+        "DELETE FROM activity_evidence
+         WHERE activity_id IN (
+             SELECT id FROM activities WHERE start_at < ?2 AND end_at > ?1
+         )",
+    )?
+    .execute(rusqlite::params![start_ms, end_ms])?;
+    tx.prepare("DELETE FROM activities WHERE start_at < ?2 AND end_at > ?1")?
+        .execute(rusqlite::params![start_ms, end_ms])?;
+    Ok(())
+}
+
+/// 在已有事务里写入 segments 及其 evidence。
+fn write_all(
+    tx: &rusqlite::Transaction<'_>,
+    segments: &[(StoredSegment, Vec<String>)],
+) -> rusqlite::Result<()> {
+    let mut ins = tx.prepare(
+        "INSERT OR REPLACE INTO activities
+            (id, start_at, end_at, category, application, confidence, classifier, version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )?;
+    let mut del = tx.prepare("DELETE FROM activity_evidence WHERE activity_id = ?1")?;
+    let mut ev = tx.prepare(
+        "INSERT OR IGNORE INTO activity_evidence (activity_id, event_id) VALUES (?1, ?2)",
+    )?;
+    for (s, evidence) in segments {
+        ins.execute(rusqlite::params![
+            &s.id,
+            s.start_at,
+            s.end_at,
+            &s.category,
+            &s.application,
+            s.confidence,
+            &s.classifier,
+            &s.classifier_version,
+        ])?;
+        del.execute(rusqlite::params![&s.id])?;
+        for e in evidence {
+            ev.execute(rusqlite::params![&s.id, e])?;
+        }
+    }
+    Ok(())
 }
 
 /// 「与 `[?1, ?2)` 相交、并把起止裁剪到该区间」的投影与判定。

@@ -15,7 +15,17 @@ use time::UtcOffset;
 pub struct ReplayedDays(Mutex<HashSet<String>>);
 
 impl ReplayedDays {
-    /// 若该天已重放过则返回 false（没干活）。
+    /// 该天是否已经重放**成功**过。
+    pub fn already_played(&self, date: &str) -> bool {
+        let set = match self.0.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        set.contains(date)
+    }
+
+    /// 标记该天已重放。**只在重放成功后调用**（B5）——
+    /// 提前 claim 会让一次失败的重放再也重试不了。
     pub fn claim(&self, date: &str) -> bool {
         let mut set = match self.0.lock() {
             Ok(g) => g,
@@ -55,7 +65,9 @@ fn replay_day(
     offset: UtcOffset,
     redactor: &Redactor,
 ) -> Option<crate::engine_runtime::EngineRuntime> {
-    if !replayed.claim(date) {
+    // 先看一眼有没有重放过，但**先不 claim**：claim 一旦消耗掉就再也回不来，
+    // 而下面任何一步失败都必须能重试（B5）。真正的 claim 在写库成功之后。
+    if replayed.already_played(date) {
         return None;
     }
     let Ok((start_ms, end_ms)) = day_range_ms(date, offset) else {
@@ -89,32 +101,40 @@ fn replay_day(
             .collect()
     };
 
-    if events.is_empty() {
+    // 「删当天 + 写当天」必须在**同一个事务**里（B5）。拆开的话会出现
+    // 「删成功、写失败」的中间态：那天被清空，而 claim 已经消耗掉了，
+    // 本进程内再也不会重放 —— 用户看到空白直到重启。
+    let stored_segments = if events.is_empty() {
         // 那天本来就没有事件，但可能残留了上一版的段，清一下
-        if let Ok(c) = conn.lock() {
-            let _ = activity_storage::delete_segments_for_day(&c, start_ms, end_ms);
+        Vec::new()
+    } else {
+        let (rt, closed) =
+            crate::engine_runtime::EngineRuntime::bootstrap(&events, rules.clone(), *config);
+        let Ok(c) = conn.lock() else { return None };
+        if let Err(e) = activity_storage::replace_day_segments(&c, start_ms, end_ms, &to_stored(&closed))
+        {
+            eprintln!("[time-scope] 重放 {date} 落库失败（未改动旧数据）: {e}");
+            return None;
         }
-        return Some(crate::engine_runtime::EngineRuntime::new(rules.clone(), *config));
-    }
+        if !closed.is_empty() {
+            eprintln!("[time-scope] 已重放 {date}：{} 段", closed.len());
+        }
+        replayed.claim(date);
+        return Some(rt);
+    };
 
-    // 先清后重放（spec §7.4）。清失败就别重放，否则会累积重复段。
+    // 空事件那条路：只删不写，同样是单事务
     {
         let Ok(c) = conn.lock() else { return None };
-        if activity_storage::delete_segments_for_day(&c, start_ms, end_ms).is_err() {
+        if let Err(e) =
+            activity_storage::replace_day_segments(&c, start_ms, end_ms, &stored_segments)
+        {
+            eprintln!("[time-scope] 清理 {date} 的残留段失败: {e}");
             return None;
         }
     }
-
-    let (rt, closed) = crate::engine_runtime::EngineRuntime::bootstrap(&events, rules.clone(), *config);
-    if !closed.is_empty() {
-        let Ok(c) = conn.lock() else { return None };
-        if let Err(e) = activity_storage::insert_segments(&c, &to_stored(&closed)) {
-            eprintln!("[time-scope] 重放 {date} 落库失败: {e}");
-            return None;
-        }
-        eprintln!("[time-scope] 已重放 {date}：{} 段", closed.len());
-    }
-    Some(rt)
+    replayed.claim(date);
+    Some(crate::engine_runtime::EngineRuntime::new(rules.clone(), *config))
 }
 
 /// 启动时调用：准备规则集、重放当天，并返回**可继续驱动的运行时**。
@@ -158,7 +178,7 @@ mod tests {
     use activity_storage::{get_segments_in_range, insert_events, open_in_memory_shared};
 
 
-    fn focus(ts: i64, app: &str) -> Event {
+    pub(super) fn focus(ts: i64, app: &str) -> Event {
         Event::new(
             EventType::WindowFocus(activity_core::WindowFocusPayload {
                 process_name: app.into(),
@@ -169,22 +189,22 @@ mod tests {
         )
     }
 
-    fn rules() -> RuleSet {
+    pub(super) fn rules() -> RuleSet {
         RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap()
     }
 
-    fn cfg() -> EngineConfig {
+    pub(super) fn cfg() -> EngineConfig {
         EngineConfig::default()
             .with_min_segment_duration_s(0)
             .with_grace_period_s(0)
     }
 
     /// day_index 决定落在哪一天（相对某个基准日）
-    fn day_ts(day_index: i64, hour: i64) -> i64 {
+    pub(super) fn day_ts(day_index: i64, hour: i64) -> i64 {
         1_700_000_000_000 / 86_400_000 * 86_400_000 + day_index * 86_400_000 + hour * 3_600_000
     }
 
-    fn day_str(day_index: i64) -> String {
+    pub(super) fn day_str(day_index: i64) -> String {
         let d = time::OffsetDateTime::from_unix_timestamp(day_ts(day_index, 12) / 1000)
             .unwrap()
             .date();
@@ -378,5 +398,135 @@ mod replay_redaction_tests {
             "events 表的原始 payload 不该被改写：{}",
             rows[0].payload
         );
+    }
+}
+
+#[cfg(test)]
+mod atomicity_tests {
+    use super::tests::{cfg, day_str, day_ts, focus, rules};
+    use activity_storage::{get_segments_in_range, insert_events, open_in_memory_shared};
+    use super::*;
+
+    /// 让 `activities` 的 INSERT 必定失败。用来模拟「删成功、写失败」。
+    fn block_inserts(conn: &SharedConn) {
+        conn.lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER block_insert BEFORE INSERT ON activities
+                 BEGIN SELECT RAISE(ABORT, 'simulated SQLITE_FULL'); END;",
+            )
+            .unwrap();
+    }
+
+    fn unblock_inserts(conn: &SharedConn) {
+        conn.lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER block_insert")
+            .unwrap();
+    }
+
+    fn seed_a_previous_version_of_the_day(conn: &SharedConn) {
+        activity_storage::insert_segments(
+            &conn.lock().unwrap(),
+            &[(
+                activity_storage::StoredSegment {
+                    id: "stale".into(),
+                    start_at: day_ts(-1, 1),
+                    end_at: day_ts(-1, 2),
+                    category: "study".into(),
+                    application: Some("Old.exe".into()),
+                    confidence: 1.0,
+                    classifier: "rule".into(),
+                    classifier_version: "old".into(),
+                    evidence_event_ids: vec![],
+                },
+                vec![],
+            )],
+        )
+        .unwrap();
+    }
+
+    fn try_replay(conn: &SharedConn, replayed: &ReplayedDays, date: &str) -> bool {
+        replay_day_once(
+            conn,
+            replayed,
+            &rules(),
+            &cfg(),
+            date,
+            UtcOffset::UTC,
+            &Redactor::default(),
+        )
+    }
+
+    fn segments_of_that_day(conn: &SharedConn) -> Vec<activity_storage::StoredSegment> {
+        get_segments_in_range(&conn.lock().unwrap(), day_ts(-1, 0), day_ts(0, 0)).unwrap()
+    }
+
+    /// 两个不同应用的焦点事件 → 引擎会**关闭**一段。
+    ///
+    /// 关键：只有一个事件时引擎产出的 `closed` 是空的，`replace_day_segments`
+    /// 只删不写，压根不会碰到那个 INSERT 触发器，测不出任何东西。
+    fn seed_two_switches(conn: &SharedConn) {
+        insert_events(
+            &conn.lock().unwrap(),
+            &[
+                focus(day_ts(-1, 9), "Code.exe"),
+                focus(day_ts(-1, 15), "chrome.exe"),
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_failed_write_does_not_destroy_the_previous_segments() {
+        // B5。旧流程是「先 `claim` → 删（一个事务）→ 写（另一个事务）」。
+        // 删成功、写失败（SQLITE_FULL / 磁盘满）→ 那天被清空，而
+        // `claim` 已经消耗掉了 → 本进程内**永远不会重放**，用户看到空白直到重启。
+        let conn = open_in_memory_shared();
+        let replayed = ReplayedDays::default();
+        seed_two_switches(&conn);
+        seed_a_previous_version_of_the_day(&conn);
+        block_inserts(&conn);
+
+        assert!(!try_replay(&conn, &replayed, &day_str(-1)), "写入被挡住，重放应当失败");
+
+        let left = segments_of_that_day(&conn);
+        assert!(
+            left.iter().any(|s| s.id == "stale"),
+            "写失败不该把旧段删掉——用户至少还有东西看。实际剩 {:?}",
+            left.iter().map(|s| &s.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_failed_replay_can_be_retried_afterwards() {
+        // B5 的另一半：`claim` 必须移到**成功之后**。
+        // 否则这次失败把那天标记成"重放过了"，再也重试不了。
+        let conn = open_in_memory_shared();
+        let replayed = ReplayedDays::default();
+        seed_two_switches(&conn);
+        block_inserts(&conn);
+        assert!(!try_replay(&conn, &replayed, &day_str(-1)), "第一次应当失败");
+
+        unblock_inserts(&conn);
+        assert!(
+            try_replay(&conn, &replayed, &day_str(-1)),
+            "写失败不该消耗掉这一天的重放资格"
+        );
+        assert!(
+            !segments_of_that_day(&conn).is_empty(),
+            "重试成功后当天应当有段"
+        );
+    }
+
+    #[test]
+    fn a_successful_replay_still_claims_the_day() {
+        // 守住另一半：把 `claim` 挪到成功之后，不等于「不 claim 了」。
+        // 同一天仍然只重放一次。
+        let conn = open_in_memory_shared();
+        let replayed = ReplayedDays::default();
+        insert_events(&conn.lock().unwrap(), &[focus(day_ts(-1, 9), "Code.exe")]).unwrap();
+        assert!(try_replay(&conn, &replayed, &day_str(-1)));
+        assert!(!try_replay(&conn, &replayed, &day_str(-1)), "同一天不该重放第二次");
     }
 }
