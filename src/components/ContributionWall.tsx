@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
-  buildWall, selectionFrame, uninstalledColor, uninstalledStroke,
+  buildWall, uninstalledColor, uninstalledStroke,
   GAP, scaleColor, scaleStroke, LABELLED_ROWS, WEEKDAY_LABELS,
   type DateRange,
 } from "../lib/summary";
@@ -14,6 +14,27 @@ import type { DayCell } from "../types";
  * 解析的是**块向**尺寸（高度），而高度是 auto，于是循环依赖、行高塌成 0。
  * cqw 解析的是**行内**尺寸（宽度），宽度是定值，所以成立。
  */
+/**
+ * 选中区域**不画跨格矩形**，改为给落在范围内的格子加一个 ::after。
+ *
+ * 跨格矩形要算「第 N 列第 M 行」再绝对定位，--cw 稍有偏差就整块错位
+ * （已经错过多轮）。改成按**格子自己的日期**判断归属：相邻的高亮格
+ * 各自向外扩半格间隙（3px/2 = 1.5px），连起来就是一整片区域 ——
+ * 没有跨格算术，也就不存在跨格算错。
+ */
+const CELL_CSS = `
+.cell { position: relative; }
+.cell[data-in-range]::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  z-index: 1;
+  pointer-events: none;
+}
+`;
+
 function gridVars(weeks: number): React.CSSProperties {
   return {
     "--cw": `calc((100cqw - (${weeks} - 1) * var(--gap)) / ${weeks})`,
@@ -47,9 +68,12 @@ export default function ContributionWall({
   days, trackedFrom, selection, onSelectDay, onSelectWeek, onSelectMonth,
 }: ContributionWallProps) {
   const layout = useMemo(() => buildWall(days, trackedFrom), [days, trackedFrom]);
-  const frame = useMemo(
-    () => (selection ? selectionFrame(layout, selection.from, selection.to) : null),
-    [layout, selection],
+
+  /** 某个格子是否落在当前选中范围内 —— 按**格子自己的日期**判断。 */
+  const inSelection = useCallback(
+    (date: string) =>
+      selection !== null && date >= selection.from && date <= selection.to,
+    [selection],
   );
 
   if (layout.cells.length === 0) {
@@ -75,9 +99,13 @@ export default function ContributionWall({
       /* relative 不能省：container-type 在 Chrome 里**不会**给绝对定位的
          后代当包含块，星期标签会跑到页面根上去（压住页头）。 */
       className="relative w-full pl-4"
-      style={{ containerType: "inline-size" }}
+      /* --cw 必须定义在容器上：星期标签列是内层 div 的兄弟节点，
+         定义在内层它拿不到 -> calc() 整条失效 -> top 退回 auto ->
+         三个标签叠在一处，只剩最后那个露出来。 */
+      style={{ containerType: "inline-size", ...gridVars(layout.weeks) }}
     >
-      <div className="w-full" style={gridVars(layout.weeks)}>
+      <style>{CELL_CSS}</style>
+      <div className="w-full">
       <div className="relative mb-1 h-3 w-full">
         {layout.monthLabels.map((m) => (
           <button
@@ -122,13 +150,14 @@ export default function ContributionWall({
                 role="gridcell"
                 data-date={c.date}
                 data-testid={`cell-${c.date}`}
+                data-in-range={inSelection(c.date) ? "" : undefined}
                 title={
                   c.tracked
                     ? `${c.date} · ${Math.round((c.totalMs / 3_600_000) * 10) / 10}h`
                     : `${c.date} · 还没装 Time Scope`
                 }
                 onClick={() => onSelectDay(c.date)}
-                className="cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
+                className="cell cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
                 style={{
                   background: c.tracked ? scaleColor(c.step) : uninstalledColor(),
                   boxShadow: c.tracked ? scaleStroke(c.step) : uninstalledStroke(),
@@ -140,20 +169,6 @@ export default function ContributionWall({
           )}
         </div>
 
-        {/* 选中框：一整块。跨 cols 列 × rows 行，位置全部由 --cw 算 */}
-        {frame && (
-          <span
-            data-frame=""
-            aria-hidden
-            className="pointer-events-none absolute rounded-[3px] border-[1.5px] border-ink"
-            style={{
-              left: `calc(var(--cw) * ${frame.col} + var(--gap) * ${frame.col})`,
-              top: `calc(var(--cw) * ${frame.row} + var(--gap) * ${frame.row})`,
-              width: `calc(var(--cw) * ${frame.cols} + var(--gap) * ${frame.cols - 1})`,
-              height: `calc(var(--cw) * ${frame.rows} + var(--gap) * ${frame.rows - 1})`,
-            }}
-          />
-        )}
       </div>
 
       {/* 周条：格子下方那条空隙。点了就是选一周。 */}

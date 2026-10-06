@@ -119,7 +119,8 @@ describe("SummaryPage", () => {
     await waitFor(() => expect(callsTo("get_summary")).toBe(2));
 
     expect(callsTo("get_daily_calendar")).toBe(before);
-    expect(container.querySelector("[data-frame]")).toBeTruthy();
+    // 选中区域由格子的 data-in-range 标出（不再有跨格矩形）
+    expect(container.querySelectorAll("[data-in-range]").length).toBeGreaterThan(0);
   });
 
   it("点格子后 get_summary 收到那一天", async () => {

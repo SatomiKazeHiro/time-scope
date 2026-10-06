@@ -124,7 +124,9 @@ describe("summary preview", () => {
     // 选中一格，让框进画面
     const cell = container.querySelector("[data-date='2026-09-15']");
     if (cell) fireEvent.click(cell);
-    await waitFor(() => expect(container.querySelector("[data-frame]")).toBeTruthy());
+    // 选中区域由格子的 data-in-range 标出，不再有跨格矩形
+    await waitFor(() =>
+      expect(container.querySelectorAll("[data-in-range]").length).toBeGreaterThan(0));
 
     for (const theme of ["dark", "light"]) {
       const html = `<!doctype html>

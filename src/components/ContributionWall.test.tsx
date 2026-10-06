@@ -131,58 +131,9 @@ describe("ContributionWall", () => {
     expect(onSelectMonth).toHaveBeenCalledWith("2026-10-01");
   });
 
-  it("选中单日时框是 1 格", () => {
-    const { container } = render(
-      <ContributionWall
-        days={DAYS}
-        selection={{ kind: "day", from: "2026-10-02", to: "2026-10-02", label: "" }}
-        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP}
-      />,
-    );
-    const f = container.querySelector("[data-frame]") as HTMLElement;
-    expect(f.style.width).toContain("var(--cw)");
-    expect(f.style.height).toContain("var(--cw)");
-    // 1 格宽高：宽高表达式里跨的格数都是 1
-    expect(f.style.width).toContain("* 1 +");
-    expect(f.style.height).toContain("* 1 +");
-  });
 
-  it("选中一周时框是 1 列 × 7 格", () => {
-    const { container } = render(
-      <ContributionWall
-        days={DAYS}
-        selection={{ kind: "week", from: "2026-09-28", to: "2026-10-04", label: "" }}
-        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP}
-      />,
-    );
-    const f = container.querySelector("[data-frame]") as HTMLElement;
-    // 1 列 × 7 行；位置由 --cw 算，跟着列宽一起缩放
-    expect(f.style.width).toContain("var(--cw)");
-    expect(f.style.height).toContain("* 7 +");
-  });
 
-  it("没有选中时不画框", () => {
-    const { container } = render(
-      <ContributionWall days={DAYS} selection={null}
-        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
-    );
-    expect(container.querySelector("[data-frame]")).toBeNull();
-  });
 
-  it("框外不压暗（只描框；压暗会跌破 MASTER 的 3:1 对比度红线）", () => {
-    const { container } = render(
-      <ContributionWall
-        days={DAYS}
-        selection={{ kind: "day", from: "2026-10-02", to: "2026-10-02", label: "" }}
-        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP}
-      />,
-    );
-    expect(container.innerHTML).not.toContain("opacity:");
-    // 每个格子都该是满色，没有任何格子被调暗
-    for (const el of container.querySelectorAll("[data-date]")) {
-      expect((el as HTMLElement).style.opacity).toBe("");
-    }
-  });
 
   it("周条有内描边，否则浅色主题下 53 根细条看不见", () => {
     // 和 0 档格子同一个毛病：--color-surface-2 在 #ffffff 面板上等于透明。
@@ -225,19 +176,6 @@ describe("ContributionWall", () => {
     expect(root.className).toContain("w-full");
   });
 
-  it("选中框用 CSS 变量算位置，跟着列宽一起缩放", () => {
-    const { container } = render(
-      <ContributionWall
-        days={DAYS}
-        selection={{ kind: "week", from: "2026-09-27", to: "2026-10-03", label: "" }}
-        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP}
-      />,
-    );
-    const f = container.querySelector("[data-frame]") as HTMLElement;
-    // 位置由 --cw（列宽）算出，不是写死的 col*PITCH
-    expect(f.style.left).toContain("var(--cw)");
-    expect(f.style.width).toContain("var(--cw)");
-  });
 
   it("左侧有星期标签，和 GitHub 一样只标一/三/五行", () => {
     const { container } = render(
@@ -351,4 +289,67 @@ describe("ContributionWall", () => {
     expect(weeks).toBe(3);
     expect(container.querySelectorAll("[data-testid='week-strip-btn']")).toHaveLength(weeks);
   });
-});
+})
+
+  it("选中范围靠格子自己的日期判定，不用跨格矩形", () => {
+    const { container } = render(
+      <ContributionWall
+        days={DAYS}
+        selection={{ kind: "week", from: "2026-09-28", to: "2026-10-04", label: "" }}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    // 跨格矩形已彻底删除
+    expect(container.querySelector("[data-frame]")).toBeNull();
+    // 范围内（以及范围内有数据的那几天）的格子被标记
+    const marked = [...container.querySelectorAll("[data-in-range]")];
+    expect(marked.length).toBeGreaterThan(0);
+    for (const m of marked) {
+      const d = m.getAttribute("data-date")!;
+      expect(d >= "2026-09-28" && d <= "2026-10-04").toBe(true);
+    }
+  });
+
+  it("没有选中时没有任何格子被标记", () => {
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    expect(container.querySelectorAll("[data-in-range]")).toHaveLength(0);
+  });
+
+  it("选一个月时，跨月的边界天不误标", () => {
+    const { container } = render(
+      <ContributionWall
+        days={DAYS}
+        selection={{ kind: "month", from: "2026-10-01", to: "2026-10-31", label: "" }}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    for (const m of container.querySelectorAll("[data-in-range]")) {
+      expect(m.getAttribute("data-date")!.startsWith("2026-10-")).toBe(true);
+    }
+  });
+
+  it("高亮靠 ::after 向外扩半格间隙，相邻格连成一片（没有跨格算术）", () => {
+    const { container } = render(
+      <ContributionWall days={DAYS} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const html = container.innerHTML;
+    // 样式里要有 inset 负值（半格间隙 = 3px/2 = 1.5px）
+    expect(html).toContain("inset: -1.5px");
+    // 选中的格子要有 ::after 描边
+    expect(html).toContain(".cell[data-in-range]::after");
+  });
+
+  it("框外不压暗（只描边；压暗会跌破 MASTER 的 3:1 对比度红线）", () => {
+    const { container } = render(
+      <ContributionWall
+        days={DAYS}
+        selection={{ kind: "day", from: "2026-10-02", to: "2026-10-02", label: "" }}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    expect(container.innerHTML).not.toContain("opacity:");
+    for (const el of container.querySelectorAll("[data-date]")) {
+      expect((el as HTMLElement).style.opacity).toBe("");
+    }
+  });
