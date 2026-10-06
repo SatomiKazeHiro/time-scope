@@ -246,3 +246,81 @@ describe("App auto-refresh", () => {
     expect(invoke.mock.calls.length).toBe(before);
   });
 });
+
+describe("切粒度时的选中态", () => {
+  /** 被选中（带外环）的桶下标。选中态画在 rect 的 stroke 上。 */
+  function ringedBuckets(): string[] {
+    return Array.from(
+      screen
+        .getByRole("img", { name: "24h 活动时间线" })
+        .querySelectorAll<SVGRectElement>("[data-bucket]"),
+    )
+      .filter((r) => (r.getAttribute("style") ?? "").includes("var(--color-ink)"))
+      .map((r) => r.getAttribute("data-bucket")!);
+  }
+
+  function bucket(index: string): SVGRectElement {
+    const el = screen
+      .getByRole("img", { name: "24h 活动时间线" })
+      .querySelector<SVGRectElement>(`[data-bucket="${index}"]`);
+    if (!el) throw new Error(`没有下标为 ${index} 的桶`);
+    return el;
+  }
+
+  it("切粒度后不复位桶选中 —— 那是一个指向别的时刻的幽灵下标", async () => {
+    // B7。`selectedBucket` 存的是**桶下标**，而下标是粒度的函数：
+    // 30 分的第 18 格是 09:00–09:30，60 分的第 18 格却是 18:00–19:00。
+    // 切粒度不复位它，选中框就**静默地挪到了另一个时间段** ——
+    // 面板上的段详情说的是 9 点那段，环却画在 18 点上。
+    //
+    // 用一整天都有的活动，保证任何粒度下每一格都有数据，
+    // 这样"下标还在但含义变了"才是唯一可能的解释。
+    invoke.mockResolvedValue([seg("s1", 0, 23)]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "专注度" }));
+    await waitFor(() => expect(screen.getByText(/30 分一格/)).toBeTruthy());
+    fireEvent.click(bucket("18"));
+    await waitFor(() => expect(ringedBuckets()).toEqual(["18"]));
+
+    fireEvent.click(screen.getByText("60分"));
+    await waitFor(() => expect(screen.getByText(/60 分一格/)).toBeTruthy());
+    expect(ringedBuckets()).toEqual([]);
+  });
+
+  it("切粒度后点同一格是选中，而不是被当成「再次点击取消」", async () => {
+    // 幽灵下标最直接的下场：`cur === bucketIndex` 判等成立 →
+    // 切粒度后再点那一格反而把它取消了，点下去毫无反应。
+    invoke.mockResolvedValue([seg("s1", 0, 23)]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "专注度" }));
+    await waitFor(() => expect(screen.getByText(/30 分一格/)).toBeTruthy());
+    fireEvent.click(bucket("18"));
+    await waitFor(() => expect(ringedBuckets()).toEqual(["18"]));
+
+    fireEvent.click(screen.getByText("60分"));
+    await waitFor(() => expect(screen.getByText(/60 分一格/)).toBeTruthy());
+    fireEvent.click(bucket("18"));
+    await waitFor(() => expect(ringedBuckets()).toEqual(["18"]));
+  });
+
+  it("切粒度不复位选中段本身 —— 段是引擎判定的边界，与粒度无关", async () => {
+    // 守住另一半：清的是**桶**选中，不是**段**选中。
+    // 段详情面板不该因为用户调了一下粒度就自己清空。
+    invoke.mockResolvedValue([seg("s1", 9, 12)]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "专注度" }));
+    await waitFor(() => expect(screen.getByText(/30 分一格/)).toBeTruthy());
+    fireEvent.click(bucket("18"));
+    await waitFor(() => expect(screen.getByText("已选中 · 再次点击取消")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("120分"));
+    await waitFor(() => expect(screen.getByText(/120 分一格/)).toBeTruthy());
+    expect(screen.getByText("已选中 · 再次点击取消")).toBeTruthy();
+  });
+});

@@ -32,6 +32,17 @@ export default function App() {
     setMetric(m);
     setSelectedBucket(null);
   };
+  // 切粒度同理：`selectedBucket` 存的是**桶下标**，而下标是粒度的函数
+  // （30 分的第 18 格是 09:00–09:30，60 分的第 18 格是 18:00–19:00）。
+  // 不复位的话选中框会静默挪到另一个时间段；再点那一格还会被当成
+  // 「再次点击取消」，点下去毫无反应（B7）。
+  //
+  // 只清桶选中，**不清 `selected`**：段是引擎判定的活动边界，与粒度无关，
+  // 段详情面板不该因为用户调了一下粒度就自己清空。
+  const switchGranularity = (g: number) => {
+    setGranularity(g);
+    setSelectedBucket(null);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +141,7 @@ export default function App() {
                   ml-auto 会把它甩到右边，跟上面那行左对齐的控件看着像两组东西。 */}
               <div className="flex w-full shrink-0 items-center gap-2 lg:ml-auto lg:w-auto">
                 <MetricPicker value={metric} onChange={switchMetric} />
-                <GranularityPicker value={granularity} onChange={setGranularity} />
+                <GranularityPicker value={granularity} onChange={switchGranularity} />
               </div>
             </div>
 
