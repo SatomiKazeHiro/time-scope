@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import SegmentTimeline, { CATEGORY_COLOR, colorForCategory } from "./SegmentTimeline";
 import type { Category, Segment } from "../types";
 
@@ -373,5 +373,85 @@ describe("SegmentTimeline 指标模式", () => {
       .querySelector('[data-bucket="2"]')!
       .dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(picked).toEqual([]);
+  });
+});
+
+// --- B9：hoverIndex 在「段下标」与「桶下标」两套语义间复用 ---
+
+describe("SegmentTimeline 悬停态跨模式", () => {
+  /** 碎片化的一天：125 个短段，下标比 30 分粒度的 48 个桶大得多。 */
+  function fragmentedDay(n: number): Segment[] {
+    const step = (DAY - 1) / n;
+    return Array.from({ length: n }, (_, i) =>
+      seg(`s${i}`, Math.floor(i * step), Math.floor((i + 0.6) * step), "work"),
+    );
+  }
+
+  it("切到指标模式后不再拿段下标当桶下标读数", () => {
+    // B9。`hoverIndex` 一个 state 承载两套语义：
+    //   类别模式 `:325` 写的是**段**下标（125 段 → 0..124）
+    //   指标模式 `:280` 写的是**桶**下标（30 分粒度 → 0..47）
+    // 鼠标悬停后用键盘切模式，onMouseLeave 不会触发 → 悬停态原样留着。
+    // 于是指标模式下拿"第 120 段"当"第 120 桶"去读，读出的是
+    // **另一个时间范围**的专注度 —— 一个凭空捏造的数值。
+    const segments = fragmentedDay(125);
+    const { container, rerender } = render(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={30 * 60_000}
+        metric="category"
+        onSelect={() => {}}
+      />,
+    );
+
+    // 悬停到最后一个段（段下标 124）
+    const last = rects(container).at(-1)!;
+    fireEvent.mouseMove(last, { clientX: 900, clientY: 10 });
+    expect(screen.getByRole("tooltip")).toBeTruthy();
+
+    // 鼠标没有移开（真实场景里是键盘切模式），切到指标模式
+    rerender(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={30 * 60_000}
+        metric="focus"
+        onSelect={() => {}}
+      />,
+    );
+
+    // 模式一换，旧的悬停下标就不再有意义了 —— 提示框应当消失
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("切粒度后同理：桶数变了，旧下标指向的是别的时段", () => {
+    // 同源的第二个入口：桶下标也是粒度的函数。悬停时切粒度而不移开鼠标，
+    // 提示框会继续报旧下标的读数 —— 那已经是另一段时间了。
+    const segments = fragmentedDay(125);
+    const { container, rerender } = render(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={10 * 60_000}
+        metric="focus"
+        onSelect={() => {}}
+      />,
+    );
+    const bucket = container.querySelector('[data-bucket="120"]');
+    expect(bucket).not.toBeNull();
+    fireEvent.mouseMove(bucket!, { clientX: 900, clientY: 10 });
+    expect(screen.getByRole("tooltip")).toBeTruthy();
+
+    rerender(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={120 * 60_000}
+        metric="focus"
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("tooltip")).toBeNull();
   });
 });

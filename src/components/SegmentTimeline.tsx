@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatDuration } from "../lib/bucket";
 import {
   bucketMetrics,
@@ -134,7 +134,18 @@ export default function SegmentTimeline({
   metric = "category",
 }: Props) {
   const [hoverX, setHoverX] = useState<number | null>(null);
+  // `hoverIndex` 的含义**跟着模式变**：类别模式下是**段**下标，指标模式下
+  // 是**桶**下标。而鼠标悬停着不动时，键盘切模式/粒度不会触发 onMouseLeave，
+  // 旧下标就原样留着 —— 于是指标模式下拿「第 120 段」当「第 120 桶」去读，
+  // 报出来的是另一个时间范围的数值（B9）。语义一变就清掉。
+  //
+  // **故意不把 `segments` 放进依赖**：App 每 5 秒轮询一次，每次都是**新的
+  // 数组**，挂上它会让悬停提示每 5 秒消失一次 —— 那比它要修的问题更招摇。
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  useEffect(() => {
+    setHoverX(null);
+    setHoverIndex(null);
+  }, [metric, intervalMs]);
 
   const buckets = useMemo(
     () => (metric === "category" ? [] : bucketMetrics(segments, dayStartMs, intervalMs)),
