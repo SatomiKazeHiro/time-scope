@@ -18,6 +18,7 @@
 //! 强杀进程。`tests/ipc_threading.rs` 守着这条不变量。
 
 mod autostart;
+mod db_open;
 mod close_behavior;
 mod tray;
 mod config;
@@ -34,7 +35,7 @@ mod titles;
 mod title_norm;
 
 use activity_collector::signals::RawSignal;
-use activity_storage::{open_file_shared, BatchWriter, StoredSegment};
+use activity_storage::{BatchWriter, StoredSegment};
 use date_range::{day_range_ms, local_offset};
 use day_replay::{replay_day_once, ReplayedDays};
 use engine_runtime::EngineRuntime;
@@ -221,8 +222,18 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            let conn = open_file_shared(&rules::app_dir().join("time-scope.db"))
-                .expect("open db");
+            // B4：打不开数据库就弹一句带路径/原因/下一步的说明，然后让
+            // setup 返回 Err（Tauri 干净退出），而不是 `.expect("open db")`
+            // panic —— 那句话没有路径也没有原因，用户无从下手。
+            let db_path = rules::app_dir().join("time-scope.db");
+            let conn = match db_open::open_db(&db_path) {
+                Ok(conn) => conn,
+                Err(e) => {
+                    eprintln!("[time-scope] {e}");
+                    db_open::show_error_dialog(&e);
+                    return Err(Box::new(e) as Box<dyn std::error::Error>);
+                }
+            };
             // spec §8.1：每 5s 或满 100 条单事务批量插入
             let writer = Arc::new(BatchWriter::new(Arc::clone(&conn), 5_000, 100));
 
