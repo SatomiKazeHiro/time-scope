@@ -104,4 +104,39 @@ describe("SegmentDetail 的窗口标题", () => {
     render(<SegmentDetail segment={null} />);
     expect(invoke).not.toHaveBeenCalled();
   });
+
+  it("正在生长的段证据变多时重新拉取标题", async () => {
+    // B6。正在生长的那一段 `id` 一直是 `open-{start_at}` 不变，而
+    // `evidenceEventIds` 每 5 秒轮询就变长。effect 的依赖原来只有 `[key]`
+    // （= segment.id），于是面板自相矛盾：「N 条事件支撑」在涨，
+    // 标题列表永远停在第一次的结果。
+    invoke.mockResolvedValue([{ title: "t1", redacted: false, count: 1 }]);
+    const { rerender } = render(<SegmentDetail segment={segment({ id: "open-1" })} />);
+    await waitFor(() => expect(screen.getByText("t1")).toBeTruthy());
+    const callsBefore = invoke.mock.calls.length;
+
+    // 同一个 id，只是证据多了两条（又来两次窗口切换）
+    rerender(
+      <SegmentDetail
+        segment={segment({ id: "open-1", evidenceEventIds: ["e1", "e2", "e3", "e4"] })}
+      />,
+    );
+    await waitFor(() =>
+      expect(invoke.mock.calls.length).toBeGreaterThan(callsBefore),
+    );
+    expect(invoke).toHaveBeenLastCalledWith("get_segment_titles", {
+      eventIds: ["e1", "e2", "e3", "e4"],
+    });
+  });
+
+  it("证据没变时不重复请求标题", async () => {
+    // 与上一条互补：依赖变了以后不能变成"每次轮询都重取"，
+    // 那会把 events 表的查询放大 5 秒一次。
+    invoke.mockResolvedValue([{ title: "t1", redacted: false, count: 1 }]);
+    const { rerender } = render(<SegmentDetail segment={segment()} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    rerender(<SegmentDetail segment={segment()} />);
+    rerender(<SegmentDetail segment={segment()} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+  });
 });

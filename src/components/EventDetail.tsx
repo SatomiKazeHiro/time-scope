@@ -38,8 +38,11 @@ export default function SegmentDetail({ segment }: { segment: Segment | null }) 
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+    // 依赖里**必须带 evidenceIds.length**（B6）。正在生长的那一段 id 恒为
+    // `open-{start_at}` 不变，而 evidenceEventIds 每 5 秒轮询就变长；
+    // 只依赖 `[key]` 会让面板自相矛盾 ——「N 条事件支撑」在涨、标题列表不动。
+    // 取 length 而不是数组本身：数组每次都是新引用，会变成每次轮询都重取。
+  }, [key, evidenceIds.length]);
 
   if (!segment) {
     return (
