@@ -34,14 +34,44 @@ pub struct DailyCalendar {
 /// 取全部数据的逐日监控时长。**无参数**——热力图永远渲染全部数据，
 /// 不受选中范围影响（spec §2.3）。
 ///
+/// **跨零点的段按本地午夜切分到两天**（A2）。按 `start_at` 分组的话，
+/// 23:57 起的段整段落给第一天，第二天那格是空的——于是「昨天最后一格」
+/// 和「今天第一格」对不上，与时间线/汇总页看到的事实矛盾。
+/// 切分保证：某一天的格子 ≡ `range_totals` 对那一天算出的 `total_ms`。
+///
+/// 两天用固定 86,400,000ms 递推，是跟随全项目既有的单固定 offset 假设
+/// （前端 `+86_400_000`、`date_range::day_range_ms`、本文件的 `localtime` 同款）。
+/// 夏令时切换日会差一小时，见 STATUS #16——本项目登记为已知取舍。
+///
 /// 库为空时返回 `Ok(None)`：那是「刚装完还没跑满一天」的真实状态，
 /// 调用方据此显示空状态，而不是拿到一个 first/last 为空串的半成品。
 pub fn daily_calendar(conn: &Connection) -> Result<Option<DailyCalendar>, rusqlite::Error> {
+    // 递归 CTE 把「数据跨了哪几天」列出来，再把每个段与每一天求交集。
+    // 锚点是最早那个段所在**本地日**的真零点：`date(...,'localtime')` 拿到本地
+    // 日期标签，拼上 ` 00:00:00` 得到本地墙上时间，再用 `'utc'` 修饰符换算回
+    // 真正的 Unix 时刻（少写 `'utc'` 会差一个 UTC offset）。
+    // **不能用** `datetime(...,'localtime','start of day')` 再 `strftime('%s',...)`：
+    // 那是把本地零点当 UTC 读，得到的不是零点而是「零点 + UTC offset」，
+    // 与下面 `+86400000` 的递推对不齐，会让每天 00:00–offset 那段落不进任何格子。
+    // 库为空时 span 的 lo/hi 都是 NULL，days 只产出一行 NULL，
+    // JOIN 不上任何段，于是 days 为空 → 走下面的 `Ok(None)` 分支。
     let mut stmt = conn.prepare(
-        "SELECT date(start_at/1000,'unixepoch','localtime') AS d,
-                SUM(end_at - start_at) AS ms
-         FROM activities
-         GROUP BY d
+        "WITH RECURSIVE
+             span AS (SELECT MIN(start_at) AS lo, MAX(end_at) AS hi FROM activities),
+             days(day_ms) AS (
+                 SELECT CAST(strftime('%s', date(lo/1000,'unixepoch','localtime')||' 00:00:00','utc') AS INTEGER) * 1000
+                 FROM span
+                 UNION ALL
+                 SELECT day_ms + 86400000 FROM days, span WHERE day_ms + 86400000 < hi
+             )
+         SELECT date(days.day_ms/1000,'unixepoch','localtime') AS d,
+                SUM(MIN(a.end_at, days.day_ms + 86400000) - MAX(a.start_at, days.day_ms)) AS ms
+         FROM days
+         JOIN activities a
+           ON a.start_at < days.day_ms + 86400000
+          AND a.end_at  > days.day_ms
+         GROUP BY days.day_ms
+         HAVING ms > 0
          ORDER BY d ASC",
     )?;
     let mut days = Vec::new();
@@ -122,8 +152,8 @@ pub fn range_totals(
 
     let mut by_category: Vec<(String, i64)> = Vec::new();
     for row in conn.prepare(
-        "SELECT category, SUM(end_at - start_at) AS ms FROM activities
-         WHERE start_at >= ?1 AND start_at < ?2
+        "SELECT category, SUM(MIN(end_at, ?2) - MAX(start_at, ?1)) AS ms FROM activities
+         WHERE start_at < ?2 AND end_at > ?1
          GROUP BY category",
     )?
     .query_map(rusqlite::params![start_ms, end_ms], |r| {
@@ -154,8 +184,8 @@ pub fn range_totals(
 
     let mut top_apps: Vec<AppSlice> = Vec::new();
     for row in conn.prepare(
-        "SELECT application, SUM(end_at - start_at) AS ms FROM activities
-         WHERE start_at >= ?1 AND start_at < ?2 AND application IS NOT NULL
+        "SELECT application, SUM(MIN(end_at, ?2) - MAX(start_at, ?1)) AS ms FROM activities
+         WHERE start_at < ?2 AND end_at > ?1 AND application IS NOT NULL
          GROUP BY application ORDER BY ms DESC LIMIT ?3",
     )?
     .query_map(rusqlite::params![start_ms, end_ms, TOP_APPS_LIMIT], |r| {
@@ -168,7 +198,7 @@ pub fn range_totals(
     }
 
     let segment_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM activities WHERE start_at >= ?1 AND start_at < ?2",
+        "SELECT COUNT(*) FROM activities WHERE start_at < ?2 AND end_at > ?1",
         rusqlite::params![start_ms, end_ms],
         |r| r.get(0),
     )?;

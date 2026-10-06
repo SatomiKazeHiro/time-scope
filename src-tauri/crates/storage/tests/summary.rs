@@ -24,9 +24,16 @@ fn put(conn: &rusqlite::Connection, segs: Vec<StoredSegment>) {
 
 /// 某个 Unix 毫秒所在**本地日**的零点。借 SQLite 自己换算，
 /// 避免测试里复刻时区 / 夏令时逻辑（spec §3.4 说那个口径是已知的近似）。
+///
+/// 注意 `'utc'` 修饰符不能省。原来写的是
+/// `datetime(...,'localtime','start of day')` 再 `strftime('%s', ...)`，
+/// 那等于把本地零点当 UTC 读，得到的是「零点 + UTC offset」而不是零点。
+/// 本机时区是 UTC-8，所以原式给出的其实是当天 08:00 —— 名字骗人。
+/// 以前没暴露，是因为用它的测试只加 1~2 小时的偏移，仍落在同一天里；
+/// 一旦要放跨零点的段（23:00 起），它立刻错一天。
 fn local_midnight_ms(conn: &rusqlite::Connection, ms: i64) -> i64 {
     conn.query_row(
-        "SELECT CAST(strftime('%s', datetime(?/1000, 'unixepoch', 'localtime', 'start of day')) AS INTEGER) * 1000",
+        "SELECT CAST(strftime('%s', date(?/1000, 'unixepoch', 'localtime') || ' 00:00:00', 'utc') AS INTEGER) * 1000",
         rusqlite::params![ms],
         |r| r.get::<_, i64>(0),
     )
@@ -109,21 +116,76 @@ fn days_with_no_segments_are_absent() {
 }
 
 #[test]
-fn segments_are_bucketed_by_start_at_not_by_overlap() {
-    // 跨零点的段整体算在**开始**那天。这与 get_segments_in_range 的
-    // `start_at >= ?1 AND start_at < ?2` 口径一致 —— spec §7.3 要求两者一致，
-    // 这条测试把口径钉死，防止有人只把其中一个改成区间相交。
+fn a_segment_crossing_midnight_is_split_across_both_days() {
+    // A2。原来这条测试反过来钉死了旧口径（"整段时长算给开始那天"），
+    // 代价是第二天凭空少一段：时间线缺一块、汇总是 0、热力图那格是空的。
+    // 口径改为**按交集切分**——这是唯一能让时间线/汇总/热力图三者同源的算法。
+    //
+    // （原注释援引 spec §7.3 作为该口径的依据，但 §7.3 只讲 Segmenter 状态机，
+    //   全文没有对「按天归属」的规定。STATUS §4.1 把「跨零点的段两天都看不到」
+    //   记成已修，说明本意就是相交。）
     let conn = open_in_memory();
     let (d0, _, _) = three_days(&conn);
-    let start = d0 + 86_700_000; // 当天 23:50
-    let end = d0 + 90_000_000; // 次日 00:10
+    // 23:00 → 次日 01:00。（原测试写的是 `d0 + 86_700_000` 配注释「23:50」，
+    // 可 86_700_000ms 是 24h05m —— 其实是次日 00:05，根本没跨零点，
+    // 所以它一直是「一天」，也一直没测到它声称要测的东西。）
+    let start = d0 + 82_800_000;
+    let end = d0 + 90_000_000;
     put(&conn, vec![seg("cross", start, end)]);
     let cal = daily_calendar(&conn).unwrap().unwrap();
-    assert_eq!(cal.days.len(), 1, "跨零点段只落在开始那天");
+    assert_eq!(cal.days.len(), 2, "跨零点的段两天都该出现");
+    assert_eq!(cal.days[0].total_ms, 3_600_000, "第一天 23:00→24:00");
+    assert_eq!(cal.days[1].total_ms, 3_600_000, "第二天 00:00→01:00");
+}
+
+#[test]
+fn split_days_reconstruct_the_original_segment_length() {
+    // 切分不能凭空多出或少掉时间。
+    let conn = open_in_memory();
+    let (d0, _, _) = three_days(&conn);
+    let start = d0 + 82_800_000;
+    let end = d0 + 90_000_000;
+    put(&conn, vec![seg("cross", start, end)]);
+    let cal = daily_calendar(&conn).unwrap().unwrap();
     assert_eq!(
-        cal.days[0].total_ms,
+        cal.days.iter().map(|c| c.total_ms).sum::<i64>(),
         end - start,
-        "整段时长算给开始那天"
+        "两天之和必须等于原段时长"
+    );
+}
+
+#[test]
+fn a_segment_ending_exactly_at_midnight_lands_on_one_day_only() {
+    // 半开区间：结束于午夜的段不重复算进第二天。
+    let conn = open_in_memory();
+    let (d0, _, _) = three_days(&conn);
+    put(&conn, vec![seg("e", d0 + 86_300_000, d0 + 86_400_000)]);
+    let cal = daily_calendar(&conn).unwrap().unwrap();
+    assert_eq!(cal.days.len(), 1, "恰好结束于午夜的段只算第一天");
+}
+
+#[test]
+fn totals_count_only_the_part_inside_the_range() {
+    // A2：range_totals 也要按交集算，否则第二天的汇总会把 23:57 那段
+    // 连午夜之前的部分一起算进来 —— 同一个数字在时间线和汇总页对不上。
+    let conn = open_in_memory();
+    put(&conn, vec![segc("cross", 86_300_000, 86_422_000, "work", Some("Code.exe"))]);
+    let day2 = range_totals(&conn, 86_400_000, 2 * 86_400_000).unwrap();
+    assert_eq!(day2.total_ms, 22_000, "只算落在第二天的那 22 秒");
+    assert_eq!(day2.segment_count, 1, "跨日段第二天也计数");
+}
+
+#[test]
+fn totals_and_segments_agree_on_the_same_range() {
+    // 三处口径必须同源：同一天、同一段，汇总算出的时长必须等于时间线画出的时长。
+    let conn = open_in_memory();
+    put(&conn, vec![segc("cross", 86_300_000, 86_422_000, "work", Some("Code.exe"))]);
+    let rows = activity_storage::get_segments_in_range(&conn, 86_400_000, 2 * 86_400_000).unwrap();
+    let totals = range_totals(&conn, 86_400_000, 2 * 86_400_000).unwrap();
+    assert_eq!(
+        totals.total_ms,
+        rows.iter().map(|r| r.end_at - r.start_at).sum::<i64>(),
+        "汇总与时间线对同一个范围必须算出同一个数"
     );
 }
 

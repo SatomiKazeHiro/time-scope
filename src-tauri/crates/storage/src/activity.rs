@@ -59,7 +59,11 @@ pub fn insert_segments(
     tx.commit()
 }
 
-/// 清掉 `[start_ms, end_ms)` 内的段及其证据。**重放某一天前必须调用**（spec §7.4）。
+/// 清掉与 `[start_ms, end_ms)` **相交**的段及其证据。**重放某一天前必须调用**（spec §7.4）。
+///
+/// 按相交而不是按 `start_at` 落在区间内：跨零点的段 `start_at` 在前一天，
+/// 旧口径删不掉它，于是「重放 10-06」写进去的新段会和它重叠。
+/// 段是整行存整行的，所以判定按相交、删除也整行删。
 pub fn delete_segments_for_day(
     conn: &Connection,
     start_ms: i64,
@@ -71,17 +75,25 @@ pub fn delete_segments_for_day(
         let mut del_ev = tx.prepare(
             "DELETE FROM activity_evidence
              WHERE activity_id IN (
-                 SELECT id FROM activities WHERE start_at >= ?1 AND start_at < ?2
+                 SELECT id FROM activities WHERE start_at < ?2 AND end_at > ?1
              )",
         )?;
         del_ev.execute(rusqlite::params![start_ms, end_ms])?;
         let mut del =
-            tx.prepare("DELETE FROM activities WHERE start_at >= ?1 AND start_at < ?2")?;
+            tx.prepare("DELETE FROM activities WHERE start_at < ?2 AND end_at > ?1")?;
         del.execute(rusqlite::params![start_ms, end_ms])?;
     }
     tx.commit()
 }
 
+/// 与 `[start_ms, end_ms)` **相交**的段，且起止**裁剪到该区间**。
+///
+/// 为什么是相交而不是 `start_at` 落在区间内（A2）：跨零点的段 `start_at` 在前一天，
+/// 按 `start_at` 查会让它在第二天整个消失——时间线缺一块、汇总是 0。
+///
+/// 为什么裁剪：时间线画的是「当天 24 小时」，不裁的话第二天的色块会从 x<0 开始画出去；
+/// 汇总口径要的是「落在区间内的那部分时长」。裁剪让两者算出同一个数。
+/// 已在 `EngineRuntime::segments_for_day` 上确立过同一条规矩（正在生长的当前段就裁）。
 pub fn get_segments_in_range(
     conn: &Connection,
     start_ms: i64,
@@ -90,9 +102,12 @@ pub fn get_segments_in_range(
     // 分两趟：先取段，再补证据。避免在外层 stmt 还没 drop 时又发起查询。
     let mut segments: Vec<StoredSegment> = {
         let mut stmt = conn.prepare(
-            "SELECT id, start_at, end_at, category, application, confidence, classifier, version
+            "SELECT id,
+                    MAX(start_at, ?1) AS start_at,
+                    MIN(end_at, ?2)   AS end_at,
+                    category, application, confidence, classifier, version
              FROM activities
-             WHERE start_at >= ?1 AND start_at < ?2
+             WHERE start_at < ?2 AND end_at > ?1
              ORDER BY start_at ASC",
         )?;
         let rows = stmt.query_map(rusqlite::params![start_ms, end_ms], |row| {
