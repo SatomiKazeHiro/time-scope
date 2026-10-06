@@ -75,6 +75,69 @@ pub struct RuleSet {
     pub version: String,
 }
 
+/// 规则集的版本号（spec §7.2），由**内容**派生（B2）。
+///
+/// 保留 `rules:N` / `redact:M` 两个计数前缀：人看版本串时一眼知道规模，
+/// 而真正区分"内容变没变"的是后面的内容哈希。
+///
+/// **哈希必须是确定性的** —— 这个字符串会**落库**
+/// （`activities.classifier_version`），同一份 rules.toml 在任何时候、
+/// 任何机器上都必须算出同一个值。所以不能用 `HashMap` 的迭代顺序、
+/// 也不能用 `DefaultHasher::new()`（SipHash 的实现细节不承诺跨版本稳定）。
+/// 这里用 FNV-1a：几十行以内、跨版本跨平台稳定、engine 零依赖。
+fn version_of(rules: &[Rule], redact: &[String]) -> String {
+    let mut h = Fnv1a::new();
+    h.write(rules.len().to_string().as_bytes());
+    for r in rules {
+        h.write(r.id.as_bytes());
+        h.write(b"\x1f");
+        h.write(r.category.as_str().as_bytes());
+        h.write(b"\x1f");
+        // confidence 用 bits 而不是 Display：`-1.0` 与 `1.0` 的字符串不同
+        // 但它们本来就不是合法配置，位模式能避开浮点格式化的各种花样。
+        h.write(&r.confidence.to_bits().to_le_bytes());
+        // 进程列表也参与哈希：改了它就改了匹配范围。
+        // 列表内部顺序不影响匹配结果（`matches` 是 any），但排序要稳定，
+        // 否则同一份文件因书写顺序不同会得到两个版本号。
+        let mut procs = r.process_lower.clone();
+        procs.sort();
+        for p in &procs {
+            h.write(p.as_bytes());
+            h.write(b"\x1e");
+        }
+        h.write(b"\x1d");
+    }
+    h.write(redact.len().to_string().as_bytes());
+    for p in redact {
+        h.write(p.as_bytes());
+        h.write(b"\x1e");
+    }
+    format!("rules:{}+redact:{}+fnv1a:{:016x}", rules.len(), redact.len(), h.finish())
+}
+
+/// FNV-1a 64 位。为「给规则内容算一个稳定指纹」而写，不做通用哈希用。
+struct Fnv1a(u64);
+
+impl Fnv1a {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    fn new() -> Self {
+        Self(Self::OFFSET)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 ^= *b as u64;
+            self.0 = self.0.wrapping_mul(Self::PRIME);
+        }
+    }
+
+    fn finish(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Classification {
     pub category: Category,
@@ -126,8 +189,11 @@ impl RuleSet {
             });
         }
 
-        // 版本号由规则内容派生：改了规则（含脱敏规则），重算出来的 Activity 就能被区分开
-        let version = format!("rules:{}+redact:{}", rules.len(), redact.len());
+        // 版本号由规则**内容**派生（B2）：改了规则（含脱敏规则），重算出来的
+        // Activity 才能被区分开。原来只由条数派生，把 category 从 work 改成
+        // study、或者改一条正则的文本，条数不变、版本号一模一样 ——
+        // 注释里那句话当时是不成立的。
+        let version = version_of(&rules, &redact);
         Ok(RuleSet { rules, redact, version })
     }
 

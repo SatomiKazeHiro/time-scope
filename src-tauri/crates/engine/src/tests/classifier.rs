@@ -264,3 +264,81 @@ pattern = "\d+"
     assert!(ok.is_ok(), "单引号里的 \\d 应解析成功，实际 {:?}", ok.err());
     assert_eq!(ok.unwrap().redact, vec!["\\d+".to_string()]);
 }
+
+// --- B2：版本号必须由规则**内容**派生，而不是由条数 ---
+
+#[test]
+fn changing_a_rules_category_changes_the_version() {
+    // B2。原来版本号是 `format!("rules:{}+redact:{}", rules.len(), redact.len())`
+    // —— 只由**条数**派生。把某条规则的 category 从 work 改成 study，
+    // 条数不变、版本号一模一样，于是重算出来的段看起来和旧段同源，
+    // 注释里"改了规则就能被区分开"这句话不成立。
+    let a = RuleSet::from_toml(
+        "[[rule]]\nid = \"a\"\nprocess = [\"x.exe\"]\ncategory = \"work\"\nconfidence = 1.0\n",
+    )
+    .unwrap();
+    let b = RuleSet::from_toml(
+        "[[rule]]\nid = \"a\"\nprocess = [\"x.exe\"]\ncategory = \"study\"\nconfidence = 1.0\n",
+    )
+    .unwrap();
+    assert_eq!(a.rules.len(), b.rules.len(), "两条规则的条数必须一样");
+    assert_ne!(
+        a.version, b.version,
+        "只改 category 也要换版本号，否则重算出来的段无法与旧段区分"
+    );
+}
+
+#[test]
+fn changing_a_rules_process_or_confidence_changes_the_version() {
+    let base = "[[rule]]\nid = \"a\"\nprocess = [\"x.exe\"]\ncategory = \"work\"\nconfidence = 1.0\n";
+    let orig = RuleSet::from_toml(base).unwrap();
+    for (what, changed) in [
+        ("process", "[[rule]]\nid = \"a\"\nprocess = [\"y.exe\"]\ncategory = \"work\"\nconfidence = 1.0\n"),
+        ("confidence", "[[rule]]\nid = \"a\"\nprocess = [\"x.exe\"]\ncategory = \"work\"\nconfidence = 0.5\n"),
+        ("id", "[[rule]]\nid = \"z\"\nprocess = [\"x.exe\"]\ncategory = \"work\"\nconfidence = 1.0\n"),
+    ] {
+        let other = RuleSet::from_toml(changed).unwrap();
+        assert_ne!(orig.version, other.version, "改了 {what} 也要换版本号");
+    }
+}
+
+#[test]
+fn changing_a_redact_patterns_text_changes_the_version() {
+    // 与 `redact_pattern_version_is_part_of_the_ruleset` 互补：
+    // 那条比的是"有/没有"，这条比的是"内容不同但条数相同"。
+    let a = RuleSet::from_toml("[[redact]]\npattern = '客户\\d+'\n").unwrap();
+    let b = RuleSet::from_toml("[[redact]]\npattern = '(?i)salary'\n").unwrap();
+    assert_eq!(a.redact.len(), b.redact.len(), "脱敏规则条数必须一样");
+    assert_ne!(a.version, b.version, "只改正则文本也要换版本号");
+}
+
+#[test]
+fn the_version_is_deterministic_across_runs() {
+    // 版本号会**落库**（activities.classifier_version），所以同一份规则
+    // 必须永远得到同一个值。不能用 HashMap 的迭代顺序或随机种子。
+    let first = RuleSet::from_toml(SAMPLE).unwrap().version;
+    for _ in 0..5 {
+        assert_eq!(RuleSet::from_toml(SAMPLE).unwrap().version, first);
+    }
+}
+
+#[test]
+fn reordering_rules_changes_the_version() {
+    // 顺序变了就该换版本号：命中顺序决定最终分类（先匹配先赢）。
+    let a = RuleSet::from_toml(
+        "[[rule]]\nid = \"a\"\nprocess = [\"x.exe\"]\ncategory = \"work\"\nconfidence = 1.0\n\
+         [[rule]]\nid = \"b\"\nprocess = [\"x.exe\"]\ncategory = \"study\"\nconfidence = 1.0\n",
+    )
+    .unwrap();
+    let b = RuleSet::from_toml(
+        "[[rule]]\nid = \"b\"\nprocess = [\"x.exe\"]\ncategory = \"study\"\nconfidence = 1.0\n\
+         [[rule]]\nid = \"a\"\nprocess = [\"x.exe\"]\ncategory = \"work\"\nconfidence = 1.0\n",
+    )
+    .unwrap();
+    assert_ne!(
+        a.classify(Some("x.exe")).category,
+        b.classify(Some("x.exe")).category,
+        "两条规则都匹配 x.exe，顺序决定谁赢"
+    );
+    assert_ne!(a.version, b.version, "命中顺序变了也要换版本号");
+}
