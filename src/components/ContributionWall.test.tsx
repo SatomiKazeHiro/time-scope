@@ -391,3 +391,61 @@ describe("ContributionWall", () => {
       expect((el as HTMLElement).style.opacity).toBe("");
     }
   });
+
+// --- B8：日格要有可访问名 ---
+
+describe("ContributionWall 日格的可访问名", () => {
+  function wallCells(): HTMLElement[] {
+    return Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid^="cell-"]'),
+    );
+  }
+
+  it("每一天都有 aria-label，不是只有 title", () => {
+    // B8。`title` 是鼠标悬停才出现的视觉提示，读屏与键盘用户拿不到，
+    // 原生 title 在触摸/键盘下也根本不弹。
+    setup();
+    const cells = wallCells();
+    expect(cells.length).toBeGreaterThan(0);
+    for (const c of cells) {
+      expect(c.getAttribute("aria-label"), `格子 ${c.getAttribute("data-date")} 没有 aria-label`)
+        .toBeTruthy();
+      expect(c.getAttribute("aria-label")).toMatch(/\d{4}-\d{2}-\d{2}/);
+    }
+  });
+
+  it("有记录的格子在名字里带上时长", () => {
+    setup();
+    const withData = document.querySelector('[data-testid="cell-2026-10-01"]')!;
+    expect(withData.getAttribute("aria-label")).toMatch(/\d/);
+  });
+
+  it("装之前的日子说清是「还没装」，不假装是「当天没活动」", () => {
+    // 这两种"空"在界面上是分开画的（STATUS 第 20、21 条），
+    // 可访问名也必须分开 —— 读屏用户看不到描边强弱。
+    //
+    // 要造出"未安装期"得让 `days` 里有早于 `trackedFrom` 的日子：
+    // `buildWall` 的 `tracked = present && cursor >= trackedFrom`。
+    // （缺省不传 `trackedFrom` 时它等于 `days[0]`，于是永远没有 uninstalled 格。）
+    const withPreInstallDays: DayCell[] = [
+      { date: "2026-09-29", totalMs: 0 },
+      { date: "2026-09-30", totalMs: 0 },
+      ...DAYS,
+    ];
+    render(
+      <ContributionWall
+        days={withPreInstallDays}
+        trackedFrom="2026-10-01"
+        selection={null}
+        onSelectDay={NOOP}
+        onSelectWeek={NOOP}
+        onSelectMonth={NOOP}
+      />,
+    );
+    const untracked = wallCells().find(
+      (c) => c.getAttribute("data-tone") === "uninstalled",
+    );
+    expect(untracked).toBeDefined();
+    expect(untracked!.getAttribute("aria-label")).toContain("还没装");
+  });
+});

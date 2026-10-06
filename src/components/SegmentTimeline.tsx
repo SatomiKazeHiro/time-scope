@@ -111,6 +111,58 @@ function clockOf(ms: number): string {
 }
 
 /**
+ * 可聚焦色块的公共契约（B8）。
+ *
+ * 时间线上"点一块看详情"是**核心操作**，所以每个色块都必须：
+ * `role="button"`（读屏知道它是可激活的）、`tabIndex={0}`（Tab 能到）、
+ * `aria-label`（把时间/类别/时长念出来）、Enter/Space 触发（只有
+ * `onClick` 的元素对键盘等于死的）。
+ *
+ * 焦点样式**不在这里定**：全局 `:focus-visible` 已经给了 2px 中性亮环
+ * （theme.css；MASTER §… 记着「不用浏览器默认蓝环，蓝是 work 的色相」），
+ * 这里再画一遍就会叠成两条环。
+ */
+function cellA11yProps(label: string) {
+  return {
+    role: "button",
+    tabIndex: 0,
+    "aria-label": label,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault(); // Space 会滚动页面
+        (e.currentTarget as SVGRectElement).dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+      }
+    },
+  };
+}
+
+/** 类别模式下色块的无障碍名：时间、类别名、应用、时长。 */
+function segmentLabel(seg: Segment): string {
+  return `${clockOf(seg.startAt)} – ${clockOf(seg.endAt)} · ${labelForCategory(seg.category)} · ${
+    seg.application ?? "未知应用"
+  } · ${formatDuration(seg.endAt - seg.startAt)}`;
+}
+
+/**
+ * 指标模式下桶的无障碍名：时间、指标名与读数、段数、应用数。
+ *
+ * 空桶也要有名字 —— 它同样可点可聚焦，读屏念「无活动」比念「按钮」有用。
+ */
+function bucketLabel(b: BucketMetric, metric: MetricMode): string {
+  const span = `${clockOf(b.start)} – ${clockOf(b.end)}`;
+  if (b.segmentCount === 0) return `${span} · 无活动`;
+  const reading =
+    metric === "focus"
+      ? b.activeMs === 0
+        ? "空闲"
+        : `专注度 ${Math.round(b.focus * 100)}%`
+      : `${b.switches} 次切换`;
+  return `${span} · ${reading} · ${b.appCount} 个应用 · ${b.segmentCount} 段`;
+}
+
+/**
  * 24h 横向时间线：每个 ActivitySegment 一个矩形，按 category 着色，宽度正比于时长。
  *
  * 用 viewBox + width:100%，容器再窄（高 DPI、小窗口）也不会把 x/width 算坏。
@@ -254,7 +306,10 @@ export default function SegmentTimeline({
           height={SVG_H}
           viewBox={`0 0 ${WIDTH} ${SVG_H}`}
           preserveAspectRatio="none"
-          role="img"
+          /* `role="group"` 而不是 `"img"`（B8）：img 会把整棵子树对辅助技术
+             声明成「一张图」、子节点一律被遮蔽，于是色块加了 tabIndex 也仍然
+             到不了。group 既保留了「这是个可命名区域」，又让子节点能被遍历。 */
+          role="group"
           aria-label="24h 活动时间线"
           className="block w-full"
           /* 高度由 --track-h 决定，矮窗口下压扁（见 theme.css） */
@@ -276,6 +331,7 @@ export default function SegmentTimeline({
                     fill={c.blank ? "transparent" : scaleColor(c.step)}
                     vectorEffect="non-scaling-stroke"
                     className="cursor-pointer"
+                    {...cellA11yProps(bucketLabel(c.metric, metric))}
                     style={{
                       pointerEvents: "all",
                       stroke: selected ? "var(--color-ink)" : "transparent",
@@ -320,6 +376,7 @@ export default function SegmentTimeline({
                     fill={colorForCategory(seg.category)}
                     vectorEffect="non-scaling-stroke"
                     className="cursor-pointer"
+                    {...cellA11yProps(segmentLabel(seg))}
                     /* 描边兼两职：选中时是 2px 亮环（选中用明度表达，不占用类别色相）；
                        未选中时是 8px 透明描边 —— 1 分钟的段只有约 3px 宽，
                        裸 rect 不好点。透明描边只扩大命中区，不改变观感。 */

@@ -125,7 +125,7 @@ describe("preview", () => {
     for (const metric of ["category", "focus", "switch"] as const) {
       const { container, unmount } = render(<App />);
       await waitFor(() =>
-        expect(container.querySelectorAll("svg[role='img']").length).toBeGreaterThan(0),
+        expect(container.querySelectorAll("svg[role='group']").length).toBeGreaterThan(0),
       );
 
       // 切到要看的指标模式
@@ -134,7 +134,7 @@ describe("preview", () => {
       }
 
       // 选中一段，让详情面板也进画面
-      const svg = screen.getByRole("img", { name: "24h 活动时间线" });
+      const svg = screen.getByRole("group", { name: "24h 活动时间线" });
       fireEvent.click(svg.querySelectorAll("rect")[12] || svg.querySelectorAll("rect")[0]);
       // 等标题真的加载出来，否则 dump 出来的是「读取中…」，截不出滚动效果
       await waitFor(() => expect(screen.getByText(/条 · 可滚动/)).toBeTruthy());

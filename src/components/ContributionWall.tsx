@@ -29,6 +29,18 @@ const WEEK_STRIP_STYLE: React.CSSProperties = {
 /** 补齐位是不可见的占位（但仍要占槽位，见下方说明）。 */
 const PAD_STYLE: React.CSSProperties = { background: "transparent" };
 
+/**
+ * 一个日格的可访问名（也用作它的原生 `title`）。
+ *
+ * 两种"空"必须分开说（STATUS 第 20、21 条）：界面上它们靠**描边强弱**区分，
+ * 而读屏用户看不到描边 —— 名字就是他们唯一的区分通道。
+ */
+function dayLabel(c: { date: string; totalMs: number; tracked: boolean }): string {
+  if (!c.tracked) return `${c.date} · 还没装 Time Scope`;
+  const hours = Math.round((c.totalMs / 3_600_000) * 10) / 10;
+  return `${c.date} · ${hours}h`;
+}
+
 interface ContributionWallProps {
   /** **连续升序**的日期序列（`lib/summary.ts` 的 `fillDays` 产出） */
   days: DayCell[];
@@ -151,11 +163,13 @@ export default function ContributionWall({
                    内描边和外环必须能叠加，只有 CSS 能做到不写笛卡尔积 */
                 data-tone={toneOf(c)}
                 data-in-range={inSelection(c.date) ? "" : undefined}
-                title={
-                  c.tracked
-                    ? `${c.date} · ${Math.round((c.totalMs / 3_600_000) * 10) / 10}h`
-                    : `${c.date} · 还没装 Time Scope`
-                }
+                /* title 与 aria-label **必须给同一句话**（B8）：`title` 只是
+                   鼠标悬停才出现的视觉提示，读屏与键盘用户拿不到，原生 title
+                   在触摸/键盘下也根本不弹。而这两种"空"在界面上是分开画的
+                   （见 STATUS 第 20、21 条），读屏用户看不到描边强弱，
+                   所以名字里也必须分开说。 */
+                title={dayLabel(c)}
+                aria-label={dayLabel(c)}
                 onClick={() => onSelectDay(c.date)}
                 className="wall-cell cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
                 style={{ background: c.tracked ? scaleColor(c.step) : uninstalledColor() }}

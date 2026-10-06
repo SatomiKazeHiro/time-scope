@@ -455,3 +455,90 @@ describe("SegmentTimeline 悬停态跨模式", () => {
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 });
+
+// --- B8：时间线色块键盘可达 ---
+
+describe("SegmentTimeline 键盘可达性", () => {
+  const segments = [
+    seg("a", 0, HOUR, "work"),
+    seg("b", HOUR, HOUR * 2, "browsing"),
+  ];
+
+  it("色块是可聚焦的按钮，而不是只有鼠标能点", () => {
+    // B8。`<svg role="img">` 把整棵树对辅助技术声明成「一张图」，
+    // 子节点一律被遮蔽；加上 `<rect>` 本身没有 tabIndex/role，
+    // 于是「点色块看这段在干什么」这个**核心操作纯键盘完全到不了**。
+    const { container } = render(
+      <SegmentTimeline segments={segments} dayStartMs={0} onSelect={() => {}} />,
+    );
+    const cells = rects(container);
+    for (const c of cells) {
+      expect(c.getAttribute("role")).toBe("button");
+      expect(c.getAttribute("tabindex")).toBe("0");
+    }
+  });
+
+  it("色块的无障碍名里有时间、类别和时长", () => {
+    // 光有 role 没有名字等于没说 —— 读屏只会念「按钮」。
+    //
+    // 时间用**本地分量**构造：`clockOf` 走的是本地时区，写死 epoch 0 会让
+    // 断言随开发机时区漂（本机 UTC-8 下 `0` 渲染成 08:00）。
+    const dayStart = new Date(2026, 0, 1, 9, 0, 0, 0).getTime();
+    const { container } = render(
+      <SegmentTimeline
+        segments={[seg("a", dayStart, dayStart + HOUR, "work")]}
+        dayStartMs={dayStart}
+        onSelect={() => {}}
+      />,
+    );
+    const label = rects(container)[0].getAttribute("aria-label") ?? "";
+    expect(label).toContain("09:00");
+    expect(label).toContain("10:00");
+    expect(label).toContain("工作");
+    expect(label).toContain("Code.exe");
+    expect(label).toMatch(/\d/); // 时长
+  });
+
+  it("回车与空格都能选中色块", () => {
+    // 只有 onClick 的元素对键盘等于死的：Enter/Space 不会触发。
+    const picked: string[] = [];
+    const { container } = render(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        onSelect={(s) => picked.push(s.id)}
+      />,
+    );
+    fireEvent.keyDown(rects(container)[0], { key: "Enter" });
+    fireEvent.keyDown(rects(container)[1], { key: " " });
+    expect(picked).toEqual(["a", "b"]);
+  });
+
+  it("指标模式的桶同样可聚焦", () => {
+    const { container } = render(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={30 * 60_000}
+        metric="focus"
+        onSelect={() => {}}
+      />,
+    );
+    const buckets = Array.from(
+      container.querySelectorAll("[data-bucket]"),
+    ) as SVGRectElement[];
+    expect(buckets.length).toBeGreaterThan(0);
+    for (const b of buckets) {
+      expect(b.getAttribute("role")).toBe("button");
+      expect(b.getAttribute("tabindex")).toBe("0");
+    }
+  });
+
+  it("容器不再对辅助技术声明成一张图（否则子节点仍然被遮蔽）", () => {
+    const { container } = render(
+      <SegmentTimeline segments={segments} dayStartMs={0} onSelect={() => {}} />,
+    );
+    const svg = container.querySelector("svg")!;
+    expect(svg.getAttribute("role")).not.toBe("img");
+  });
+});

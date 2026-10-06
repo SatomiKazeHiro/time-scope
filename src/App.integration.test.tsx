@@ -53,7 +53,7 @@ afterEach(() => {
  * 指标模式下 rect 是桶，计数语义不同，别拿这里的 helper 去断指标模式。
  */
 function timelineRects(): SVGRectElement[] {
-  const svg = screen.getByRole("img", { name: "24h 活动时间线" });
+  const svg = screen.getByRole("group", { name: "24h 活动时间线" });
   return Array.from(svg.querySelectorAll("rect")) as SVGRectElement[];
 }
 
@@ -252,7 +252,7 @@ describe("切粒度时的选中态", () => {
   function ringedBuckets(): string[] {
     return Array.from(
       screen
-        .getByRole("img", { name: "24h 活动时间线" })
+        .getByRole("group", { name: "24h 活动时间线" })
         .querySelectorAll<SVGRectElement>("[data-bucket]"),
     )
       .filter((r) => (r.getAttribute("style") ?? "").includes("var(--color-ink)"))
@@ -261,7 +261,7 @@ describe("切粒度时的选中态", () => {
 
   function bucket(index: string): SVGRectElement {
     const el = screen
-      .getByRole("img", { name: "24h 活动时间线" })
+      .getByRole("group", { name: "24h 活动时间线" })
       .querySelector<SVGRectElement>(`[data-bucket="${index}"]`);
     if (!el) throw new Error(`没有下标为 ${index} 的桶`);
     return el;
