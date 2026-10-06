@@ -2,11 +2,14 @@
  * 汇总页的纯逻辑层：热力图布局、色阶分档、选中框、范围推导。
  *
  * 全部是无 IO 的纯函数——布局算法是这个页面最容易错的地方
- * （周日起始、首列补齐、跨格框），把它从 React 组件里剥出来，
- * 才能一条条地断言。
+ * （周一起始、首列补齐），把它从 React 组件里剥出来，才能一条条地断言。
  *
- * 热力图口径：**7 行 = 周日到周六**（行 0 = 周日），1 列 = 1 周（自周日起），
- * 与 GitHub 贡献墙一致（左侧标 Mon / Wed / Fri）。
+ * 热力图口径：**ISO 8601 —— 7 行 = 周一到周日**（行 0 = 周一），
+ * 1 列 = 1 周（自周一起）。左侧标 Mon / Wed / Fri。
+ *
+ * 注意：GitHub 贡献墙的**行序是周日开头**（官方 REST API 文档写明
+ * `0-6: Sunday - Saturday`），这里**故意跟它不一样** —— 一周从周一开始
+ * 是 ISO 8601 的标准，也是几乎所有编程语言和地区的默认。
  */
 
 import { shiftDate, todayString, type DayCell } from "../types";
@@ -28,16 +31,15 @@ export const PITCH = CELL + GAP;
 const MONTH_LABEL_MIN_GAP = 2;
 
 /**
- * 一行的星期标签，**下标 = 墙的行号**，行 0 = 周日。
- * 与 `weekdayOf`（JS 约定，也是 0 = 周日）同向，可以直接互换。
+ * 一行的星期标签，**下标 = 墙的行号**，行 0 = 周一（ISO 8601）。
  */
-export const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"] as const;
+export const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
 
 /**
- * 左侧要标哪几行。GitHub 的贡献墙只标 Mon / Wed / Fri ——
- * 周日开头时它们是第 1/3/5 行。
+ * 左侧要标哪几行：Mon / Wed / Fri（沿用 GitHub 的**标注习惯**），
+ * 周一开头时它们是第 0/2/4 行。
  */
-export const LABELLED_ROWS = [1, 3, 5] as const;
+export const LABELLED_ROWS = [0, 2, 4] as const;
 
 /** 热力图铺多少周。GitHub 的贡献墙是 53 周。 */
 export const WALL_WEEKS = 53;
@@ -50,7 +52,7 @@ export const WALL_WEEKS = 53;
  * 铺满一整年，没数据的日子是空的 —— 那个「空」本身就是「我那时候还没
  * 开始用」的信息。
  *
- * 首格从今天所在周的**周日**往前推 52 周，所以每列都对齐周。
+ * 首格从今天所在周的**周一**往前推 52 周，所以每列都对齐周。
  */
 export function wallWindow(today: string): { start: string; end: string; weeks: number } {
   const end = today;
@@ -65,13 +67,12 @@ export function weekdayOf(date: string): number {
 }
 
 /**
- * 这天在墙里的**行号**：0 = 周日 … 6 = 周六。
+ * 这天在墙里的**行号**（ISO 8601）：0 = 周一 … 6 = 周日。
  *
- * 与 `weekdayOf` 同向同值（都是 0 = 周日），保留这个别名是为了让
- * 「行号」和「星期几」在读代码时不说混。
+ * 与 `weekdayOf`（JS 约定，0 = 周日）**差一个偏移**，两个下标别混用。
  */
 export function rowOf(date: string): number {
-  return weekdayOf(date);
+  return (weekdayOf(date) + 6) % 7;
 }
 
 /** 从 `from` 到 `to` 的连续日期序列，没记录的填 0。 */
@@ -143,7 +144,7 @@ export interface WallCell {
   date: string;
   totalMs: number;
   col: number;
-  /** 0 = 周日 */
+  /** 0 = 周一（ISO 8601） */
   row: number;
   /** false = 补齐位（窗口之外），不渲染但占位，保证不整列错位 */
   present: boolean;
@@ -166,7 +167,7 @@ export interface WallLayout {
 /**
  * 把连续的日期序列摊成 GitHub 贡献墙的网格。
  *
- * 首列往前补到周日、末列往后补到周六 —— 不补的话第一列和最后一列
+ * 首列往前补到**周一**、末列往后补到周日 —— 不补的话第一列和最后一列
  * 会整列错位。补齐后总格数恒为 7 的倍数。
  *
  * **前置条件：`days` 必须是连续、升序的日期序列。** 缺日会算错补齐量
@@ -181,7 +182,7 @@ export function buildWall(days: DayCell[], trackedFrom?: string): WallLayout {
   const maxMs = Math.max(...days.map((d) => d.totalMs), 0);
   // 缺省为「从窗口第一天起就在运行」——调用方不传时不做未安装期区分。
   const since = trackedFrom ?? first;
-  // 首列往前补到**周日**，末列往后补到周六。
+  // **行 0 = 周一**（ISO 8601）：首列往前补到周一，末列往后补到周日。
   const lead = rowOf(first);
   const total = days.length + lead + (6 - rowOf(last));
 
@@ -254,7 +255,7 @@ export function selectionFrame(
   return { col, row, cols: colEnd - col + 1, rows: rowEnd - row + 1 };
 }
 
-/** 该日期所在周的**周日**（墙里的一周从周日开始）。 */
+/** 该日期所在周的**周一**（ISO 8601，墙里的一周从周一开始）。 */
 export function startOfWeek(date: string): string {
   return shiftDate(date, -rowOf(date));
 }

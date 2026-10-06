@@ -58,7 +58,8 @@ interface ContributionWallProps {
 }
 
 /**
- * 监控时长的 GitHub 贡献墙。**7 行 = 周日到周六，1 列 = 1 周（自周日起）**。
+ * 监控时长的 GitHub 式贡献墙，但**行序跟 GitHub 不同**：行 0 = 周一（ISO 8601），
+ * 1 列 = 1 周（自周一起）。GitHub 是周日开头，这里按 ISO 走。
  *
  * **框是跨格的一整块绝对定位矩形，不是逐格描边** —— 框的宽度本身就
  * 告诉用户当前框的是日、周还是月（spec §5.3）。
@@ -81,11 +82,11 @@ export default function ContributionWall({
   }
 
   /**
-   * 某列的**周日**（row 0）。补齐位也有真实日期，所以每周都拿得到 ——
+   * 某列的**周一**（row 0）。补齐位也有真实日期，所以每周都拿得到 ——
    * 这才是 `onSelectWeek` 声明的那个参数。`rangeFor("week", …)` 内部
    * 还会再 snap 一次，两处一致才不会被传错日期坑到。
    */
-  const sundayOf = (ci: number): string | undefined =>
+  const weekStartOf = (ci: number): string | undefined =>
     layout.cells.find((c) => c.col === ci && c.row === 0)?.date;
 
   return (
@@ -182,7 +183,7 @@ export default function ContributionWall({
       >
         {/* 53 周全是真实日历周，都可选 —— 选一个空周看到的是零，不是禁止 */}
         {Array.from({ length: layout.weeks }, (_, ci) => {
-          const s = sundayOf(ci);
+          const s = weekStartOf(ci);
           return (
             <button
               key={ci}
