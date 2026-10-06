@@ -26,6 +26,7 @@ mod date_range;
 mod day_replay;
 mod redact;
 mod residency;
+mod retention;
 mod engine_runtime;
 mod engine_thread;
 mod exit_flush;
@@ -62,6 +63,8 @@ struct AppState {
     config: activity_engine::EngineConfig,
     /// 标题脱敏器。consumer 与"按需重放"两条路径共用（spec §11）。
     redactor: Arc<Redactor>,
+    /// 原始事件保留天数（B3）。0 = 永不删。
+    retention_days: u32,
 }
 
 /// 取某天的全部 ActivitySegment（spec §9）。
@@ -74,6 +77,10 @@ fn get_segments(
 ) -> Result<Vec<StoredSegment>, String> {
     let offset = local_offset()?;
     let (start_ms, end_ms) = day_range_ms(&date, offset)?;
+
+    // B3：每 24h 至多清一次过期原始事件。挂在这条稳定的高频 IPC 上，
+    // 而不是为此再开一个定时线程（代价只是每次多一次原子读）。
+    retention::prune_if_due(&state.conn, state.retention_days, activity_storage::now_ms());
 
     // 首次查看某一天时按需重放：启动只做了"今天"，别的日子可能还留着
     // 上次崩溃前没被引擎处理过的孤儿事件。
@@ -241,6 +248,13 @@ pub fn run() {
             // 文件缺失时生成默认模板，坏了就用默认值（都不影响启动）。
             let app_config = config::load_or_create(&config::config_path());
 
+            // B3：启动时清一次过期事件，并在这里 VACUUM 把空间还给文件系统。
+            // **必须在采集线程起来之前做** —— VACUUM 会锁住整个库，
+            // 放在运行期就是把「20 秒写不进去」那种事变成日常。
+            // 运行期只删不 VACUUM：删掉的页进 freelist 会被复用，**这就止住了增长**，
+            // 已经很大的文件要缩回去则交给这一次启动时的 VACUUM。
+            retention::prune_at_startup(&conn, app_config.events_retention_days);
+
             let replayed = ReplayedDays::default();
             let (rule_set, config, runtime) =
                 day_replay::bootstrap_today(&conn, &replayed, &app_config);
@@ -312,6 +326,7 @@ pub fn run() {
                 rules: rule_set,
                 config,
                 redactor,
+                retention_days: app_config.events_retention_days,
             });
             Ok(())
         })

@@ -8,7 +8,9 @@ pub use activity::{
     delete_segments_for_day, get_segment_spans_in_range, get_segments_in_range, insert_segments,
     replace_day_segments, SegmentSpan, StoredSegment,
 };
-pub use query::{get_events_in_range, insert_events, now_ms, StoredEvent};
+pub use query::{
+    delete_events_older_than, get_events_in_range, insert_events, now_ms, StoredEvent,
+};
 pub use schema::{apply_pragmas, current_version, migrate, SCHEMA_VERSION};
 pub use summary::{
     daily_calendar, range_pacing, range_totals, title_counts_in_range, AppSlice, DailyCalendar,

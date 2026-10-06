@@ -1,5 +1,5 @@
 use activity_core::{Event, EventType, WindowFocusPayload};
-use activity_storage::{get_events_in_range, insert_events, open_in_memory};
+use activity_storage::{delete_events_older_than, get_events_in_range, insert_events, open_in_memory};
 
 fn ev(ts: i64, proc: &str) -> Event {
     Event::new(
@@ -139,4 +139,81 @@ fn distinct_event_types_all_get_distinct_type_column() {
     ] {
         assert!(tags.contains(&expected), "missing {expected} in {tags:?}");
     }
+}
+
+// --- B3：events 保留期 ---
+
+#[test]
+fn pruning_removes_only_events_older_than_the_cutoff() {
+    // B3。events 表实测 ≈5 MB/天 ≈1.8 GB/年，没有保留期就一直涨。
+    // 删的是**原始事件**，`activities` 一行不动 —— 它才是时长账本。
+    let conn = open_in_memory();
+    insert_events(
+        &conn,
+        &[
+            ev(1_000, "a.exe"),
+            ev(2_000, "b.exe"),
+            ev(5_000_000, "c.exe"),
+            ev(6_000_000, "d.exe"),
+        ],
+    )
+    .unwrap();
+
+    let deleted = delete_events_older_than(&conn, 3_000_000).unwrap();
+    assert_eq!(deleted, 2, "只该删掉早于 cutoff 的两条");
+
+    // 活下来的必须全是 cutoff 之后的（Event::new 自造 id，所以按时间戳断言）
+    let left: Vec<i64> = get_events_in_range(&conn, 0, i64::MAX)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.timestamp)
+        .collect();
+    assert_eq!(left.len(), 2);
+    assert!(left.iter().all(|t| *t >= 3_000_000), "实际留下 {:?}", left);
+}
+
+#[test]
+fn the_cutoff_is_exclusive_so_the_boundary_day_survives() {
+    // 半开区间 `[cutoff, ∞)` 保留：恰好等于 cutoff 的那条不删。
+    // 差 1 毫秒就少一天数据这种事没人受得了。
+    let conn = open_in_memory();
+    insert_events(&conn, &[ev(3_000_000, "a.exe"), ev(3_000_001, "b.exe")]).unwrap();
+    assert_eq!(delete_events_older_than(&conn, 3_000_000).unwrap(), 0);
+    assert_eq!(get_events_in_range(&conn, 0, i64::MAX).unwrap().len(), 2);
+}
+
+#[test]
+fn pruning_leaves_activities_completely_alone() {
+    // 关键性质：删 events 不许波及 activities。时间线、汇总、热力图
+    // 全都只读 activities —— 一旦连坐，那些数字就凭空少了半年。
+    let conn = open_in_memory();
+    insert_events(&conn, &[ev(1_000, "a.exe")]).unwrap();
+    let seg = activity_storage::StoredSegment {
+        id: "seg-1".into(),
+        start_at: 1_000,
+        end_at: 60_000,
+        category: "work".into(),
+        application: Some("Code.exe".into()),
+        confidence: 1.0,
+        classifier: "rule".into(),
+        classifier_version: "v".into(),
+        evidence_event_ids: vec![],
+    };
+    activity_storage::insert_segments(&conn, &[(seg, vec![])]).unwrap();
+
+    delete_events_older_than(&conn, 1_000_000).unwrap();
+
+    let segs =
+        activity_storage::get_segments_in_range(&conn, 0, i64::MAX).unwrap();
+    assert_eq!(segs.len(), 1, "activities 一行都不该少");
+    assert_eq!(segs[0].id, "seg-1");
+}
+
+#[test]
+fn pruning_an_empty_or_all_fresh_database_is_a_harmless_noop() {
+    let conn = open_in_memory();
+    assert_eq!(delete_events_older_than(&conn, 1_000_000).unwrap(), 0);
+    insert_events(&conn, &[ev(9_000_000, "a.exe")]).unwrap();
+    assert_eq!(delete_events_older_than(&conn, 1_000_000).unwrap(), 0);
+    assert_eq!(get_events_in_range(&conn, 0, i64::MAX).unwrap().len(), 1);
 }

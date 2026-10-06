@@ -71,3 +71,19 @@ pub fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
+
+/// 删掉 `timestamp < cutoff_ms` 的**原始事件**，返回删了几条（B3，spec §8.1）。
+///
+/// **只删 `events`。** `activities` 一行不动 —— 它才是时长账本，
+/// 时间线、汇总、热力图全都只读它。连坐会让那些数字凭空少掉一截。
+/// 受影响的只有「窗口标题 Top」与段详情里能回溯到的标题范围，
+/// 这正是留 365 天（够盖住热力图默认那面 53 周的墙）的理由。
+///
+/// cutoff 是**排他**的：恰好等于它的那条保留，边界那一天不会差 1 毫秒丢数据。
+///
+/// 删掉的页会进 freelist 并被后续写入复用，所以**这个函数本身就止住了增长**；
+/// 想让已经很大的文件真正变小还需要 `VACUUM`（由 app 层决定何时做 ——
+/// 它要锁库，不能放在采集路径上）。
+pub fn delete_events_older_than(conn: &Connection, cutoff_ms: i64) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM events WHERE timestamp < ?1", rusqlite::params![cutoff_ms])
+}

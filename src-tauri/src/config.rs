@@ -18,6 +18,13 @@ pub const MIN_HEARTBEAT_S: u32 = 1;
 const MAX_SECONDS: u32 = 86_400;
 const MAX_HEARTBEAT_S: u32 = 600;
 
+/// 原始事件的默认保留天数（B3）。365 天够覆盖热力图默认窗口
+/// （`wallWindow` 是 53 周 ≈371 天）。
+pub const DEFAULT_RETENTION_DAYS: u32 = 365;
+/// 上限 100 年。超出的一律夹到这里 =「近乎永不删」，
+/// 这是用户手滑写了个 10^9 时最安全的解释。
+pub const MAX_RETENTION_DAYS: u32 = 36_500;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseBehavior {
     /// 首次关窗时询问；用户的选择会把本项覆写成 minimize/quit
@@ -61,6 +68,13 @@ pub struct AppConfig {
     pub autostart: bool,
     /// 点 ✕ 时的行为
     pub close_behavior: CloseBehavior,
+    /// 保留多少天的**原始事件**。0 = 永不删（spec §8.1，B3）。
+    ///
+    /// 只管 `events`（原始流，实测 ≈5 MB/天 ≈1.8 GB/年）。
+    /// **`activities` 一行不删** —— 它才是时长账本，而且很小
+    /// （≈50k 行/年）。所以时间线、汇总、热力图不受这个设置影响，
+    /// 受影响的只有「窗口标题 Top」与段详情里能回溯到的标题范围。
+    pub events_retention_days: u32,
 }
 
 impl Default for AppConfig {
@@ -72,6 +86,7 @@ impl Default for AppConfig {
             heartbeat_every_s: 10,
             autostart: false,
             close_behavior: CloseBehavior::Ask,
+            events_retention_days: DEFAULT_RETENTION_DAYS,
         }
     }
 }
@@ -94,13 +109,15 @@ impl AppConfig {
              min_segment_duration_s = {}\n\
              heartbeat_every_s = {}\n\
              autostart = {}\n\
-             close_behavior = \"{}\"\n",
+             close_behavior = \"{}\"\n\
+             events_retention_days = {}\n",
             self.idle_threshold_s,
             self.grace_period_s,
             self.min_segment_duration_s,
             self.heartbeat_every_s,
             self.autostart,
             self.close_behavior.as_str(),
+            self.events_retention_days,
         )
     }
 }
@@ -143,6 +160,11 @@ pub fn parse(src: &str) -> AppConfig {
         close_behavior: text("close_behavior")
             .and_then(CloseBehavior::from_str)
             .unwrap_or(d.close_behavior),
+        // 0 是有效取值（永不删），所以下限就是 0；负数也落到 0
+        // ——"负数天"最合理的解释是"不要按天数删"，不是"删掉一切"。
+        events_retention_days: int("events_retention_days")
+            .map(|v| clamp_u32(v, 0, MAX_RETENTION_DAYS))
+            .unwrap_or(d.events_retention_days),
     }
 }
 
@@ -263,6 +285,16 @@ autostart = false
 
 # 点窗口的 ✕ 时：ask = 问一次 / minimize = 最小化到托盘 / quit = 退出
 close_behavior = "ask"
+
+# 保留多少天的**原始窗口事件**。0 = 永不删。
+#
+# 原始事件是数据流本身，实测约 5 MB/天、一年约 1.8 GB；不设上限就会一直涨。
+# 但删掉它不影响你的时长统计：activities（时间线、汇总、热力图用的那一批）
+# 永远保留。受影响的只有「窗口标题 Top」与段详情里能回溯到的标题范围。
+#
+# 365 天够覆盖热力图默认的那面墙（53 周 ≈ 371 天）。想留更久就调大，
+# 想彻底不删就填 0（代价是磁盘一直涨）。
+events_retention_days = 365
 "#;
 
 #[cfg(test)]
@@ -554,5 +586,70 @@ close_behavior = "minimize"
         assert!(after.contains("close_behavior = \"quit\""));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+
+    #[test]
+    fn default_keeps_a_year_of_events() {
+        // B3。events 表实测 ≈5 MB/天 ≈1.8 GB/年，无限增长。
+        // 默认保留 365 天 —— 够覆盖热力图默认窗口（`wallWindow` 是 53 周
+        // ≈371 天），一年后约 1.4 GB 而不是 1.8 GB。
+        assert_eq!(AppConfig::default().events_retention_days, 365);
+    }
+
+    #[test]
+    fn the_key_is_read_from_config_toml() {
+        let c = parse("events_retention_days = 90");
+        assert_eq!(c.events_retention_days, 90);
+    }
+
+    #[test]
+    fn zero_means_never_prune() {
+        // 0 必须是有效取值而不是被夹到下限 —— 「我就是要全留」是个合理诉求。
+        let c = parse("events_retention_days = 0");
+        assert_eq!(c.events_retention_days, 0);
+    }
+
+    #[test]
+    fn a_missing_or_broken_value_falls_back_to_the_default() {
+        assert_eq!(parse("").events_retention_days, 365);
+        assert_eq!(parse("events_retention_days = \"一年\"").events_retention_days, 365);
+        assert_eq!(parse("这不是 TOML").events_retention_days, 365);
+    }
+
+    #[test]
+    fn absurd_values_are_clamped_rather_than_trusted() {
+        // 手滑写了个 10^9 也不该真删成 27 亿天后 —— 夹到上限，
+        // 等于「近乎永不删」，这是出错时最安全的解释。
+        assert_eq!(
+            parse("events_retention_days = 1000000000").events_retention_days,
+            MAX_RETENTION_DAYS
+        );
+        assert_eq!(
+            parse("events_retention_days = -5").events_retention_days,
+            0,
+            "负数当 0（永不删），不是当成 1970 年前"
+        );
+    }
+
+    #[test]
+    fn the_default_template_documents_the_key() {
+        // 用户得能在模板里看到这一项及其含义，否则没人会改。
+        assert!(DEFAULT_CONFIG_TOML.contains("events_retention_days"));
+        let c = parse(DEFAULT_CONFIG_TOML);
+        assert_eq!(c.events_retention_days, 365, "模板里的默认值必须与代码一致");
+    }
+
+    #[test]
+    fn the_key_survives_a_toml_round_trip() {
+        let c = AppConfig {
+            events_retention_days: 180,
+            ..AppConfig::default()
+        };
+        assert_eq!(parse(&c.to_toml()).events_retention_days, 180);
     }
 }
