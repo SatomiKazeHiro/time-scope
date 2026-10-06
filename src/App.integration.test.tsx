@@ -324,3 +324,58 @@ describe("切粒度时的选中态", () => {
     expect(screen.getByText("已选中 · 再次点击取消")).toBeTruthy();
   });
 });
+
+describe("详情卡片的前后段导航", () => {
+  /** 选中当天第 index 段（0 基），返回该段在详情面板里的可访问文本。 */
+  function selectSegmentAt(index: number): void {
+    const cells = timelineRects();
+    fireEvent.click(cells[index]);
+  }
+
+  it("上一段 / 下一段真的把选中态移到相邻的段", async () => {
+    // 组件测试只证明按钮会调 onPrev/onNext；这里证明 App 那边接对了线。
+    invoke.mockResolvedValue([seg("s1", 9, 10), seg("s2", 11, 12), seg("s3", 13, 14)]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBe(3));
+
+    selectSegmentAt(1);
+    await waitFor(() =>
+      expect(screen.getByTestId("segment-position").textContent).toBe("2 / 3"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "下一段" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("segment-position").textContent).toBe("3 / 3"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上一段" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("segment-position").textContent).toBe("2 / 3"),
+    );
+  });
+
+  it("第一段禁用上一段，最后一段禁用下一段", async () => {
+    invoke.mockResolvedValue([seg("s1", 9, 10), seg("s2", 11, 12)]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBe(2));
+
+    selectSegmentAt(0);
+    expect((screen.getByRole("button", { name: "上一段" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "下一段" }) as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "下一段" }));
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: "下一段" }) as HTMLButtonElement).disabled).toBe(true),
+    );
+    expect((screen.getByRole("button", { name: "上一段" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("右上角显示第几段 / 共几段", async () => {
+    invoke.mockResolvedValue([seg("s1", 9, 10), seg("s2", 11, 12), seg("s3", 13, 14)]);
+    render(<App />);
+    await waitFor(() => expect(timelineRects().length).toBe(3));
+
+    selectSegmentAt(1);
+    expect(screen.getByTestId("segment-position").textContent).toBe("2 / 3");
+  });
+});

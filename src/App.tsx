@@ -103,6 +103,27 @@ export default function App() {
 
   const isToday = date === todayString();
 
+  // 详情卡片右上角的「第几段 / 共几段」与前一段、后一段。
+  // `segments` 本来就按时间有序，所以位置就是数组下标。
+  // 定位不到（`total === 0`）时卡片只显示 id、不给两个「点了没反应」的按钮。
+  //
+  // **只走当天**：跨天要前端持有相邻两天的段，而它现在只拿当天，
+  // 翻日期时才重新查 —— 那需要一份缓存 + 轮询对齐，先不做。
+  const selectedPos = useMemo(() => {
+    if (!selected) return undefined;
+    const index = segments.findIndex((s) => s.id === selected.id);
+    return { index, total: segments.length };
+  }, [selected, segments]);
+
+  function selectAt(index: number) {
+    const s = segments[index];
+    if (!s) return;
+    setSelected(s);
+    // 指标模式下"选中桶"是按**格**的语义，跟着段走会让环留在原地，
+    // 所以换段时一并清掉（B7 的同一条理由）。
+    setSelectedBucket(null);
+  }
+
   return (
     /* min-h-screen：内容超了就让**整页**滚。原先用 h-full + 面板各自滚，
        结果窄窗口下出现三层嵌套滚动条，每个面板只剩一两行 —— 不如一根
@@ -204,7 +225,16 @@ export default function App() {
                     免得窄窗口下三层滚动条套在一起，每层都只剩一两行。 */}
                 <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
                   <DaySummary segments={segments} dayStartMs={dayStartMs} />
-                  <SegmentDetail segment={selected} />
+                  <SegmentDetail
+                    segment={selected}
+                    position={selectedPos}
+                    onPrev={selectedPos && selectedPos.index > 0 ? () => selectAt(selectedPos.index - 1) : undefined}
+                    onNext={
+                      selectedPos && selectedPos.index < selectedPos.total - 1
+                        ? () => selectAt(selectedPos.index + 1)
+                        : undefined
+                    }
+                  />
                 </div>
               </>
             )}

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AppWindow, Clock, Gauge, Layers, ShieldCheck } from "lucide-react";
+import { AppWindow, ChevronLeft, ChevronRight, Clock, Gauge, Layers, ShieldCheck } from "lucide-react";
 import { parsePayload, type Segment, type SegmentTitle } from "../types";
 import { formatDuration } from "../lib/bucket";
 import { colorForCategory, metaForCategory } from "../design/categories";
@@ -12,7 +12,18 @@ import { colorForCategory, metaForCategory } from "../design/categories";
  * 点开时按 evidence id 反查，`redacted` 标记由**后端**判定——前端不硬编码
  * `[redacted]` 这个占位符，否则改了占位符就会出现"标记失效但数据仍脱敏"的怪状态。
  */
-export default function SegmentDetail({ segment }: { segment: Segment | null }) {
+export default function SegmentDetail({
+  segment,
+  position,
+  onPrev,
+  onNext,
+}: {
+  segment: Segment | null;
+  /** 这一段在当天里的位置。`total === 0` 表示调用方没定位到，此时只显示 id。 */
+  position?: { index: number; total: number };
+  onPrev?: () => void;
+  onNext?: () => void;
+}) {
   const [titles, setTitles] = useState<SegmentTitle[] | null>(null);
   const [titlesFailed, setTitlesFailed] = useState(false);
 
@@ -72,6 +83,12 @@ export default function SegmentDetail({ segment }: { segment: Segment | null }) 
         <code className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-micro text-ink-faint">
           {segment.category}
         </code>
+        <Locator
+          segment={segment}
+          position={position}
+          onPrev={onPrev}
+          onNext={onNext}
+        />
       </div>
 
       <dl className="m-0 grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2">
@@ -117,6 +134,86 @@ export default function SegmentDetail({ segment }: { segment: Segment | null }) 
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * 卡片右上角的「定位 + 前后段导航」。
+ *
+ * 三样东西：这一段在当天里的第几、原始 id、以及前一段/后一段。
+ * - **序号**用等宽数字（`tnum`）：每按一次就变一位，非等宽会让整行宽度跳。
+ * - **id** 是给人报问题时对得上的，别指望用户自己看懂。
+ * - **按钮**到头就禁用、不循环：从 23:59 一下跳到 00:00 跨度太大，位置感会丢。
+ *   与时间线上方向键的行为一致。
+ *
+ * 只走**当天**（`position` 由 App 给出）。跨天需要前端持有相邻两天的段，
+ * 而它现在只拿当天 —— 见上一轮讨论，先不做。
+ */
+function Locator({
+  segment,
+  position,
+  onPrev,
+  onNext,
+}: {
+  segment: Segment;
+  position?: { index: number; total: number };
+  onPrev?: () => void;
+  onNext?: () => void;
+}) {
+  const located = !!position && position.total > 0;
+  const atStart = !located || position!.index <= 0;
+  const atEnd = !located || position!.index >= position!.total - 1;
+
+  return (
+    <div className="ml-auto flex items-center gap-2">
+      {located && (
+        <span data-testid="segment-position" className="tnum text-micro text-ink-faint">
+          {position!.index + 1} / {position!.total}
+        </span>
+      )}
+      <code
+        data-testid="segment-id"
+        className="max-w-[16ch] truncate text-micro text-ink-faint"
+        title={segment.id}
+      >
+        {segment.id}
+      </code>
+      {located && (
+        <span className="flex items-center gap-1">
+          <NavButton label="上一段" disabled={atStart || !onPrev} onClick={onPrev}>
+            <ChevronLeft size={14} aria-hidden />
+          </NavButton>
+          <NavButton label="下一段" disabled={atEnd || !onNext} onClick={onNext}>
+            <ChevronRight size={14} aria-hidden />
+          </NavButton>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** 圆形导航按钮。图标本身是 `aria-hidden`，名字在 `aria-label` 上。 */
+function NavButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="flex size-6 items-center justify-center rounded-full border border-line text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:pointer-events-none disabled:opacity-35"
+    >
+      {children}
+    </button>
   );
 }
 

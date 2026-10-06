@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import SegmentDetail from "./EventDetail";
 import type { Segment } from "../types";
 
@@ -138,5 +138,118 @@ describe("SegmentDetail 的窗口标题", () => {
     rerender(<SegmentDetail segment={segment()} />);
     rerender(<SegmentDetail segment={segment()} />);
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+  });
+});
+
+
+// --- 详情卡片右上角：序号 + 原始 id + 上一个/下一个 ---
+
+describe("SegmentDetail 的定位与前后段导航", () => {
+  /** 卡片右上角那个「第几段 / 共几段」读数。 */
+  function positionText(): string {
+    return screen.getByTestId("segment-position").textContent ?? "";
+  }
+
+  it("显示这是当天的第几段 / 共几段", () => {
+    render(<SegmentDetail segment={segment({ id: "s2" })} position={{ index: 2, total: 7 }} />);
+    expect(positionText()).toContain("3");
+    expect(positionText()).toContain("7");
+  });
+
+  it("同时显示原始 id，方便报问题时对得上", () => {
+    render(
+      <SegmentDetail segment={segment({ id: "seg-1759843200000" })} position={{ index: 0, total: 3 }} />,
+    );
+    expect(screen.getByTestId("segment-id").textContent).toBe("seg-1759843200000");
+  });
+
+  it("序号用等宽数字，跳动时不会左右抖", () => {
+    // 读数每按一次就变一位；非等宽数字会让整行宽度变化。
+    const { container } = render(
+      <SegmentDetail segment={segment()} position={{ index: 2, total: 7 }} />,
+    );
+    expect(container.querySelector(".tnum")).toBeTruthy();
+  });
+
+  it("两个按钮分别跳到前一段和后一段", () => {
+    const prev = vi.fn();
+    const next = vi.fn();
+    render(
+      <SegmentDetail
+        segment={segment({ id: "s2" })}
+        position={{ index: 2, total: 7 }}
+        onPrev={prev}
+        onNext={next}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "上一段" }));
+    fireEvent.click(screen.getByRole("button", { name: "下一段" }));
+    expect(prev).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("第一段禁用上一段，最后一段禁用下一段", () => {
+    const { rerender } = render(
+      <SegmentDetail
+        segment={segment({ id: "s0" })}
+        position={{ index: 0, total: 3 }}
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "上一段" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "下一段" }) as HTMLButtonElement).disabled).toBe(false);
+
+    rerender(
+      <SegmentDetail
+        segment={segment({ id: "s2" })}
+        position={{ index: 2, total: 3 }}
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "上一段" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "下一段" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("当天只有一段时两个都禁用", () => {
+    render(
+      <SegmentDetail
+        segment={segment({ id: "only" })}
+        position={{ index: 0, total: 1 }}
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "上一段" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "下一段" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("还没选中任何段时不显示这一组控件", () => {
+    render(<SegmentDetail segment={null} />);
+    expect(screen.queryByRole("button", { name: "上一段" })).toBeNull();
+    expect(screen.queryByTestId("segment-position")).toBeNull();
+  });
+
+  it("只给了段、没有给位置时不崩、也不显示序号", () => {
+    // 位置是可选的：调用方不知道自己在第几段时不该整张卡片炸掉。
+    render(<SegmentDetail segment={segment()} />);
+    expect(screen.queryByTestId("segment-position")).toBeNull();
+    expect(screen.getByText("Code.exe")).toBeTruthy();
+  });
+
+  it("定位不到这一段时只显示 id，不显示导航", () => {
+    // total=0 = 调用方没找到（理论上不会发生）。这时给两个空按钮
+    // 比什么都不给更糟 —— 用户会去点一个点了没反应的东西。
+    render(
+      <SegmentDetail
+        segment={segment({ id: "ghost" })}
+        position={{ index: 0, total: 0 }}
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "上一段" })).toBeNull();
+    expect(screen.getByTestId("segment-id")).toBeTruthy();
   });
 });
