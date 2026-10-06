@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import {
-  buildWall, uninstalledColor, uninstalledStroke,
-  GAP, scaleColor, scaleStroke, LABELLED_ROWS, WEEKDAY_LABELS,
+  buildWall, uninstalledColor,
+  GAP, scaleColor, toneOf, LABELLED_ROWS, WEEKDAY_LABELS,
   type DateRange,
 } from "../lib/summary";
 import type { DayCell } from "../types";
@@ -14,33 +14,20 @@ import type { DayCell } from "../types";
  * 解析的是**块向**尺寸（高度），而高度是 auto，于是循环依赖、行高塌成 0。
  * cqw 解析的是**行内**尺寸（宽度），宽度是定值，所以成立。
  */
-/**
- * 选中区域**不画跨格矩形**，改为给落在范围内的格子加一个 ::after。
- *
- * 跨格矩形要算「第 N 列第 M 行」再绝对定位，--cw 稍有偏差就整块错位
- * （已经错过多轮）。改成按**格子自己的日期**判断归属：相邻的高亮格
- * 各自向外扩半格间隙（3px/2 = 1.5px），连起来就是一整片区域 ——
- * 没有跨格算术，也就不存在跨格算错。
- */
-const CELL_CSS = `
-.cell { position: relative; }
-.cell[data-in-range]::after {
-  content: "";
-  position: absolute;
-  inset: -1.5px;
-  border: 1.5px solid var(--color-ink);
-  border-radius: 4px;
-  z-index: 1;
-  pointer-events: none;
-}
-`;
-
 function gridVars(weeks: number): React.CSSProperties {
   return {
     "--cw": `calc((100cqw - (${weeks} - 1) * var(--gap)) / ${weeks})`,
     "--gap": `${GAP}px`,
   } as React.CSSProperties;
 }
+
+/** 周条的内描边。常量提到组件外：53 根每次渲染都新建对象没有意义。 */
+const WEEK_STRIP_STYLE: React.CSSProperties = {
+  boxShadow: "inset 0 0 0 1px var(--color-line-strong)",
+};
+
+/** 补齐位是不可见的占位（但仍要占槽位，见下方说明）。 */
+const PAD_STYLE: React.CSSProperties = { background: "transparent" };
 
 interface ContributionWallProps {
   /** **连续升序**的日期序列（`lib/summary.ts` 的 `fillDays` 产出） */
@@ -61,14 +48,20 @@ interface ContributionWallProps {
  * 监控时长的 GitHub 式贡献墙，但**行序跟 GitHub 不同**：行 0 = 周一（ISO 8601），
  * 1 列 = 1 周（自周一起）。GitHub 是周日开头，这里按 ISO 走。
  *
- * **框是跨格的一整块绝对定位矩形，不是逐格描边** —— 框的宽度本身就
- * 告诉用户当前框的是日、周还是月（spec §5.3）。
- * 框外**不压暗**：聚光灯方案会让远处月份的对比度跌破 3:1。
+ * 选中范围**逐格判断**（按格子自己的日期），不画跨格矩形 —— 跨格矩形要算
+ * 「第 N 列第 M 行」再绝对定位，`--cw` 稍有偏差就整块错到隔壁列（已错过三轮）。
+ * 每格的外环向外扩**半格间隙**，相邻选中格自然连成一整片，所以框的宽度
+ * 仍然一眼能看出选的是日、周还是月。
+ *
+ * 框外**不压暗**（聚光灯）：最低档卡在 ordinal 的 2:1 底线上，任何压暗都破线
+ * ——详见 theme.css 里 `.wall-cell[data-in-range]` 的注释。
  */
 export default function ContributionWall({
   days, trackedFrom, selection, onSelectDay, onSelectWeek, onSelectMonth,
 }: ContributionWallProps) {
   const layout = useMemo(() => buildWall(days, trackedFrom), [days, trackedFrom]);
+  /** `--cw` 由列数算出来；外层容器与内层网格共用同一份。 */
+  const vars = useMemo(() => gridVars(layout.weeks), [layout.weeks]);
 
   /** 某个格子是否落在当前选中范围内 —— 按**格子自己的日期**判断。 */
   const inSelection = useCallback(
@@ -85,9 +78,12 @@ export default function ContributionWall({
    * 某列的**周一**（row 0）。补齐位也有真实日期，所以每周都拿得到 ——
    * 这才是 `onSelectWeek` 声明的那个参数。`rangeFor("week", …)` 内部
    * 还会再 snap 一次，两处一致才不会被传错日期坑到。
+   *
+   * **O(1) 取下标**：网格是列优先铺的（`buildWall` 按 i = col*7 + row 推），
+   * 所以 `cells[ci * 7]` 必然就是第 ci 列的 row 0。以前用 `find` 扫全表，
+   * 53 列 × 371 格 = 每次渲染两万次比较，纯浪费。
    */
-  const weekStartOf = (ci: number): string | undefined =>
-    layout.cells.find((c) => c.col === ci && c.row === 0)?.date;
+  const weekStartOf = (ci: number): string | undefined => layout.cells[ci * 7]?.date;
 
   return (
     // **左内边距 + 绝对定位的标签列**，标签不占布局宽度。
@@ -103,9 +99,8 @@ export default function ContributionWall({
       /* --cw 必须定义在容器上：星期标签列是内层 div 的兄弟节点，
          定义在内层它拿不到 -> calc() 整条失效 -> top 退回 auto ->
          三个标签叠在一处，只剩最后那个露出来。 */
-      style={{ containerType: "inline-size", ...gridVars(layout.weeks) }}
+      style={{ containerType: "inline-size", ...vars }}
     >
-      <style>{CELL_CSS}</style>
       <div className="w-full">
       <div className="relative mb-1 h-3 w-full">
         {layout.monthLabels.map((m) => (
@@ -122,7 +117,7 @@ export default function ContributionWall({
         ))}
       </div>
 
-      <div className="relative w-full" style={gridVars(layout.weeks)}>
+      <div className="relative w-full" style={vars}>
         <div
           role="grid"
           aria-label="监控时长"
@@ -151,6 +146,10 @@ export default function ContributionWall({
                 role="gridcell"
                 data-date={c.date}
                 data-testid={`cell-${c.date}`}
+                /* 选中/未选中、空档/有活动都由这两个属性表达，
+                   描边与选中外环在 theme.css 的 .wall-cell 规则里 ——
+                   内描边和外环必须能叠加，只有 CSS 能做到不写笛卡尔积 */
+                data-tone={toneOf(c)}
                 data-in-range={inSelection(c.date) ? "" : undefined}
                 title={
                   c.tracked
@@ -158,14 +157,11 @@ export default function ContributionWall({
                     : `${c.date} · 还没装 Time Scope`
                 }
                 onClick={() => onSelectDay(c.date)}
-                className="cell cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
-                style={{
-                  background: c.tracked ? scaleColor(c.step) : uninstalledColor(),
-                  boxShadow: c.tracked ? scaleStroke(c.step) : uninstalledStroke(),
-                }}
+                className="wall-cell cursor-pointer rounded-[2px] outline-offset-1 focus-visible:outline-1 focus-visible:outline-ink"
+                style={{ background: c.tracked ? scaleColor(c.step) : uninstalledColor() }}
               />
             ) : (
-              <span key={c.date} aria-hidden style={{ background: "transparent" }} />
+              <span key={c.date} aria-hidden style={PAD_STYLE} />
             ),
           )}
         </div>
@@ -193,7 +189,7 @@ export default function ContributionWall({
               disabled={!s}
               onClick={() => s && onSelectWeek(s)}
               // 同样的毛病：surface-2 在浅色下等于透明。MASTER §2.4 的既定解法。
-              style={{ boxShadow: "inset 0 0 0 1px var(--color-line-strong)" }}
+              style={WEEK_STRIP_STYLE}
               className="h-1 cursor-pointer rounded-sm bg-surface-2 transition-colors hover:bg-ink-ghost disabled:cursor-default"
             />
           );

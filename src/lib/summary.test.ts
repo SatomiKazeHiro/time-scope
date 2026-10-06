@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   buildWall, endOfMonth, fillDays, rangeFor, scaleColor, scaleStep,
-  scaleStroke, uninstalledStroke, selectionFrame, startOfWeek, wallWindow, weekdayOf,
+  toneOf, selectionFrame, startOfWeek, wallWindow, weekdayOf,
   rowOf, LABELLED_ROWS, WEEKDAY_LABELS,
-  type DateRange,
+  type DateRange, type WallCell,
 } from "./summary";
 import type { DayCell } from "../types";
 
@@ -14,10 +14,11 @@ function days(spec: Array<[string, number]>): DayCell[] {
 }
 
 /** 从 `from` 起连续 `count` 天的 [date, 1] 序列。 */
-/** 复刻组件里给格子算 style 的那段逻辑，测它而不测 DOM。 */
-function cellStyle(c: { tracked: boolean; step: number }): string {
-  const stroke = c.tracked ? scaleStroke(c.step) : uninstalledStroke();
-  return `bg: ${c.tracked ? scaleColor(c.step) : "var(--color-surface-2)"}; shadow: ${stroke ?? "none"}`;
+/** 复刻组件里给格子算 style 的那段逻辑，测它而不测 DOM。
+ *  描边不在 JS 里了：0 档的强/弱内描边与选中外环必须能叠加，
+ *  所以它们住在 theme.css 的 `.wall-cell` 规则里，这里只测**档名**。 */
+function cellStyle(c: WallCell): string {
+  return `bg: ${c.tracked ? scaleColor(c.step) : "var(--color-surface-2)"}; tone: ${toneOf(c) ?? "none"}`;
 }
 
 function range(from: string, count: number): Array<[string, number]> {
@@ -203,6 +204,30 @@ describe("buildWall 的固定跨度", () => {
     expect(rowOf(lastReal.date)).toBe(lastReal.row);
   });
 
+  it("槽位恒 371，其中「天」格子是 365~371（今天是周几决定）", () => {
+    // 窗口 = 今天所在周的**周一**往前推 52 周 → 到「今天」。
+    // 所以最后那个整周永远只有一个开头：周一 -> 365 天；周日 -> 371 天
+    // （一个补齐位都没有）。槽位（DOM 子节点）恒为 53×7 = 371，差额是补齐位。
+    // 2026-09-28 是周一，所以这一组正好覆盖 7 种情况。
+    const week = range("2026-09-28", 7).map(([d]) => d);
+    expect(week.map(rowOf)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+
+    for (const today of week) {
+      const w = wallWindow(today);
+      const layout = buildWall(fillDays(w.start, w.end, new Map()));
+      const present = layout.cells.filter((c) => c.present);
+
+      expect(layout.weeks).toBe(53);
+      expect(layout.cells).toHaveLength(53 * 7);
+      expect(present).toHaveLength(364 + rowOf(today) + 1);
+      // 最后一格永远是今天，其余差额全在末尾（补齐到周日）
+      expect(present.at(-1)!.date).toBe(today);
+      expect(layout.cells.filter((c) => !c.present)).toHaveLength(
+        371 - present.length,
+      );
+    }
+  });
+
   it("窗口里没数据的日子是 0 档（轨道色），不是缺席", () => {
     const w = wallWindow("2026-10-05");
     const filled = fillDays(w.start, w.end, new Map([["2026-10-03", 3_600_000]]));
@@ -247,22 +272,33 @@ describe("未安装期", () => {
   it("未安装不参与色阶：再大的 max 也不改变它的样子", () => {
     expect(byDate["2026-05-15"].step).toBe(0);
   });
-  it("两种空的描边分两级：都能看见，但强弱不同", () => {
+  it("两种空的内描边分两级：都能看见，但强弱不同", () => {
     // 上一版把未安装做成面板色 = 和空白没区别 -> 白茫茫一片。
     // 两者共用轨道色底，用描边强弱区分：强的读作「有个空方块」，
-    // 弱的读作「还没装的幽灵格子」。
+    // 弱的读作「还没装的幽灵格子」。具体色值在 theme.css 的
+    // .wall-cell[data-tone=…] 里，这里断言的是**档名分开了**。
     const noActivity = Object.entries(byDate).find(
       ([, c]) => c.tracked && c.totalMs === 0,
     )?.[1];
     expect(noActivity).toBeDefined();
     const uninstalled = cellStyle(byDate["2026-05-15"]);
     const active = cellStyle(noActivity!);
-    expect(uninstalled).toContain("--color-line)");
-    expect(uninstalled).not.toContain("line-strong");
-    expect(active).toContain("--color-line-strong)");
+    expect(uninstalled).toContain("tone: uninstalled");
+    expect(active).toContain("tone: empty");
     // 两者的底色相同，只差描边
     expect(uninstalled).toContain("surface-2");
     expect(active).toContain("surface-2");
+  });
+
+  it("填了色的格子不描边（tone 为空），补齐位也不描", () => {
+    // 有颜色的格子自带边界，再描一圈会让相邻档看起来更接近
+    const filled = Object.values(byDate).find((c) => c.step > 0)!;
+    expect(toneOf(filled)).toBeUndefined();
+    // 补齐位在屏幕外，不该因为 tracked=false 就被当成「还没装」
+    const pad = buildWall(
+      days([["2026-10-01", 1]]),
+    ).cells.find((c) => !c.present)!;
+    expect(toneOf(pad)).toBeUndefined();
   });
 });
 

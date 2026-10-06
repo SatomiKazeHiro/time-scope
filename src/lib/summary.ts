@@ -128,20 +128,10 @@ export function uninstalledColor(): string {
   return "var(--color-surface-2)";
 }
 
-export function uninstalledStroke(): string {
-  return "inset 0 0 0 1px var(--color-line)";
-}
-
-/** 0 档格子的内描边。
- *
- * `--color-surface-2` 在浅色主题下是 #f4f5f7，压在 #ffffff 的面板上
- * 几乎看不见 —— 「哪天没活动」就变成了「哪里是空白」，读不出信息。
- * MASTER §2.4 对「颜色太淡看不见」有既定解法：1px 内描边，用
- * `--color-line-strong`，**不新增 token**。
- */
-export function scaleStroke(step: number): string | undefined {
-  return step === 0 ? "inset 0 0 0 1px var(--color-line-strong)" : undefined;
-}
+/* 描边不在这一层了：0 档的内描边（强/弱两级）与选中的外环必须能**组合**，
+   放在 CSS 里才不会退化成「底色 × 有没有选中」的笛卡尔积。
+   这里只给出档名（`toneOf`），真正的 1px 内描边在 theme.css 的
+   `.wall-cell[data-tone=…]` 里。 */
 
 export interface WallCell {
   date: string;
@@ -165,6 +155,25 @@ export interface WallLayout {
   /** `date` 是**该月第一天**，不是那一列的列首日期 —— 月首常落在周中，
    *  拿列首去推 rangeFor("month") 会选中上一个月。 */
   monthLabels: Array<{ col: number; label: string; date: string }>;
+}
+
+/**
+ * 格子的内描边档。组件把它写成 `data-tone`，描边本身在
+ * `theme.css` 的 `.wall-cell[data-tone="…"]`。
+ *
+ * 空档必须分两级 —— 两者**底色相同**（都是轨道色 `--color-surface-2`，
+ * 浅色主题下压在白色面板上几乎看不见），只靠 1px 内描边的强弱区分：
+ * - `uninstalled`：还没装 Time Scope 的那段日子，弱描边 `--color-line`
+ * - `empty`：装了但当天没活动，强描边 `--color-line-strong`
+ *
+ * 不描边两者都看不见，都描强又分不开。**不新增 token**（MASTER §2.4）。
+ */
+export type WallTone = "uninstalled" | "empty";
+
+/** 该格子用哪一档内描边。填了色（`step > 0`）与补齐位都不描边。 */
+export function toneOf(cell: WallCell): WallTone | undefined {
+  if (!cell.present || cell.step > 0) return undefined;
+  return cell.tracked ? "empty" : "uninstalled";
 }
 
 /**

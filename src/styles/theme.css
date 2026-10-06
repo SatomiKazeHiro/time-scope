@@ -331,6 +331,40 @@
     letter-spacing: 0.04em;
     color: var(--color-ink-muted);
   }
+
+  /* ── 贡献墙（热力图）的格子 ───────────────────────────────────────
+     两条描边全部走 box-shadow，用两个**局部组合变量**串起来。
+     它们不是色板 token（色值仍来自 --color-line / --color-line-strong /
+     --color-ink），只是让「哪种底色」和「有没有选中」正交：加一种底色
+     不用再补一条「底色 × 选中」的笛卡尔积规则。
+     为什么不用 border：border 会改盒子尺寸，53 列 × 7 行会累成错位；
+     为什么不用 ::after（曾经用过）：那是为了在格子外再画一圈，
+     而 box-shadow 本身就是格外的，不需要多一棵不参与布局的树。 */
+  .wall-cell {
+    --wall-ring: 0 0 0 0 transparent;
+    --wall-stroke: 0 0 0 0 transparent;
+    box-shadow: var(--wall-ring), var(--wall-stroke);
+  }
+  /* 0 档（装了但当天没活动）与「还没装」**底色相同**，只差描边强弱：
+     弱的读作「幽灵格子」，强的读作「有个确切的空方块」。
+     底色是 --color-surface-2，浅色主题下压在白色面板上等于隐形，
+     必须靠 1px 内描边才看得见（MASTER §2.4）。 */
+  .wall-cell[data-tone="empty"] {
+    --wall-stroke: inset 0 0 0 1px var(--color-line-strong);
+  }
+  .wall-cell[data-tone="uninstalled"] {
+    --wall-stroke: inset 0 0 0 1px var(--color-line);
+  }
+  /* 选中：外环向格外扩**半格间隙**（--gap 是 3px，所以 1.5px），
+     相邻选中格的外环在间隙里正好相接，连成一整片 —— 于是不需要跨格
+     矩形，也不需要伪元素。
+     框外**不压暗**（聚光灯）：最低档卡在 ordinal 的 2:1 底线上
+     （深色 2.29:1 / 浅色 2.07:1，对轨道 2.07 / 1.90），实测压到 α=0.85
+     就掉到 1.99:1、α=0.4 只剩 1.32:1 —— 任何压暗都破线。外环用
+     --color-ink（对面板 14.59:1 / 18.29:1），是纯明度表达，不借色相。 */
+  .wall-cell[data-in-range] {
+    --wall-ring: 0 0 0 1.5px var(--color-ink);
+  }
 }
 
 /* 尊重系统的减少动效设置：常驻应用会在用户眼前跑一整天，

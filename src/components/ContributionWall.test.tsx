@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import ContributionWall from "./ContributionWall";
-import type { DateRange } from "../lib/summary";
+import { fillDays, wallWindow, type DateRange } from "../lib/summary";
 import type { DayCell } from "../types";
 
 /** 2026-10-01(周四) 起三天 —— 首列必然有 4 个补齐位。 */
@@ -329,26 +329,64 @@ describe("ContributionWall", () => {
     }
   });
 
-  it("高亮靠 ::after 向外扩半格间隙，相邻格连成一片（没有跨格算术）", () => {
+  it("选中靠 box-shadow 外环连成一片，不再用 ::after 伪元素", () => {
     const { container } = render(
       <ContributionWall days={DAYS} selection={null}
         onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
     );
-    const html = container.innerHTML;
-    // 样式里要有 inset 负值（半格间隙 = 3px/2 = 1.5px）
-    expect(html).toContain("inset: -1.5px");
-    // 选中的格子要有 ::after 描边
-    expect(html).toContain(".cell[data-in-range]::after");
+    // 组件不再注入 <style>，也不再有伪元素：描边全在 theme.css
+    // （环半径 = 半格间隙这条几何在 tokens.test.ts 里对着 theme.css 断言）
+    expect(container.querySelector("style")).toBeNull();
+    expect(container.innerHTML).not.toContain("::after");
+    // 选中的格子只靠 data-in-range 说话，不在 JS 里拼 box-shadow
+    const marked = container.querySelectorAll("[data-in-range]");
+    expect(marked.length).toBe(0);
+    for (const el of container.querySelectorAll("[data-date]")) {
+      expect((el as HTMLElement).style.boxShadow).toBe("");
+    }
   });
 
-  it("框外不压暗（只描边；压暗会跌破 MASTER 的 3:1 对比度红线）", () => {
+  it("空档按 data-tone 分「还没装」和「装了但没活动」", () => {
+    const mixed: DayCell[] = [
+      { date: "2026-10-01", totalMs: 0 },          // 早于首次采集 -> 幽灵格子
+      { date: "2026-10-02", totalMs: 7_200_000 },  // 有活动 -> 不描边
+      { date: "2026-10-03", totalMs: 0 },          // 装了但当天 0 时长
+    ];
+    const { container } = render(
+      <ContributionWall days={mixed} trackedFrom="2026-10-02" selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    const tone = (d: string) =>
+      container.querySelector(`[data-date='${d}']`)!.getAttribute("data-tone");
+    expect(tone("2026-10-01")).toBe("uninstalled");
+    expect(tone("2026-10-02")).toBeNull();
+    expect(tone("2026-10-03")).toBe("empty");
+  });
+
+  it("满窗口的槽位恰好 371，其中可点的「天」按钮 365~371", () => {
+    // 墙固定铺 53 周（371 槽位），但窗口是「52 周前的周一 → 今天」，
+    // 所以真正是「天」的格子数 = 364 + 今天在墙里的行号 + 1：
+    // 周一 -> 365，周日 -> 371（一个补齐位都没有）。
+    const w = wallWindow("2026-10-06");            // 周二 -> 366
+    const filled = fillDays(w.start, w.end, new Map());
+    const { container } = render(
+      <ContributionWall days={filled} selection={null}
+        onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
+    );
+    expect(container.querySelectorAll("[role='grid'] > *")).toHaveLength(371);
+    expect(container.querySelectorAll("[role='grid'] [data-date]")).toHaveLength(366);
+  });
+
+  it("框外不压暗（只描边；压暗会跌破 ordinal 的 2:1 底线）", () => {
     const { container } = render(
       <ContributionWall
         days={DAYS}
         selection={{ kind: "day", from: "2026-10-02", to: "2026-10-02", label: "" }}
         onSelectDay={NOOP} onSelectWeek={NOOP} onSelectMonth={NOOP} />,
     );
-    expect(container.innerHTML).not.toContain("opacity:");
+    // 最低档实测 2.29:1（深）/ 2.07:1（浅），压到 α=0.85 就掉到 1.99:1、
+    // α=0.4 只剩 1.32:1 —— 任何全局压暗都破 ordinal 的 2:1 底线（MASTER §2.5）。
+    expect(container.innerHTML).not.toContain("opacity");
     for (const el of container.querySelectorAll("[data-date]")) {
       expect((el as HTMLElement).style.opacity).toBe("");
     }
