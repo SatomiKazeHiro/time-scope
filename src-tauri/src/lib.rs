@@ -10,6 +10,12 @@
 //!                                            [BatchWriter]  [engine 线程]      SQLite(WAL)
 //!                                            原始 Event       ActivitySegment
 //! ```
+//!
+//! **所有 IPC 命令都标了 `async`**，所以它们跑在 Tauri 的异步运行时上，
+//! 不是主线程。Tauri v2 文档：「Commands without the async keyword are
+//! executed on the main thread.」`get_top_titles` 那条 `json_extract` 全表扫
+//! 实测一年数据 ≈20 秒，挂在主线程上窗口会整个"未响应"、用户十有八九直接
+//! 强杀进程。`tests/ipc_threading.rs` 守着这条不变量。
 
 mod autostart;
 mod close_behavior;
@@ -60,7 +66,7 @@ struct AppState {
 /// 取某天的全部 ActivitySegment（spec §9）。
 ///
 /// 结果 = 已落库的段 + 正在生长的当前段（还没落库，投影出来只为实时）。
-#[tauri::command]
+#[tauri::command(async)]
 fn get_segments(
     state: tauri::State<'_, AppState>,
     date: String,
@@ -95,7 +101,7 @@ fn get_segments(
 ///
 /// `titles_for` 返回前会再过一遍脱敏器（A4）：落库时没脱敏的历史明文标题
 /// 也在此刻被遮住，界面上不会露出。
-#[tauri::command]
+#[tauri::command(async)]
 fn get_segment_titles(
     state: tauri::State<'_, AppState>,
     event_ids: Vec<String>,
@@ -108,7 +114,7 @@ fn get_segment_titles(
 ///
 /// 库为空时返回 `None`：那是「刚装完还没跑满一天」的真实状态，
 /// 前端据此显示空状态，而不是拿到 first/last 为空串的半成品。
-#[tauri::command]
+#[tauri::command(async)]
 fn get_daily_calendar(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<activity_storage::DailyCalendar>, String> {
@@ -133,7 +139,7 @@ struct SummaryOut {
 
 /// 汇总页顶部指标。`from` / `to` 都是 `YYYY-MM-DD` 的**闭区间**
 /// （点「某一天」时两者相同），内部转成半开区间。
-#[tauri::command]
+#[tauri::command(async)]
 fn get_summary(
     state: tauri::State<'_, AppState>,
     from: String,
@@ -170,7 +176,11 @@ fn get_summary(
 ///
 /// 不设范围上限：当前 5 天数据实测 199ms；按每天 10,092 事件外推，
 /// 一年约 3.7M 行 → 约 15s。这是 spec §9 第 7 条记录的已知代价。
-#[tauri::command]
+///
+/// `async` 在这里是**必需**而非风格问题：这条 SQL 里的
+/// `json_extract(payload,...)` 必须回表取 payload、无法用索引覆盖，
+/// 只能全表扫；跑在主线程上会冻结整个界面（A3）。
+#[tauri::command(async)]
 fn get_top_titles(
     state: tauri::State<'_, AppState>,
     from: String,
