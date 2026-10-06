@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatDuration } from "../lib/bucket";
 import {
   bucketMetrics,
@@ -110,29 +110,52 @@ function clockOf(ms: number): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+/** 方向键在色块之间移动（B8 的收尾：roving tabindex）。 */
+const NAV_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
+
 /**
  * 可聚焦色块的公共契约（B8）。
  *
  * 时间线上"点一块看详情"是**核心操作**，所以每个色块都必须：
- * `role="button"`（读屏知道它是可激活的）、`tabIndex={0}`（Tab 能到）、
- * `aria-label`（把时间/类别/时长念出来）、Enter/Space 触发（只有
- * `onClick` 的元素对键盘等于死的）。
+ * `role="button"`（读屏知道它是可激活的）、可聚焦、`aria-label`
+ * （把时间/类别/时长念出来）、Enter/Space 触发（只有 `onClick` 的
+ * 元素对键盘等于死的）。
+ *
+ * **可聚焦 ≠ 每个都占一个 Tab 位。** 真实的一天有 125 个段、指标模式下
+ * 最多 144 个桶，全都 `tabIndex=0` 的话，键盘用户要按 125 次才能穿过
+ * 时间线，点完色块按 Tab 也一样出不来。所以用 **roving tabindex**：
+ * 整条时间线只有当前那一个是 `0`，其余是 `-1`，方向键在色块间移动
+ * （标准模式，见 WAI-ARIA 的 Composite Widget）。
  *
  * 焦点样式**不在这里定**：全局 `:focus-visible` 已经给了 2px 中性亮环
- * （theme.css；MASTER §… 记着「不用浏览器默认蓝环，蓝是 work 的色相」），
+ * （theme.css；MASTER 记着「不用浏览器默认蓝环，蓝是 work 的色相」），
  * 这里再画一遍就会叠成两条环。
  */
-function cellA11yProps(label: string) {
+function cellA11yProps(opts: {
+  label: string;
+  /** 是否是当前那个 Tab 停靠点（roving tabindex 的那一个） */
+  isEntry: boolean;
+  /** 方向键移动；没内容可走的格子传 undefined，它就不响应 */
+  onNavigate?: (key: string) => void;
+  /** 没有任何活动的格子：鼠标点它没反应，得说清楚 */
+  inert?: boolean;
+}) {
   return {
     role: "button",
-    tabIndex: 0,
-    "aria-label": label,
+    tabIndex: opts.isEntry ? 0 : -1,
+    "aria-label": opts.label,
+    "aria-disabled": opts.inert || undefined,
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault(); // Space 会滚动页面
         (e.currentTarget as SVGRectElement).dispatchEvent(
           new MouseEvent("click", { bubbles: true }),
         );
+        return;
+      }
+      if (NAV_KEYS.has(e.key)) {
+        e.preventDefault(); // 方向键会滚页面
+        opts.onNavigate?.(e.key);
       }
     },
   };
@@ -203,6 +226,61 @@ export default function SegmentTimeline({
     () => (metric === "category" ? [] : bucketMetrics(segments, dayStartMs, intervalMs)),
     [metric, segments, dayStartMs, intervalMs],
   );
+
+  /**
+   * 方向键可以走过的格子下标（roving tabindex 的行走序列）。
+   *
+   * 只收**有内容**的格子：指标模式下没有任何活动的那几格属于「空白区 /
+   * 未监测」，不是一段活动 —— 方向键走过去没东西可看。
+   * 注意判据是 `segmentCount === 0`，**不是** `bucketCells[].blank`：
+   * 后者在专注度模式下把「全是空闲」也算 blank，而全空闲那段是有数据的
+   * （读屏念得出「这段时间是空闲」），不该跳。
+   */
+  const walkable = useMemo(() => {
+    if (metric === "category") return Array.from({ length: segments.length }, (_, i) => i);
+    return buckets
+      .map((b, i) => ({ b, i }))
+      .filter(({ b }) => b.segmentCount > 0)
+      .map(({ i }) => i);
+  }, [metric, buckets, segments.length]);
+
+  const [roving, setRoving] = useState(0);
+  // 格的列表变了（切模式/切粒度）就复位 —— 否则下标会指向不存在或
+  // 含义已变的格子。**故意不依赖 `segments`**：App 每 5 秒轮询一次，
+  // 挂上它会让用户正走着的焦点被反复重置。
+  useEffect(() => {
+    setRoving(0);
+  }, [metric, intervalMs]);
+
+  /** 每个格子的 DOM 节点，用来把焦点真的移过去。 */
+  const cellRefs = useRef<(SVGRectElement | null)[]>([]);
+
+  const entryCell = walkable[Math.min(roving, Math.max(walkable.length - 1, 0))];
+
+  /** 从某个格子出发按方向键，算出下一个该停在哪。`null` = 到头，不动。 */
+  function step(from: number, key: string): number | null {
+    const at = walkable.indexOf(from);
+    if (at < 0) return 0;
+    const next =
+      key === "ArrowRight"
+        ? at + 1
+        : key === "ArrowLeft"
+          ? at - 1
+          : key === "Home"
+            ? 0
+            : walkable.length - 1; // End
+    // 到头就停，不循环 —— 从 23:59 一下跳到 00:00 跨度太大，位置感会丢。
+    if (next < 0 || next >= walkable.length) return null;
+    return next;
+  }
+
+  function navigate(from: number, key: string) {
+    const at = step(from, key);
+    if (at === null) return;
+    setRoving(at);
+    // 光改 tabIndex 不够：不把焦点移过去，用户 Tab 出去再回来会回到原处。
+    cellRefs.current[walkable[at]]?.focus?.();
+  }
 
   if (segments.length === 0) {
     return (
@@ -331,7 +409,17 @@ export default function SegmentTimeline({
                     fill={c.blank ? "transparent" : scaleColor(c.step)}
                     vectorEffect="non-scaling-stroke"
                     className="cursor-pointer"
-                    {...cellA11yProps(bucketLabel(c.metric, metric))}
+                    ref={(el) => {
+                      cellRefs.current[c.index] = el;
+                    }}
+                    {...cellA11yProps({
+                      label: bucketLabel(c.metric, metric),
+                      isEntry: entryCell === c.index,
+                      onNavigate: (key) => navigate(c.index, key),
+                      // 没有任何活动的格子：鼠标点它没反应，别让读屏念一个
+                      // "按了不响"的按钮
+                      inert: c.metric.segmentCount === 0,
+                    })}
                     style={{
                       pointerEvents: "all",
                       stroke: selected ? "var(--color-ink)" : "transparent",
@@ -376,7 +464,14 @@ export default function SegmentTimeline({
                     fill={colorForCategory(seg.category)}
                     vectorEffect="non-scaling-stroke"
                     className="cursor-pointer"
-                    {...cellA11yProps(segmentLabel(seg))}
+                    ref={(el) => {
+                      cellRefs.current[cellIndex] = el;
+                    }}
+                    {...cellA11yProps({
+                      label: segmentLabel(seg),
+                      isEntry: entryCell === cellIndex,
+                      onNavigate: (key) => navigate(cellIndex, key),
+                    })}
                     /* 描边兼两职：选中时是 2px 亮环（选中用明度表达，不占用类别色相）；
                        未选中时是 8px 透明描边 —— 1 分钟的段只有约 3px 宽，
                        裸 rect 不好点。透明描边只扩大命中区，不改变观感。 */

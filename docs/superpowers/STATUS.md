@@ -291,6 +291,7 @@ node design-system/time-scope/verify-palette.mjs               # 色板校验，
 | ✅ | ~~**汇总页的设置界面**~~ | 「汇总」页已实现（指标 / 热力图 / 范围下钻 / 标题排名）。**设置页仍是空壳** | spec §9 记着它的 4 个已知限制 |
 | ⚪ 已知限制 | **没有设置界面** | spec §9 的 `get_config` / `set_config` 未实现，Rust 侧只有 `get_segments` 和 `get_segment_titles`；改 `config.toml` 只能手改文件 | 要做得先实现 IPC 暴露 + 配置写回（得跟 `rules.toml` 已有的一套容错对齐） |
 | 🟠 中 | **行为参数写死** | 已改 `config.toml` 可调，**无热重载** | 改完要重启；`EngineConfig` 是构造注入的，热重载要重放当天 |
+| ⚪ 已知限制 | **events 无限增长** | 已加保留期：`config.toml` 的 `events_retention_days`，**默认 365 天，0 = 永不删**（2026-10-06 修）。删的只是原始事件（≈5 MB/天），**`activities` 永久保留**，所以时间线/汇总/热力图全时段不受影响 | **设置页将来要把这一项暴露出来**（用户 2026-10-06 明确要求记在这里）。现在只能手改 `config.toml` 且要重启；标题 Top 与段详情的标题回溯范围 = 保留天数 |
 | 🟡 低 | `segment-updated` 推送（spec §9） | 5 秒轮询顶着 | 段多时整表重查浪费，但轮询够用 |
 | 🟡 低 | 规则热重载（spec §7.2） | 改完重启生效 | spec 提了但没定义行为，实施前得定 |
 | ⚪ 已知限制 | 空闲阈值 300 秒 | 写死在 collector 参数里 | 验证 idle 要停 5 分钟；可改成配置 |

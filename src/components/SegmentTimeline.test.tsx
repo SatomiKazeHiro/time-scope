@@ -474,8 +474,11 @@ describe("SegmentTimeline 键盘可达性", () => {
     const cells = rects(container);
     for (const c of cells) {
       expect(c.getAttribute("role")).toBe("button");
-      expect(c.getAttribute("tabindex")).toBe("0");
+      expect(["0", "-1"], "每个色块都要可聚焦").toContain(c.getAttribute("tabindex"));
     }
+    // 注意：**可聚焦 ≠ 每个都占一个 Tab 位**。那是 roving tabindex 的事
+    //（见下面那组测试）——这里只断「每一个都是能聚焦的按钮」。
+    expect(cells.filter((c) => c.getAttribute("tabindex") === "0").length).toBe(1);
   });
 
   it("色块的无障碍名里有时间、类别和时长", () => {
@@ -530,8 +533,9 @@ describe("SegmentTimeline 键盘可达性", () => {
     expect(buckets.length).toBeGreaterThan(0);
     for (const b of buckets) {
       expect(b.getAttribute("role")).toBe("button");
-      expect(b.getAttribute("tabindex")).toBe("0");
+      expect(["0", "-1"], "每个桶都要可聚焦").toContain(b.getAttribute("tabindex"));
     }
+    expect(buckets.filter((b) => b.getAttribute("tabindex") === "0").length).toBe(1);
   });
 
   it("容器不再对辅助技术声明成一张图（否则子节点仍然被遮蔽）", () => {
@@ -540,5 +544,185 @@ describe("SegmentTimeline 键盘可达性", () => {
     );
     const svg = container.querySelector("svg")!;
     expect(svg.getAttribute("role")).not.toBe("img");
+  });
+});
+
+// --- roving tabindex：整条时间线只占一个 Tab 位 ---
+
+describe("SegmentTimeline 方向键导航（roving tabindex）", () => {
+  /** 碎片化的一天：125 个短段（真实数据量级）。 */
+  function fragmented(n: number): Segment[] {
+    const step = (DAY - 1) / n;
+    return Array.from({ length: n }, (_, i) =>
+      seg(`s${i}`, Math.floor(i * step), Math.floor((i + 0.6) * step), "work"),
+    );
+  }
+
+  /** 当前 tabbable 的 rect 下标 —— 只有一个是 0，其余都是 -1。 */
+  function rovingIndex(container: HTMLElement): number {
+    const tabbable = rects(container).filter((r) => r.getAttribute("tabindex") === "0");
+    expect(tabbable.length, "整条时间线只能有一个 Tab 停靠点").toBe(1);
+    return tabbable[0].getAttribute("data-id") === undefined
+      ? Number(tabbable[0].getAttribute("data-bucket"))
+      : rects(container).indexOf(tabbable[0]);
+  }
+
+  it("125 个段也只占一个 Tab 位，而不是 125 个", () => {
+    // 这是 roving tabindex 存在的全部理由：每个色块都 tabIndex=0 的话，
+    // 键盘用户要按 125 次才能穿过时间线，点完色块按 Tab 也一样出不来。
+    const segments = fragmented(125);
+    const { container } = render(
+      <SegmentTimeline segments={segments} dayStartMs={0} onSelect={() => {}} />,
+    );
+    const tabbable = rects(container).filter((r) => r.getAttribute("tabindex") === "0");
+    expect(tabbable.length).toBe(1);
+    expect(rovingIndex(container)).toBe(0);
+  });
+
+  it("方向键把焦点移到下一段", () => {
+    const segments = fragmented(5);
+    const { container } = render(
+      <SegmentTimeline segments={segments} dayStartMs={0} onSelect={() => {}} />,
+    );
+    fireEvent.keyDown(rects(container)[0], { key: "ArrowRight" });
+    expect(rovingIndex(container)).toBe(1);
+    fireEvent.keyDown(rects(container)[1], { key: "ArrowRight" });
+    expect(rovingIndex(container)).toBe(2);
+    fireEvent.keyDown(rects(container)[2], { key: "ArrowLeft" });
+    expect(rovingIndex(container)).toBe(1);
+  });
+
+  it("Home / End 跳到当天两端", () => {
+    const segments = fragmented(5);
+    const { container } = render(
+      <SegmentTimeline segments={segments} dayStartMs={0} onSelect={() => {}} />,
+    );
+    fireEvent.keyDown(rects(container)[0], { key: "End" });
+    expect(rovingIndex(container)).toBe(4);
+    fireEvent.keyDown(rects(container)[4], { key: "Home" });
+    expect(rovingIndex(container)).toBe(0);
+  });
+
+  it("到头就停，不循环", () => {
+    // 与「上一个/下一个」按钮定的行为一致：到头停，不跳到另一头。
+    // （从 23:59 按一下跳到 00:00 跨度太大，位置感会丢。）
+    const segments = fragmented(3);
+    const { container } = render(
+      <SegmentTimeline segments={segments} dayStartMs={0} onSelect={() => {}} />,
+    );
+    // 先走到最后一段
+    fireEvent.keyDown(rects(container)[0], { key: "End" });
+    expect(rovingIndex(container)).toBe(2);
+    // 再按 → 不动（不循环回第 0 段）
+    fireEvent.keyDown(rects(container)[2], { key: "ArrowRight" });
+    expect(rovingIndex(container)).toBe(2);
+    // 回到最前，← 同理不动
+    fireEvent.keyDown(rects(container)[2], { key: "Home" });
+    expect(rovingIndex(container)).toBe(0);
+    fireEvent.keyDown(rects(container)[0], { key: "ArrowLeft" });
+    expect(rovingIndex(container)).toBe(0);
+  });
+
+  it("方向键移动后 DOM 焦点真的落在那一格上", () => {
+    // 光改 tabIndex 不够：不把焦点移过去，用户 Tab 出去再回来会回到原处。
+    const segments = fragmented(5);
+    const { container } = render(
+      <SegmentTimeline segments={segments} dayStartMs={0} onSelect={() => {}} />,
+    );
+    rects(container)[0].focus();
+    fireEvent.keyDown(document.activeElement ?? rects(container)[0], { key: "ArrowRight" });
+    expect(document.activeElement).toBe(rects(container)[1]);
+  });
+
+  it("Enter 仍然是打开详情，不是移动", () => {
+    // B8 已经定下的行为，别被方向键改掉。
+    const picked: string[] = [];
+    const segments = fragmented(3);
+    const { container } = render(
+      <SegmentTimeline segments={segments} dayStartMs={0} onSelect={(s) => picked.push(s.id)} />,
+    );
+    fireEvent.keyDown(rects(container)[0], { key: "Enter" });
+    expect(picked).toEqual(["s0"]);
+    expect(rovingIndex(container)).toBe(0);
+  });
+
+  it("指标模式：方向键跳过没有任何活动的空格", () => {
+    // 空格属于"空白区 / 未监测"，不是一段活动。键盘走过去没有东西可看，
+    // 也不该让读屏念一个按了没反应的按钮。
+    const segments = [
+      seg("a", 0, HOUR, "work"),
+      // 1–23 点没有任何活动：24 格里有 23 格是空的
+    ];
+    const { container } = render(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={60 * 60_000}
+        metric="focus"
+        onSelect={() => {}}
+      />,
+    );
+    const buckets = Array.from(container.querySelectorAll("[data-bucket]")) as SVGRectElement[];
+    expect(buckets.length).toBe(24);
+    expect(buckets.filter((b) => b.getAttribute("tabindex") === "0").length).toBe(1);
+
+    // 只有第 0 格有数据，所以 End 之后还停在第 0 格
+    fireEvent.keyDown(buckets[0], { key: "End" });
+    const stillFirst = buckets.filter((b) => b.getAttribute("tabindex") === "0");
+    expect(stillFirst.length).toBe(1);
+    expect(stillFirst[0].getAttribute("data-bucket")).toBe("0");
+  });
+
+  it("指标模式：在有数据的格子之间移动", () => {
+    const segments = [
+      seg("a", 0, HOUR, "work"),
+      seg("b", 3 * HOUR, 4 * HOUR, "browsing"),
+    ];
+    const { container } = render(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={60 * 60_000}
+        metric="focus"
+        onSelect={() => {}}
+      />,
+    );
+    const buckets = Array.from(container.querySelectorAll("[data-bucket]")) as SVGRectElement[];
+    // 第 0 格和第 3 格有数据；从第 0 格按 → 应直接到第 3 格，跳过 1、2
+    fireEvent.keyDown(buckets[0], { key: "ArrowRight" });
+    const tabbable = buckets.filter((b) => b.getAttribute("tabindex") === "0");
+    expect(tabbable.length).toBe(1);
+    expect(tabbable[0].getAttribute("data-bucket")).toBe("3");
+  });
+
+  it("切粒度后仍然只有一个 Tab 位", () => {
+    // 桶数变了，roving 下标必须跟着复位，否则会指向不存在的格。
+    const segments = fragmented(125);
+    const { container, rerender } = render(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={30 * 60_000}
+        metric="focus"
+        onSelect={() => {}}
+      />,
+    );
+    fireEvent.keyDown(
+      (container.querySelector("[data-bucket]") as SVGRectElement)!,
+      { key: "End" },
+    );
+    rerender(
+      <SegmentTimeline
+        segments={segments}
+        dayStartMs={0}
+        intervalMs={120 * 60_000}
+        metric="focus"
+        onSelect={() => {}}
+      />,
+    );
+    const buckets = Array.from(container.querySelectorAll("[data-bucket]")) as SVGRectElement[];
+    const tabbable = buckets.filter((b) => b.getAttribute("tabindex") === "0");
+    expect(tabbable.length).toBe(1);
+    expect(tabbable[0].getAttribute("data-bucket")).toBe("0");
   });
 });
