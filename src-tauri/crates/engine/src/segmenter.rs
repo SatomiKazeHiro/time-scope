@@ -309,7 +309,11 @@ fn is_absorption(
         return false;
     }
     st.last_switch_at
-        .map(|t| (ts - t).abs() < (config.grace_period_s as i64) * 1000)
+        // 只认**向前**的间隔。原来写 `(ts - t).abs()`，于是时钟回退
+        // （系统时间被校正、NTP 跳变）也会落进宽限窗口被判成抖动 ——
+        // 而 `absorb` 的 `prev.end_at = max(prev.end_at, ts)` 不会把被丢弃段
+        // 的末尾补回来，那段时间就从账本上整个消失（B10）。
+        .map(|t| ts >= t && ts - t < (config.grace_period_s as i64) * 1000)
         .unwrap_or(false)
 }
 

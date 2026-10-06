@@ -754,3 +754,71 @@ fn overlapping_segments_never_invent_time() {
     );
 }
 // --- A1：重复计数 ---
+
+// --- B10：时钟回退不该被判成"在宽限窗口内" ---
+
+#[test]
+fn a_backwards_clock_does_not_absorb_away_a_segment() {
+    // B10。判定原本写 `(ts - t).abs() < grace_ms` —— 时间戳**回退**
+    // （系统时钟被校正、NTP 跳变）时绝对值同样落在宽限窗口内，于是判成抖动
+    // 并触发吸收。而 `absorb` 只做 `prev.end_at = max(prev.end_at, ts)`，
+    // 不会把被丢弃的那一段补回来 —— 那段时间从账本上整个消失。
+    //
+    // 序列：Code@0 → chrome@50_000 → Code@40_000（时钟被往回拨 10 秒）。
+    // 旧写法：|40_000-50_000| = 10_000 < 60_000 → 判成抖动，chrome 被丢弃。
+    // 新写法：`ts >= t` 不成立 → 照常切段，chrome 作为自己的段留下。
+    let cfg = EngineConfig::default()
+        .with_min_segment_duration_s(0)
+        .with_grace_period_s(60);
+    let segs = all_segments(
+        &[
+            focus(0, "Code.exe"),
+            focus(50_000, "chrome.exe"),
+            focus(40_000, "Code.exe"), // 时钟回退
+            heartbeat(200_000, 5),    // 拖时间冲刷 pending
+        ],
+        &rules(),
+        &cfg,
+    );
+    let apps: Vec<&str> = segs.iter().filter_map(|s| s.application.as_deref()).collect();
+    assert!(
+        apps.contains(&"chrome.exe"),
+        "时钟回退时 chrome 段被吞掉了，实际 {:?}",
+        segs.iter()
+            .map(|s| (s.start_at, s.end_at, s.application.as_deref().unwrap_or("-")))
+            .collect::<Vec<_>>()
+    );
+    let chrome = segs
+        .iter()
+        .find(|s| s.application.as_deref() == Some("chrome.exe"))
+        .unwrap();
+    assert_eq!((chrome.start_at, chrome.end_at), (50_000, 50_000));
+}
+
+#[test]
+fn a_timestamp_exactly_on_the_grace_boundary_is_not_absorbed() {
+    // 边界守卫（**不是**本次修复的回归用例 —— 旧写法的 `<` 也是严格小于，
+    // 这条在修复前后都成立）。钉住的是 `<` 而不是 `<=`：恰好等于 grace
+    // 窗口宽度不算"在窗口内"。
+    // 既有的 `grace_period_does_not_absorb_a_slow_switch_back` 只测了远大于
+    // 边界的情形，没钉住边界本身。
+    let cfg = EngineConfig::default()
+        .with_min_segment_duration_s(0)
+        .with_grace_period_s(10);
+    let segs = all_segments(
+        &[
+            focus(0, "Code.exe"),
+            focus(2_000, "chrome.exe"),
+            focus(12_000, "Code.exe"), // 距上次切换正好 10_000 == grace 窗口
+            heartbeat(30_000, 5),
+        ],
+        &rules(),
+        &cfg,
+    );
+    let apps: Vec<&str> = segs.iter().filter_map(|s| s.application.as_deref()).collect();
+    assert_eq!(
+        apps,
+        vec!["Code.exe", "chrome.exe", "Code.exe"],
+        "恰好等于 grace 窗口宽度不该被吸收成两段"
+    );
+}
