@@ -86,7 +86,11 @@ export default function DonutChart({ donut, totalMs }: DonutChartProps) {
         {donut.map((d) => {
           const pct = safeTotal > 0 ? Math.round((Math.max(d.ms, 0) / safeTotal) * 100) : 0;
           return (
-            <li key={d.key} className="grid grid-cols-[9px_1fr_auto_auto] items-center gap-2">
+            <li
+              key={d.key}
+              data-legend=""
+              className="grid grid-cols-[9px_1fr_auto_auto] items-center gap-2"
+            >
               <span aria-hidden className="size-2 rounded-sm"
                     style={{ background: colorOf(d.key) }} />
               <span className="text-ink">{labelOf(d.key)}</span>

@@ -63,14 +63,19 @@ describe("MetricRow", () => {
     expect(screen.getByText("86% 活跃")).toBeTruthy();
   });
 
-  it("summary 为 null 时显示加载态而不是崩（Review Focus #1）", () => {
-    render(<MetricRow summary={null} loading />);
-    expect(screen.getByText(/加载中/)).toBeTruthy();
+  it("summary 为 null 时渲染占位符而不是崩（Review Focus #1）", () => {
+    const { container } = render(<MetricRow summary={null} loading />);
+    expect(container.querySelectorAll("[data-metric-card]")).toHaveLength(5);
+    expect(container.textContent).toContain("—");
   });
 
-  it("summary 为 null 且不在加载时给另一种文案", () => {
-    render(<MetricRow summary={null} loading={false} />);
-    expect(screen.getByText(/暂无数据/)).toBeTruthy();
+  it("加载中用 aria-busy 标出，不再靠文案区分", () => {
+    const { container, rerender } = render(<MetricRow summary={null} loading />);
+    expect(container.querySelector("[data-metric-row]")!.getAttribute("aria-busy"))
+      .toBe("true");
+    rerender(<MetricRow summary={S} loading={false} />);
+    expect(container.querySelector("[data-metric-row]")!.getAttribute("aria-busy"))
+      .toBeNull();
   });
 
   it("零时长时活跃占比是 0% 而不是 NaN", () => {
@@ -78,5 +83,50 @@ describe("MetricRow", () => {
     const { container } = render(<MetricRow summary={zero} loading={false} />);
     expect(container.innerHTML).not.toContain("NaN");
     expect(screen.getByText("0% 活跃")).toBeTruthy();
+  });
+})
+
+describe("布局稳定性", () => {
+  // 之前没数据时整行 return 一行字，5 张卡全消失 -> 布局塌陷 ->
+  // 下面内容上移；数据到了再展开 -> 看着「内容弹了一下」。
+  it("没数据时仍然渲染全部 5 张卡的外壳", () => {
+    const { container } = render(<MetricRow summary={null} loading />);
+    expect(container.querySelector("[data-metric-row]")).toBeTruthy();
+    // 5 个卡片容器：3 个 Card + 圆环卡 + 24h 卡
+    expect(container.querySelectorAll("[data-metric-card]")).toHaveLength(5);
+  });
+
+  it("有数据时卡片数与没数据时一样（结构不因数据有无而变）", () => {
+    const withData = render(<MetricRow summary={S} loading={false} />);
+    const n1 = withData.container.querySelectorAll("[data-metric-card]").length;
+    withData.unmount();
+    const noData = render(<MetricRow summary={null} loading />);
+    const n2 = noData.container.querySelectorAll("[data-metric-card]").length;
+    noData.unmount();
+    expect(n2).toBe(n1);
+  });
+
+  it("没数据时圆环与 24h 条仍然占位（高度不被压塌）", () => {
+    const { container } = render(<MetricRow summary={null} loading />);
+    // 圆环 SVG 固定 64x64、图例恒 4 行；24h 条 viewBox 高度固定。
+    // 传空数组也照常渲染 -> 几何与有数据时一致。
+    expect(container.querySelectorAll("svg")).toHaveLength(2);
+    expect(container.querySelectorAll("[data-legend]")).toHaveLength(4);
+  });
+
+  it("没数据时显示占位符而不是假的 0", () => {
+    const { container } = render(<MetricRow summary={null} loading />);
+    expect(container.innerHTML).toContain("—");
+    expect(container.textContent).not.toContain("0 段");
+  });
+
+  it("grid 列数不随数据有无变化", () => {
+    const a = render(<MetricRow summary={null} loading />);
+    const cls1 = a.container.querySelector("[data-metric-row]")!.className;
+    a.unmount();
+    const b = render(<MetricRow summary={S} loading={false} />);
+    const cls2 = b.container.querySelector("[data-metric-row]")!.className;
+    b.unmount();
+    expect(cls1).toBe(cls2);
   });
 });
