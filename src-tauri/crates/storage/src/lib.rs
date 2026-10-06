@@ -5,6 +5,7 @@ pub mod summary;
 pub mod writer;
 
 pub use activity::{
+    get_segment_spans_in_range, SegmentSpan,
     delete_segments_for_day, get_segments_in_range, insert_segments, StoredSegment,
 };
 pub use query::{get_events_in_range, insert_events, now_ms, StoredEvent};

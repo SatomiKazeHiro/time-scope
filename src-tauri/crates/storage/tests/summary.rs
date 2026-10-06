@@ -527,3 +527,53 @@ fn empty_title_range_yields_empty_vec() {
     insert_events(&conn, &[title_event("e1", 1_000, Some("a"))]).unwrap();
     assert!(title_counts_in_range(&conn, 9_000, 1_000).unwrap().is_empty());
 }
+
+// --- B1：range_pacing 不该借道重查询 ---
+
+#[test]
+fn range_pacing_never_touches_the_evidence_table() {
+    // B1。`range_pacing` 只用 `start_at`/`end_at`/`category` 三个字段，
+    // 却借道 `get_segments_in_range` —— 而那个函数对**每个段**都跑一次
+    // evidence 查询（N+1）。实测 654 段 → 654 次查询、66,800 条证据
+    // 白读进内存，然后一个字节都没用。
+    //
+    // 怎么测"N+1"而不去数查询次数？把 `activity_evidence` 表删掉。
+    // 借道那条路必然 prepare 失败并返回 Err；专用三列查询根本不碰这张表。
+    // 顺带把「pacing 不需要证据」钉成可执行契约。
+    let conn = open_in_memory();
+    put(&conn, vec![segc("a", 0, 3_600_000, "work", Some("Code.exe"))]);
+    conn.execute_batch("DROP TABLE activity_evidence")
+        .expect("删掉证据表");
+
+    let p = range_pacing(&conn, 0, 10_000_000, 8 * 3600)
+        .expect("pacing 不该依赖 activity_evidence 表");
+    assert_eq!(
+        p.hourly_ms.iter().sum::<i64>(),
+        3_600_000,
+        "时长分布不能因为不读证据而算错"
+    );
+}
+
+#[test]
+fn pacing_spans_match_the_timeline_spans() {
+    // 两条查询必须同源（A2 的口径）。这个测试防止将来有人改了其中一条的
+    // 相交/裁剪语义，另一条悄悄跟着漂 —— 那会让"切换次数"和"24h 分布"
+    // 跟时间线看到的事实对不上。
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("cross", 86_300_000, 86_422_000, "work", Some("Code.exe")),
+            segc("b", 90_000_000, 93_600_000, "work", Some("Code.exe")),
+        ],
+    );
+    let timeline =
+        activity_storage::get_segments_in_range(&conn, 86_400_000, 2 * 86_400_000).unwrap();
+    let spans = activity_storage::get_segment_spans_in_range(&conn, 86_400_000, 2 * 86_400_000)
+        .unwrap();
+    assert_eq!(spans.len(), timeline.len());
+    for (s, t) in spans.iter().zip(timeline.iter()) {
+        assert_eq!((s.start_at, s.end_at), (t.start_at, t.end_at), "同源口径");
+        assert_eq!(s.category, t.category);
+    }
+}

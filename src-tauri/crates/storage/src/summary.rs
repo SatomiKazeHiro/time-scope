@@ -270,8 +270,10 @@ pub fn range_pacing(
         });
     }
 
-    // 已按 start_at 升序（get_segments_in_range 保证）。
-    let segs = crate::activity::get_segments_in_range(conn, start_ms, end_ms)?;
+    // 已按 start_at 升序（共用的时间线口径保证）。
+    // 走专用的三列查询而不是 `get_segments_in_range`：后者对每个段都要再跑一次
+    // evidence 查询（N+1），而这里一个字节都用不到（B1）。
+    let segs = crate::activity::get_segment_spans_in_range(conn, start_ms, end_ms)?;
 
     let mut switch_count = 0i64;
     for pair in segs.windows(2) {

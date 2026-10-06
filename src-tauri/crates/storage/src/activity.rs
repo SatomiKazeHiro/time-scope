@@ -86,6 +86,17 @@ pub fn delete_segments_for_day(
     tx.commit()
 }
 
+/// 「与 `[?1, ?2)` 相交、并把起止裁剪到该区间」的投影与判定。
+///
+/// 时间线（`get_segments_in_range`）与节奏（`get_segment_spans_in_range`）
+/// 共用这一份 SQL 片段：**两条查询的口径必须同源**（A2），复制粘贴会漂。
+/// `pacing_spans_match_the_timeline_spans` 钉住这一点。
+const CLIPPED_SPANS_SELECT: &str = "SELECT MAX(start_at, ?1) AS start_at, \
+                                    MIN(end_at, ?2) AS end_at, category";
+const CLIPPED_SPANS_FROM: &str = "FROM activities \
+                                  WHERE start_at < ?2 AND end_at > ?1 \
+                                  ORDER BY start_at ASC";
+
 /// 与 `[start_ms, end_ms)` **相交**的段，且起止**裁剪到该区间**。
 ///
 /// 为什么是相交而不是 `start_at` 落在区间内（A2）：跨零点的段 `start_at` 在前一天，
@@ -94,6 +105,11 @@ pub fn delete_segments_for_day(
 /// 为什么裁剪：时间线画的是「当天 24 小时」，不裁的话第二天的色块会从 x<0 开始画出去；
 /// 汇总口径要的是「落在区间内的那部分时长」。裁剪让两者算出同一个数。
 /// 已在 `EngineRuntime::segments_for_day` 上确立过同一条规矩（正在生长的当前段就裁）。
+///
+/// **注意这是重的那条路**：除段本身外，它还对**每个段**再跑一次 evidence 查询
+/// （`SELECT event_id FROM activity_evidence WHERE activity_id = ?`），
+/// 所以是 N+1。只在真的要展示证据时用（时间线、段详情）；
+/// 只需要区间与类别的调用方请走 `get_segment_spans_in_range`（B1）。
 pub fn get_segments_in_range(
     conn: &Connection,
     start_ms: i64,
@@ -101,21 +117,17 @@ pub fn get_segments_in_range(
 ) -> rusqlite::Result<Vec<StoredSegment>> {
     // 分两趟：先取段，再补证据。避免在外层 stmt 还没 drop 时又发起查询。
     let mut segments: Vec<StoredSegment> = {
-        let mut stmt = conn.prepare(
-            "SELECT id,
-                    MAX(start_at, ?1) AS start_at,
-                    MIN(end_at, ?2)   AS end_at,
-                    category, application, confidence, classifier, version
-             FROM activities
-             WHERE start_at < ?2 AND end_at > ?1
-             ORDER BY start_at ASC",
-        )?;
+        let sql = format!(
+            "{}, id, application, confidence, classifier, version {}",
+            CLIPPED_SPANS_SELECT, CLIPPED_SPANS_FROM
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(rusqlite::params![start_ms, end_ms], |row| {
             Ok(StoredSegment {
-                id: row.get(0)?,
-                start_at: row.get(1)?,
-                end_at: row.get(2)?,
-                category: row.get(3)?,
+                start_at: row.get(0)?,
+                end_at: row.get(1)?,
+                category: row.get(2)?,
+                id: row.get(3)?,
                 application: row.get(4)?,
                 confidence: row.get(5)?,
                 classifier: row.get(6)?,
@@ -134,4 +146,34 @@ pub fn get_segments_in_range(
     }
 
     Ok(segments)
+}
+
+/// 段在某个区间内的**跨度**（已裁剪）与类别。
+///
+/// `range_pacing`（切换次数 + 24h 分布）只需要这三个字段，原来却借道
+/// `get_segments_in_range`，于是每个段都白跑一次 evidence 查询（B1）。
+/// 实测 654 段 → 654 次查询、66,800 条证据进内存后一个字节都没用。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SegmentSpan {
+    pub start_at: i64,
+    pub end_at: i64,
+    pub category: String,
+}
+
+/// 同 `get_segments_in_range` 的口径（相交 + 裁剪），但不碰证据表。
+pub fn get_segment_spans_in_range(
+    conn: &Connection,
+    start_ms: i64,
+    end_ms: i64,
+) -> rusqlite::Result<Vec<SegmentSpan>> {
+    let sql = format!("{} {}", CLIPPED_SPANS_SELECT, CLIPPED_SPANS_FROM);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![start_ms, end_ms], |row| {
+        Ok(SegmentSpan {
+            start_at: row.get(0)?,
+            end_at: row.get(1)?,
+            category: row.get(2)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
 }
