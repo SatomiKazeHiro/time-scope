@@ -228,3 +228,76 @@ fn deleting_a_day_also_drops_segments_that_started_before_it() {
         .unwrap();
     assert_eq!(orphans, 1, "被删段的证据也要清掉");
 }
+
+// --- B11：同批重复 id 不得静默吞掉一段 ---
+
+#[test]
+fn duplicate_ids_in_one_batch_are_rejected_instead_of_silently_replacing() {
+    // B11。段 id 只是 `seg-{start_at}`，配合 `INSERT OR REPLACE`：
+    // 同一批里出现两个同 id 的段 → 后者静默覆盖前者，
+    // 前者的 evidence 也被 `DELETE ... WHERE activity_id = ?` 一并清掉，
+    // 而 `insert_segments` **仍然返回 Ok**。一段活动就这么没了，
+    // 界面上看不出来、日志里也没有一个字。
+    //
+    // 实测 5 天真实数据里"同毫秒换应用"是 0 次，所以这是潜在问题而非现患
+    // （STATUS §4.1 曾撤回过同一 finding，理由是"触发不了"）——
+    // 但**存储层是能直接构造出来的**，所以在这里把它钉住。
+    let conn = open_in_memory();
+    let err = insert_segments(
+        &conn,
+        &[
+            (
+                seg("seg-1000", 1_000, 60_000, "work"),
+                vec!["e1".into()],
+            ),
+            (
+                seg("seg-1000", 1_000, 30_000, "browsing"),
+                vec!["e2".into()],
+            ),
+        ],
+    )
+    .expect_err("同批重复 id 必须报错，不能静默覆盖");
+    // 错误得能诊断：日志里要出现那个撞上的 id，否则等于只说"失败了"
+    assert!(
+        err.to_string().contains("seg-1000"),
+        "错误信息里应点名撞上的 id，实际：{err}"
+    );
+
+    // 报错归报错，**不能留下写了一半的库**。
+    let rows = get_segments_in_range(&conn, 0, i64::MAX).unwrap();
+    assert!(rows.is_empty(), "不该写进任何一行，实际 {:?}", rows);
+    let orphans: i64 = conn
+        .query_row("SELECT COUNT(*) FROM activity_evidence", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(orphans, 0, "也不该留下孤儿证据");
+}
+
+#[test]
+fn distinct_ids_with_the_same_start_still_write_both() {
+    // 与上一条互补：钉住的是「id 相同」而不是「起点相同」。
+    // 真正同起点的两段（真出现的话）只要 id 不同，就该都留下。
+    let conn = open_in_memory();
+    insert_segments(
+        &conn,
+        &[
+            (seg("seg-1000", 1_000, 60_000, "work"), vec!["e1".into()]),
+            (seg("seg-1000-2", 1_000, 30_000, "browsing"), vec!["e2".into()]),
+        ],
+    )
+    .expect("id 不同就该都写得下");
+    assert_eq!(get_segments_in_range(&conn, 0, i64::MAX).unwrap().len(), 2);
+}
+
+#[test]
+fn replacing_an_existing_id_across_batches_is_still_allowed() {
+    // 重放靠 `INSERT OR REPLACE` 覆盖同 id 的旧段，那是**分两次**的正常路径。
+    // B11 要拦的是「同一批里」的自相矛盾，不是把这个能力一起禁掉。
+    let conn = open_in_memory();
+    insert_segments(&conn, &[(seg("seg-1000", 1_000, 60_000, "work"), vec!["e1".into()])]).unwrap();
+    insert_segments(&conn, &[(seg("seg-1000", 1_000, 30_000, "browsing"), vec!["e9".into()])])
+        .expect("跨批覆盖是重放的正常路径");
+    let rows = get_segments_in_range(&conn, 0, i64::MAX).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].category, "browsing");
+    assert_eq!(rows[0].evidence_event_ids, vec!["e9".to_string()]);
+}

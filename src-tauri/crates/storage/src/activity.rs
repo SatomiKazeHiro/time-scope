@@ -20,7 +20,13 @@ pub struct StoredSegment {
 /// 单事务写入 segments 及其 evidence。`(段, 该段的 evidence event id)` 配对。
 ///
 /// 覆盖写（`INSERT OR REPLACE`）时先删掉该段已有的 evidence 再插新的，
-/// 否则重算后的旧证据会残留。
+/// 否则重算后的旧证据会残留。**跨批**覆盖同 id 是重放的正常路径。
+///
+/// 但**同一批里**出现两个同 id 的段是另一回事：段 id 只由 `start_at` 派生
+/// （`seg-{start_at}`），两个段起点相同就会撞上，而 `INSERT OR REPLACE` 会让
+/// 后者静默覆盖前者、前者的 evidence 也被一并删掉 —— 一段活动就这么没了，
+/// 返回值还是 `Ok`。这里在开事务**之前**就把它拦下来并返回错误（B11）：
+/// 宁可整批不写（可事后重放），也不要静默丢数据。
 pub fn insert_segments(
     conn: &Connection,
     segments: &[(StoredSegment, Vec<String>)],
@@ -28,9 +34,26 @@ pub fn insert_segments(
     if segments.is_empty() {
         return Ok(());
     }
+    reject_duplicate_ids(segments)?;
     let tx = conn.unchecked_transaction()?;
     write_all(&tx, segments)?;
     tx.commit()
+}
+
+/// 同一批里出现重复 id 就报错。**必须在开事务之前**调 —— 报错时库里
+/// 不能留下写了一半的数据。
+fn reject_duplicate_ids(segments: &[(StoredSegment, Vec<String>)]) -> rusqlite::Result<()> {
+    let mut seen = std::collections::HashSet::with_capacity(segments.len());
+    for (s, _) in segments {
+        if !seen.insert(s.id.as_str()) {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "同一批里出现重复的段 id {:?}（id 只由 start_at 派生，\
+                 两个段起点相同就会撞上）。整批已拒绝写入，没有落库。",
+                s.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// 清掉与 `[start_ms, end_ms)` **相交**的段及其证据。**重放某一天前必须调用**（spec §7.4）。
