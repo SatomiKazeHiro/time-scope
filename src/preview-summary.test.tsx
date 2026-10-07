@@ -64,11 +64,17 @@ const TITLES: MergedTitle[] = [
   { title: "2026 年度个人所得税专项附加扣除填报 - 国家税务总局", hits: 402, redacted: false },
 ];
 
-function summaryFor(): Summary {
-  // 真的按 CAL 逐日累加，而不是拍几个数 —— 色阶和圆环要反映这批数据的形状
+  /**
+ * **必须尊重 from/to。** 之前这个 mock 无视入参、永远返回全年汇总，
+ * 于是页面显示「范围：2026-09-15」（一天）配的是全年数字 —— 预览自己
+ * 就自相矛盾，而预览是用来发现矛盾的。
+ */
+function summaryFor(from?: string, to?: string): Summary {
   let total = 0;
   const hourly = new Array(24).fill(0);
   for (const day of CAL.days) {
+    if (from && day.date < from) continue;
+    if (to && day.date > to) continue;
     total += day.totalMs;
     const startHour = 9 + Math.floor((day.totalMs / 3_600_000) % 6);
     for (let i = 0; i < Math.round(day.totalMs / 3_600_000); i++) {
@@ -78,12 +84,14 @@ function summaryFor(): Summary {
   const work = Math.round(total * 0.105);
   const browse = Math.round(total * 0.374);
   const idle = Math.round(total * 0.139);
+  // 按范围天数等比缩放那些"按整年拍的"固定值（段数 / 切换 / 应用时长）
+  const k = shareOf(from, to);
   return {
     totalMs: total,
     activeMs: total - idle,
     idleMs: idle,
-    segmentCount: 458,
-    switchCount: 12,
+    segmentCount: Math.max(1, Math.round(458 * k)),
+    switchCount: Math.max(0, Math.round(12 * k)),
     hourlyMs: hourly,
     donut: [
       { key: "work", ms: work },
@@ -92,22 +100,39 @@ function summaryFor(): Summary {
       { key: "unknown", ms: total - work - browse - idle },
     ],
     topApps: [
-      { name: "msedge.exe", ms: 87_200_000 },
-      { name: "WindowsTerminal.exe", ms: 67_200_000 },
-      { name: "explorer.exe", ms: 32_700_000 },
-      { name: "Code.exe", ms: 20_500_000 },
-      { name: "msedgewebview2.exe", ms: 9_600_000 },
+      { name: "msedge.exe", ms: Math.round(87_200_000 * k) },
+      { name: "WindowsTerminal.exe", ms: Math.round(67_200_000 * k) },
+      { name: "explorer.exe", ms: Math.round(32_700_000 * k) },
+      { name: "Code.exe", ms: Math.round(20_500_000 * k) },
+      { name: "msedgewebview2.exe", ms: Math.round(9_600_000 * k) },
     ],
   };
 }
 
-const SUM = summaryFor();
+/** 选中范围占整批数据的比例，用来缩放固定值。 */
+function shareOf(from: string, to: string): number {
+  if (!from || !to) return 1;
+  const n = CAL.days.filter((d) => d.date >= from && d.date <= to).length;
+  return n / CAL.days.length;
+}
 
 beforeAll(() => {
-  invoke.mockImplementation((cmd: string) => {
+  invoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
     if (cmd === "get_daily_calendar") return Promise.resolve(CAL);
-    if (cmd === "get_summary") return Promise.resolve(SUM);
-    if (cmd === "get_top_titles") return Promise.resolve(TITLES);
+    if (cmd === "get_summary") {
+      // **真的按传进来的范围算。** 之前这里无视入参、永远返回全年汇总，于是
+      // 页面显示「范围：2026-09-15」（一天）配的是全年数字 —— 预览自己就
+      // 自相矛盾，而预览存在的理由恰恰是发现矛盾。
+      return Promise.resolve(
+        summaryFor(String(args.from ?? ""), String(args.to ?? "")),
+      );
+    }
+    if (cmd === "get_top_titles") {
+      const from = String(args.from ?? "");
+      const to = String(args.to ?? "");
+      const k = shareOf(from, to);
+      return Promise.resolve(TITLES.map((t) => ({ ...t, hits: Math.round(t.hits * k) })));
+    }
     return Promise.resolve(null);
   });
 });

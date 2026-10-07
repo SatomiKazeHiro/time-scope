@@ -53,6 +53,13 @@
      surface-2 在两个主题下都只有 ~1.10:1，也不够。给「选中」单开一个。 */
   --color-nav-active: #313b4a; /* 对 surface-1 1.56:1 */
 
+  /* 占比条的填充色。**不能用 ink**：ink 对卡片是 18.29:1（浅）/ 14.59:1（深），
+     那已经是正文文字的重量 —— 一条占比条画成满对比度的实心块，读起来是
+     「一根黑线」而不是「一段填充」，直接成为整页最重的单个元素。
+     ink-muted 对卡片 7.23:1 / 6.63:1（对轨道），仍是实心但不喊。
+     三个页面画同一种标记曾各用不同墨色，所以单开这个 token。 */
+  --color-mark-fill: #9aa5b6;
+
   /* 中性交互色：界面层唯一的"高亮"手段 */
   --color-neutral-solid: #d7dde6; /* 主按钮底 */
   --color-on-neutral: #0c0f14; /* 主按钮文字，14.05:1 */
@@ -187,6 +194,7 @@
     --color-line: rgb(10 15 25 / 0.1);
     --color-line-strong: rgb(10 15 25 / 0.16);
     --color-nav-active: #e2e6ec; /* 对 surface-1 约 1.25:1 */
+    --color-mark-fill: #4d5866;
 
     --color-neutral-solid: #1c222c;
     --color-on-neutral: #ffffff; /* 15.97:1 */
@@ -247,6 +255,7 @@
   --color-line: rgb(10 15 25 / 0.1);
   --color-line-strong: rgb(10 15 25 / 0.16);
   --color-nav-active: #e2e6ec;
+  --color-mark-fill: #4d5866;
 
   --color-neutral-solid: #1c222c;
   --color-on-neutral: #ffffff;

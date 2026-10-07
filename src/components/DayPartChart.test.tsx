@@ -105,13 +105,23 @@ describe("DayPartChart", () => {
     expect(barW).toBeLessThan(viewBoxW / 24);
   });
 
-  it("末尾刻度不居中，否则「24」有一半被切在 viewBox 外", () => {
+  it("刻度标签在 HTML 里，不在 SVG 里", () => {
+    // stretch 走 preserveAspectRatio="none"，SVG 内的 <text> 会被一起压扁，
+    // 数字挤成竖线。标签必须搬到 HTML 覆盖层。
     const { container } = render(<DayPartChart hourlyMs={new Array(24).fill(0)} />);
-    const labels = [...container.querySelectorAll("text")];
-    const last = labels.find((t) => t.textContent === "24")!;
-    expect(last).toBeTruthy();
-    expect(last.getAttribute("text-anchor")).toBe("end");
-    const first = labels.find((t) => t.textContent === "00")!;
-    expect(first.getAttribute("text-anchor")).toBe("start");
+    expect(container.querySelectorAll("svg text").length).toBe(0);
+    const labels = [...container.querySelectorAll("span")].map((s) => s.textContent);
+    expect(labels).toEqual(["00", "06", "12", "18", "24"]);
+  });
+
+  it("首尾两个刻度靠边对齐，否则各有一半跑出容器被切掉", () => {
+    const { container } = render(<DayPartChart hourlyMs={new Array(24).fill(0)} />);
+    const labels = [...container.querySelectorAll("span")];
+    // 00 贴左（不位移）、24 贴右（-translate-x-full）、中间的居中
+    expect(labels[0].className).not.toContain("translate-x");
+    expect(labels[4].className).toContain("-translate-x-full");
+    expect(labels[2].className).toContain("-translate-x-1/2");
+    // 位置按 24 等分落到百分比上，不是 viewBox 坐标
+    expect(labels[4].style.left).toBe("100%");
   });
 });

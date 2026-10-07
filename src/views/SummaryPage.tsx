@@ -3,6 +3,12 @@ import ContributionWall from "../components/ContributionWall";
 import MetricRow from "../components/MetricRow";
 import RankedList, { type RankedItem } from "../components/RankedList";
 import {
+  HeaderDivider,
+  PageAlert,
+  PageHeader,
+  RangeReadout,
+} from "../components/PageChrome";
+import {
   fillDays, rangeFor, rangeLabel, wallWindow, type DateRange, type RangeKind,
 } from "../lib/summary";
 import { formatDuration } from "../lib/bucket";
@@ -171,33 +177,19 @@ export default function SummaryPage() {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <h1 className="m-0 shrink-0 text-label font-semibold tracking-wide whitespace-nowrap text-ink-muted">
-          Time Scope
-        </h1>
-        {/* 本轮是死控件：范围由热力图上的点击驱动（spec §1.2） */}
-        <button
-          type="button"
-          data-testid="range-chip"
-          aria-disabled="true"
-          className="cursor-default rounded-md border border-line bg-surface-1 px-2.5 py-1 text-sm text-ink-faint"
-        >
-          范围：{range ? rangeLabel(range) : "—"}
-        </button>
-      </div>
+      <PageHeader>
+        <HeaderDivider />
+        <RangeReadout label={range ? rangeLabel(range) : "—"} />
+      </PageHeader>
 
-      {error && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 rounded-md border border-line bg-surface-1 p-3 text-sm text-ink"
-        >
-          <span>
-            加载失败。请确认后端已启动（<code className="tnum">pnpm tauri dev</code>）。
-          </span>
-        </div>
-      )}
+      {error && <PageAlert />}
 
-      <MetricRow summary={summary} loading={!summary && !error && !loaded} />
+      <MetricRow
+        summary={summary}
+        loading={!summary && !error && !loaded}
+        rangeLabel={range ? rangeLabel(range) : undefined}
+        rangeDays={range ? daysBetween(range.from, range.to) : undefined}
+      />
 
       <section className="panel p-4" aria-label="监控时长热力图">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -281,4 +273,18 @@ function summaryOrEmpty(s: Summary): Summary {
     donut: s.donut ?? [],
     topApps: s.topApps ?? [],
   };
+}
+
+/**
+ * 范围跨多少天（含首尾）。
+ *
+ * 用 `Date.UTC` 拆年月日，绕开本地时区与夏令时 —— 直接 `new Date("2026-10-04")`
+ * 会按本地时间解析，跨时区算出来的天数会差一天。
+ */
+function daysBetween(from: string, to: string): number {
+  const d = (s: string) => {
+    const [y, m, day] = s.split("-").map(Number);
+    return Date.UTC(y, m - 1, day);
+  };
+  return Math.round((d(to) - d(from)) / 86_400_000) + 1;
 }

@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Radio } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Radio } from "lucide-react";
 import SegmentTimeline, { type MetricMode } from "./components/SegmentTimeline";
 import GranularityPicker from "./components/GranularityPicker";
 import DaySummary from "./components/DaySummary";
 import SegmentDetail from "./components/EventDetail";
 import MetricPicker, { ScaleLegend } from "./components/MetricPicker";
 import SettingsPage from "./components/SettingsPage";
+import {
+  HeaderDivider,
+  PageAlert,
+  PageHeader,
+} from "./components/PageChrome";
 import Sidebar, { type View } from "./components/Sidebar";
 import SummaryPage from "./views/SummaryPage";
 import { DEFAULT_GRANULARITY } from "./lib/bucket";
@@ -144,17 +149,10 @@ export default function App() {
 
                 **必须能换行。** 之前给两组都加了 shrink-0，结果窄窗口下 120分
                 直接被裁掉、整条栏溢出。宽窗口下它自然排成一行，窄窗口下"指标+粒度"
-                整体落到第二行，比哪个按钮被切掉强。 */}
-            <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2">
-              {/* 应用名降级成安静标识：托盘里已经常驻，20px 的 h1 是抢戏。
-                  whitespace-nowrap 必需：不加的话窄窗口下会被逐字折成竖排。 */}
-              <h1 className="m-0 shrink-0 text-label font-semibold tracking-wide whitespace-nowrap text-ink-muted">
-                Time Scope
-              </h1>
+                整体落到第二行，比哪个按钮被切掉强。骨架与汇总页共用 PageHeader。 */}
+            <PageHeader>
               <LiveBadge status={status} />
-
-              <span aria-hidden className="mx-1 hidden h-5 w-px shrink-0 bg-line sm:block" />
-
+              <HeaderDivider />
               <DateNav date={date} isToday={isToday} onDate={setDate} />
 
               {/* 指标和粒度是同一件事的两面（"怎么看"和"看多细"），当一个单元。
@@ -164,21 +162,11 @@ export default function App() {
                 <MetricPicker value={metric} onChange={switchMetric} />
                 <GranularityPicker value={granularity} onChange={switchGranularity} />
               </div>
-            </div>
+            </PageHeader>
 
             {status === "loading" && <p className="text-sm text-ink-faint">加载中…</p>}
 
-            {status === "error" && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md border border-line bg-surface-1 p-3 text-sm text-ink"
-              >
-                <CircleAlert size={15} className="mt-0.5 shrink-0 text-state-critical" aria-hidden />
-                <span>
-                  加载失败。请确认后端已启动（<code className="tnum">pnpm tauri dev</code>）。
-                </span>
-              </div>
-            )}
+            {status === "error" && <PageAlert />}
 
             {status === "ok" && (
               <>

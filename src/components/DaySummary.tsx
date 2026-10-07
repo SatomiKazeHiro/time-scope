@@ -40,7 +40,7 @@ export default function DaySummary({ segments, dayStartMs }: Props) {
         <span className="tnum w-9 text-sm font-semibold text-ink">{activePct}%</span>
         <div className="flex h-2.5 flex-1 overflow-hidden rounded-full">
           <div
-            className="h-full bg-ink"
+            className="h-full bg-mark-fill"
             style={{ width: `${Math.max(activePct, activePct > 0 ? 1 : 0)}%` }}
           />
           <div

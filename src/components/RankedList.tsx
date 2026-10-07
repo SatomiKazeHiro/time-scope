@@ -38,7 +38,7 @@ export default function RankedList({ title, items, emptyHint }: RankedListProps)
               </span>
               <span className="tnum text-xs text-ink-faint">{it.value}</span>
               <span className="col-span-2 block h-[3px] overflow-hidden rounded-full bg-surface-2">
-                <i data-bar="" className="block h-full bg-ink-ghost"
+                <i data-bar="" className="block h-full bg-mark-fill"
                    style={{ width: `${it.ratio}%` }} />
               </span>
             </li>

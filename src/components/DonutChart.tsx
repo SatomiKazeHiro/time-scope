@@ -46,7 +46,7 @@ export default function DonutChart({ donut, totalMs }: DonutChartProps) {
   let acc = 0;
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-4">
       <svg viewBox="0 0 64 64" width="64" height="64" className="shrink-0">
         {fracs.map((frac, i) => {
           const dash = frac * C;
@@ -82,18 +82,29 @@ export default function DonutChart({ donut, totalMs }: DonutChartProps) {
         </text>
       </svg>
 
-      <ul className="grid gap-1 text-xs">
+      {/* 图例。中间那一列是**比例条**，不是空气。
+          原本是 `grid-cols-[9px_1fr_auto_auto]`，1fr 撑的是「名称」列，
+          于是卡片一宽，所有余量都变成标签和数字之间的空白 —— 卡右侧看着空，
+          根子在这。现在这一列画条：既填掉空白，又把比例直接读出来，
+          还和监控页「当日汇总」的分类行是同一套（两个页面长得像而不是各说各话）。 */}
+      <ul className="grid flex-1 gap-1 text-xs">
         {donut.map((d) => {
           const pct = safeTotal > 0 ? Math.round((Math.max(d.ms, 0) / safeTotal) * 100) : 0;
           return (
             <li
               key={d.key}
               data-legend=""
-              className="grid grid-cols-[9px_1fr_auto_auto] items-center gap-2"
+              className="grid grid-cols-[9px_auto_1fr_auto_auto] items-center gap-2"
             >
               <span aria-hidden className="size-2 rounded-sm"
                     style={{ background: colorOf(d.key) }} />
               <span className="text-ink">{labelOf(d.key)}</span>
+              <span className="h-1.5 min-w-6 overflow-hidden rounded-full bg-surface-2">
+                <span
+                  className="block h-full rounded-full"
+                  style={{ width: `${Math.max(pct, pct > 0 ? 2 : 0)}%`, background: colorOf(d.key) }}
+                />
+              </span>
               <span className="tnum text-ink-faint">{fmt(d.ms)}</span>
               <span className="tnum w-9 text-right text-ink-faint">{pct}%</span>
             </li>
