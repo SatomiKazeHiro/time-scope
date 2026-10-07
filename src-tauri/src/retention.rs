@@ -129,6 +129,20 @@ mod tests {
             .len() as i64
     }
 
+    /// `LAST_PRUNE_MS` 是**进程级**静态，测试默认并行跑，于是
+    /// `the_runtime_prune_runs_once_then_waits_a_day` 通过 `prune_if_due`
+    /// 写进去的时间戳，会落进 `retention_zero_disables_the_runtime_prune_entirely`
+    /// 的断言里 —— 实测约 8 次里挂 1 次，失败值恰好是 `seeded()` 的
+    /// `now`（259200000）。
+    ///
+    /// 下面两条碰它的测试都要先拿这把锁。锁中毒时取 `into_inner()`
+    /// 而不是 panic —— 中毒来自**别的**测试崩了，不该连累这两条。
+    static PRUNE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn exclusive() -> std::sync::MutexGuard<'static, ()> {
+        PRUNE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn zero_days_means_keep_everything() {
         // 关键：0 是"永不删"，不是"删掉 0 天前"（那会清空整张表）。
@@ -154,6 +168,7 @@ mod tests {
 
     #[test]
     fn the_runtime_prune_runs_once_then_waits_a_day() {
+        let _guard = exclusive();
         // 连着调 10 次只该删一次 —— 否则每次翻页/轮询都去扫一遍整张 events。
         LAST_PRUNE_MS.store(0, Ordering::Relaxed);
         let (conn, now) = seeded();
@@ -171,6 +186,7 @@ mod tests {
 
     #[test]
     fn retention_zero_disables_the_runtime_prune_entirely() {
+        let _guard = exclusive();
         LAST_PRUNE_MS.store(0, Ordering::Relaxed);
         let (conn, now) = seeded();
         prune_if_due(&conn, 0, now);
