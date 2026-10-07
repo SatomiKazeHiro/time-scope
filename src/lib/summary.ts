@@ -111,10 +111,10 @@ export function scaleColor(step: number): string {
 }
 
 /**
- * 还没装 Time Scope 的那段日子怎么画。
+ * 还没装时迹的那段日子怎么画。
  *
  * **它和「装了但当天没活动」是两件事，必须分开。** GitHub 的空格有意义是因为
- * GitHub 一直存在；Time Scope 三个月前还不存在，那段日子的空格读作「我一整年
+ * GitHub 一直存在；时迹三个月前还不存在，那段日子的空格读作「我一整年
  * 几乎没用过」——而事实是「我 5 天前才装上」。
  *
  * 两者**底色相同**（轨道色），只差描边强弱：
@@ -142,7 +142,7 @@ export interface WallCell {
   /** false = 补齐位（窗口之外），不渲染但占位，保证不整列错位 */
   present: boolean;
   /**
-   * 这天是否在 Time Scope 的运行期内。
+   * 这天是否在时迹的运行期内。
    * false = 还没装（`uninstalledColor()`），true = 装了但可能没活动（0 档）。
    */
   tracked: boolean;
@@ -163,7 +163,7 @@ export interface WallLayout {
  *
  * 空档必须分两级 —— 两者**底色相同**（都是轨道色 `--color-surface-2`，
  * 浅色主题下压在白色面板上几乎看不见），只靠 1px 内描边的强弱区分：
- * - `uninstalled`：还没装 Time Scope 的那段日子，弱描边 `--color-line`
+ * - `uninstalled`：还没装时迹的那段日子，弱描边 `--color-line`
  * - `empty`：装了但当天没活动，强描边 `--color-line-strong`
  *
  * 不描边两者都看不见，都描强又分不开。**不新增 token**（MASTER §2.4）。

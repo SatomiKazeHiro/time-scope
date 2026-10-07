@@ -177,7 +177,7 @@ export default function SummaryPage() {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
-      <PageHeader>
+      <PageHeader title="汇总">
         <HeaderDivider />
         <RangeReadout label={range ? rangeLabel(range) : "—"} />
       </PageHeader>
@@ -224,6 +224,11 @@ export default function SummaryPage() {
  * 色阶图例。**用真的色阶色块**，不用 `░▒▓█` 之类的字符凑 ——
  * 字符渲染出来是单色，跟墙上实际用的紫阶对不上，读者没法拿图例反推深浅。
  * 0 档（轨道色）不在图例里：它是「当天没有活动」，不是一档强度。
+ *
+ * 「还没装」也不在图例里。图例是**解码颜色的钥匙**，「还没装」是关于这个
+ * 应用安装日期的事实 —— 把它画成色块，读者会当成一种活动数据去读。
+ * 它是热力图下方提示行里的一句话（`ContributionWall`），那里才是它该待的地方。
+ * 两种"空"的视觉区分照旧保留：合并成一种就是谎报装之前那些天也没活动。
  */
 function ScaleLegendSteps() {
   return (
@@ -240,16 +245,6 @@ function ScaleLegendSteps() {
       ))}
       <span>多</span>
       <span className="ml-3 flex items-center gap-1.5">
-        <i
-          data-legend-empty
-          aria-hidden
-          className="size-2.5 rounded-[2px]"
-          style={{
-            background: "var(--color-surface-2)",
-            boxShadow: "inset 0 0 0 1px var(--color-line)",
-          }}
-        />
-        还没装
         <i
           data-legend-zero
           aria-hidden

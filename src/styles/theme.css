@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /*
- * Time Scope 设计基调：仪表盘（instrument panel）。
+ * 时迹的设计基调：仪表盘（instrument panel）。
  *
  * 三条硬规则，破坏其中任何一条都会让整个界面失掉"数据优先"的性格：
  *
@@ -310,6 +310,56 @@
     font-size: var(--text-base);
     line-height: var(--text-base--line-height);
     -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * 滚动条统一。
+   *
+   * WebView2 的默认滚动条是 Windows 那副厚带子边框的样子，在这种密集排版里
+   * 像一条不属于界面的外来物。这里全局收窄、轨道透明、滑块圆角。
+   *
+   * 滑块用 `--color-ink-faint`：**不用 `--color-ink-ghost`** —— 它在浅色底上
+   * 只有 2.69:1，低于滚动条作为非文字 UI 元素的 3:1 下限；
+   * ink-faint 是 5.29:1 / 4.02:1，两边都过。
+   *
+   * 只写 `::-webkit-scrollbar` 不写标准的 `scrollbar-color`：WebView2 里
+   * 两者都生效且后者优先，会盖掉这里的圆角。标准属性留给别的浏览器时再加。
+   */
+  * {
+    scrollbar-width: thin;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-ink-faint);
+    border-radius: 999px;
+    /* 三 px 透明边框 + background-clip，把滑块视觉收窄成 4px，
+       轨道却仍占满 10px —— 视觉轻，点击区不小 */
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-muted);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /*
+   * 密集列表用的更细一档：段落列表这类一行一个短条的地方，10px 会把内容挤得
+   * 比内容本身还宽。
+   */
+  .scroll-slim::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    border-width: 2px;
   }
 
   /* 所有数字读数用等宽数字：时间码跳变时数字不会左右抖 */

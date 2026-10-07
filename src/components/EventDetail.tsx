@@ -281,7 +281,7 @@ function TitleList({
     return <span className="text-ink-faint">（这段没有带标题的窗口事件）</span>;
   }
   return (
-    <ul className="m-0 flex max-h-40 list-none flex-col gap-1 overflow-y-auto p-0 pr-1">
+    <ul className="scroll-slim m-0 flex max-h-40 list-none flex-col gap-1 overflow-y-auto p-0 pr-1">
       {titles.map((t) => (
         <li key={t.title} className="flex items-baseline gap-1.5">
           <span className="min-w-0 break-all">{t.title}</span>

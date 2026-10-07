@@ -150,7 +150,7 @@ export default function App() {
                 **必须能换行。** 之前给两组都加了 shrink-0，结果窄窗口下 120分
                 直接被裁掉、整条栏溢出。宽窗口下它自然排成一行，窄窗口下"指标+粒度"
                 整体落到第二行，比哪个按钮被切掉强。骨架与汇总页共用 PageHeader。 */}
-            <PageHeader>
+            <PageHeader title="监控采集">
               <LiveBadge status={status} />
               <HeaderDivider />
               <DateNav date={date} isToday={isToday} onDate={setDate} />
@@ -188,9 +188,6 @@ export default function App() {
                     </span>
                     {/* 图例常驻：连续量没有图例就读不出数值。不能因为选中就让它消失 */}
                     <ScaleLegend metric={metric} />
-                    {selected && (
-                      <span className="text-micro text-ink-faint">已选中 · 再次点击取消</span>
-                    )}
                   </div>
                   <SegmentTimeline
                     segments={segments}

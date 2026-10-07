@@ -310,6 +310,9 @@ describe("切粒度时的选中态", () => {
   it("切粒度不复位选中段本身 —— 段是引擎判定的边界，与粒度无关", async () => {
     // 守住另一半：清的是**桶**选中，不是**段**选中。
     // 段详情面板不该因为用户调了一下粒度就自己清空。
+    //
+    // 判据是**详情面板的内容**，不是页头那句「已选中」提示 ——
+    // 那句提示已经删了（选中本来就看得见：色块上有环，详情面板里也写着）。
     invoke.mockResolvedValue([seg("s1", 9, 12)]);
     render(<App />);
     await waitFor(() => expect(timelineRects().length).toBeGreaterThan(0));
@@ -317,11 +320,12 @@ describe("切粒度时的选中态", () => {
     fireEvent.click(screen.getByRole("button", { name: "专注度" }));
     await waitFor(() => expect(screen.getByText(/30 分一格/)).toBeTruthy());
     fireEvent.click(bucket("18"));
-    await waitFor(() => expect(screen.getByText("已选中 · 再次点击取消")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Code.exe")).toBeTruthy());
 
     fireEvent.click(screen.getByText("120分"));
     await waitFor(() => expect(screen.getByText(/120 分一格/)).toBeTruthy());
-    expect(screen.getByText("已选中 · 再次点击取消")).toBeTruthy();
+    // 详情面板还在 = 段选中没被粒度变更误清
+    expect(screen.getByText("Code.exe")).toBeTruthy();
   });
 });
 

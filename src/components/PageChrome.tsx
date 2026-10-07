@@ -9,21 +9,33 @@ import type { ReactNode } from "react";
  * 分叉就无处发生。
  */
 
-/** 页头：应用名 + 该页自己的内容。跨行行为两页一致（窄窗口下换行而不是裁切）。 */
-export function PageHeader({ children }: { children?: ReactNode }) {
+/**
+ * 页头：**当前页名** + 该页自己的内容。
+ *
+ * 左上角原来写应用名「Time Scope」—— 但名字在托盘和窗口标题栏已经常驻，
+ * 位置留给「你在哪一页」更有用。页名与侧边栏那一项一致，两处说的是同一件事。
+ *
+ * 跨行行为两页一致（窄窗口下换行而不是裁切）。`whitespace-nowrap` 必需：
+ * 不加的话中文会被逐字折成竖排。
+ */
+export function PageHeader({
+  title,
+  children,
+}: {
+  title: string;
+  children?: ReactNode;
+}) {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2">
-      {/* 应用名降级成安静标识：托盘里已经常驻，20px 的 h1 是抢戏。
-          whitespace-nowrap 必需：不加的话窄窗口下会被逐字折成竖排。 */}
-      <h1 className="m-0 shrink-0 text-label font-semibold tracking-wide whitespace-nowrap text-ink-muted">
-        Time Scope
+      <h1 className="m-0 shrink-0 text-label font-semibold tracking-wide whitespace-nowrap text-ink">
+        {title}
       </h1>
       {children}
     </div>
   );
 }
 
-/** 页头里的竖分隔线：把"这是哪个应用"和"这一页在看什么"分开。 */
+/** 页头里的竖分隔线：把"这一页是谁"和"这一页在看什么"分开。 */
 export function HeaderDivider() {
   return <span aria-hidden className="mx-1 hidden h-5 w-px shrink-0 bg-line sm:block" />;
 }

@@ -248,7 +248,7 @@ describe("buildWall 的固定跨度", () => {
 });
 
 describe("未安装期", () => {
-  // GitHub 的空格有意义是因为 GitHub 一直存在。Time Scope 三个月前还不存在，
+  // GitHub 的空格有意义是因为 GitHub 一直存在。时迹三个月前还不存在，
   // 那段日子的空格读作「我一整年几乎没用过」——而事实是「我 5 天前才装上」。
   // 两种「空」必须分开：还没装 vs 装了没活动。
   const w = wallWindow("2026-10-05");

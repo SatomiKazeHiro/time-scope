@@ -8,16 +8,24 @@ import {
 } from "./PageChrome";
 
 describe("PageChrome", () => {
-  it("页头带应用名，且应用名不会被逐字折行", () => {
-    render(<PageHeader>其余控件</PageHeader>);
+  it("页头写的是**当前页名**，不是应用名", () => {
+    // 应用名在托盘和窗口标题栏已经常驻，左上角留给「你在哪一页」更有用
+    render(<PageHeader title="监控采集">其余控件</PageHeader>);
     const h1 = screen.getByRole("heading", { level: 1 });
-    expect(h1.textContent).toBe("Time Scope");
-    // 窄窗口下没有它，"Time Scope" 会被逐字折成竖排
+    expect(h1.textContent).toBe("监控采集");
+    expect(h1.textContent).not.toMatch(/Time Scope|时迹/);
+    // 窄窗口下没有它，中文会被逐字折成竖排
     expect(h1.className).toContain("whitespace-nowrap");
   });
 
+  it("页名由各页传入，不写死在组件里", () => {
+    const { unmount } = render(<PageHeader title="汇总" />);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("汇总");
+    unmount();
+  });
+
   it("页头能换行 —— 窄窗口下溢出比换行更糟", () => {
-    render(<PageHeader>其余控件</PageHeader>);
+    render(<PageHeader title="监控采集">其余控件</PageHeader>);
     expect(screen.getByRole("heading", { level: 1 }).parentElement!.className).toContain(
       "flex-wrap",
     );

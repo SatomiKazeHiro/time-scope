@@ -36,7 +36,7 @@ const PAD_STYLE: React.CSSProperties = { background: "transparent" };
  * 而读屏用户看不到描边 —— 名字就是他们唯一的区分通道。
  */
 function dayLabel(c: { date: string; totalMs: number; tracked: boolean }): string {
-  if (!c.tracked) return `${c.date} · 还没装 Time Scope`;
+  if (!c.tracked) return `${c.date} · 还没装时迹`;
   const hours = Math.round((c.totalMs / 3_600_000) * 10) / 10;
   return `${c.date} · ${hours}h`;
 }
@@ -212,6 +212,7 @@ export default function ContributionWall({
 
       <p className="mt-1 text-[10px] text-ink-faint">
         一列一周，上到下是周一到周日。点格子选一天，点下方细条选一周，点月份选整月。
+        装之前的日子画成浅格，不计入统计。
       </p>
       </div>
 
