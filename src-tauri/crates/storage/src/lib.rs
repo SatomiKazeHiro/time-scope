@@ -13,9 +13,9 @@ pub use query::{
 };
 pub use schema::{apply_pragmas, current_version, migrate, SCHEMA_VERSION};
 pub use summary::{
-    daily_calendar, range_pacing, range_totals, title_counts_in_range, AppSlice, DailyCalendar,
-    DayCell, DonutSlice,
-    RangePacing, RangeTotals,
+    daily_calendar, range_pacing, range_totals, title_counts_in_range, uncovered_programs, AppSlice,
+    DailyCalendar, DayCell, DonutSlice,
+    RangePacing, RangeTotals, UncoveredProgram,
 };
 pub use writer::BatchWriter;
 

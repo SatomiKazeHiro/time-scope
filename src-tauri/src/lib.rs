@@ -210,6 +210,31 @@ fn get_top_titles(
     Ok(title_norm::merge_top_titles(raw, limit, &state.redactor))
 }
 
+/// 设置页的「哪些程序还没规则覆盖」列表。
+///
+/// 回答的是**「你的配置缺了什么」**，与汇总面板的「今天干了什么」是两件事——
+/// 同一张表曾在当日汇总里做过并被撤回，因为那会把一张配置表混进
+/// 一个描述时间去向的面板。见 STATUS §4.1。
+///
+/// 走 `activities` 而不是 `events`：这条只需要进程名与时长，
+/// `activities` 有 `application` 列且已分好段，不需要回表取 payload。
+/// `idx_activities_range` 覆盖时间过滤。
+///
+/// `async` 是必需的而非风格问题：窗口默认 30 天，段数是万级
+/// （实测 5 天约 2 千段，90 天上万），跑在主线程上会冻结界面（A3）。
+#[tauri::command(async)]
+fn get_uncovered_programs(
+    state: tauri::State<'_, AppState>,
+    days: Option<u32>,
+) -> Result<Vec<activity_storage::UncoveredProgram>, String> {
+    const DEFAULT_DAYS: u32 = 30;
+    const MAX_DAYS: u32 = 365;
+    let days = days.unwrap_or(DEFAULT_DAYS).clamp(1, MAX_DAYS);
+    let c = state.writer.conn();
+    activity_storage::uncovered_programs(&c, activity_storage::now_ms(), days)
+        .map_err(|e| e.to_string())
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         // 必须第一个注册（spec §12）：它靠抢全局锁判定"是不是第一个实例"，
@@ -336,6 +361,7 @@ pub fn run() {
             get_daily_calendar,
             get_summary,
             get_top_titles,
+            get_uncovered_programs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

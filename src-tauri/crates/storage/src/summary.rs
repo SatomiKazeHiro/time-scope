@@ -342,3 +342,81 @@ pub fn title_counts_in_range(
     }
     Ok(out)
 }
+
+/// 一个「有记录但没规则覆盖」的程序。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UncoveredProgram {
+    /// 进程名（只有文件名部分，规则匹配也只比这个）
+    pub application: String,
+    pub total_ms: i64,
+    /// 占**未覆盖总时长**的比例，0–1。
+    ///
+    /// 分母刻意不是全天时长：用户打开这个列表要回答的是
+    /// 「我漏配的时间里有多少给了它」，不是「我一天有多少给了它」。
+    /// 用全天当分母的话，列表里每行都是个位数百分比，
+    /// 「32% 未分类」的大头就消失在了分母里。
+    pub share_of_uncovered: f64,
+    pub segment_count: i64,
+}
+
+const DAY_MS: i64 = 86_400_000;
+
+/// 最近 `days` 天里落进 `unknown` 的程序，按耗时降序。
+///
+/// 这份列表回答的是「**你的配置缺了什么**」，与汇总面板的「今天干了什么」
+/// 是两件事 —— 曾在当日汇总里做过并被撤回，因为那会把一张配置表
+/// 混进一个描述时间去向的面板。设置页是它的家。
+///
+/// **命中口径与 `range_totals` 同源**：`start_at < end AND end_at > start`
+/// 的区间相交，起止**裁剪到窗口**。改这里必须同时改那里
+/// （STATUS「别动这里」第 22 条）—— 不然同一天在时间线和这里会算出不同时长。
+///
+/// 没有未覆盖段时返回**空列表而不是 Err**：「全都覆盖了」是一个好状态，
+/// 调用方据此显示空状态；返回 Err 会让界面把它当成出错来提示。
+pub fn uncovered_programs(
+    conn: &Connection,
+    now_ms: i64,
+    days: u32,
+) -> Result<Vec<UncoveredProgram>, rusqlite::Error> {
+    let start_ms = now_ms - i64::from(days) * DAY_MS;
+    if start_ms >= now_ms {
+        return Ok(Vec::new());
+    }
+
+    let mut rows: Vec<(String, i64, i64)> = Vec::new();
+    for row in conn.prepare(
+        "SELECT application, SUM(MIN(end_at, ?2) - MAX(start_at, ?1)) AS ms, COUNT(*) AS n
+         FROM activities
+         WHERE category = 'unknown'
+           AND start_at < ?2 AND end_at > ?1
+           AND application IS NOT NULL AND application != ''
+         GROUP BY application
+         ORDER BY ms DESC",
+    )?
+    .query_map(rusqlite::params![start_ms, now_ms], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
+    })? {
+        rows.push(row?);
+    }
+
+    let uncovered_total: i64 = rows.iter().map(|(_, ms, _)| *ms).sum();
+    Ok(rows
+        .into_iter()
+        .map(|(application, total_ms, segment_count)| UncoveredProgram {
+            application,
+            total_ms,
+            // 分母为 0 时全给 0，而不是 NaN —— 界面要能直接画进度条
+            share_of_uncovered: if uncovered_total > 0 {
+                total_ms as f64 / uncovered_total as f64
+            } else {
+                0.0
+            },
+            segment_count,
+        })
+        .collect())
+}
