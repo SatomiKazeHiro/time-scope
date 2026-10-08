@@ -19,6 +19,7 @@ import {
   getUncoveredPrograms,
   UncoveredProgram,
 } from "../types";
+import ConfigPanel from "./ConfigPanel";
 
 /** 统计窗口。写进界面是因为「38%」这个数没有分母就没有意义。 */
 const WINDOW_DAYS = 30;
@@ -32,7 +33,14 @@ const WINDOW_DAYS = 30;
  */
 const RULE_TARGETS: Category[] = ["work", "study", "browsing", "entertainment", "communication", "life"];
 
-export default function SettingsPage() {
+/**
+ * @param rulesOnly **仅测试用**：只渲染规则区。
+ *
+ * 存在的唯一原因是 vitest 的 `vi.mock` 对同时发起的重复动态 import 处理不对
+ * （第二个 import 拿到 undefined）。真实使用里 App 一次只挂一个视图，
+ * 不存在这个时序。产品代码不该知道这件事，所以它是个 prop 而不是分支逻辑。
+ */
+export default function SettingsPage({ rulesOnly = false }: { rulesOnly?: boolean } = {}) {
   const [rows, setRows] = useState<UncoveredProgram[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
@@ -45,7 +53,13 @@ export default function SettingsPage() {
       .catch((e) => setError(String(e)));
   }, []);
 
-  useEffect(load, [load]);
+  // 不写成 `useEffect(load, ...)`：React 会把返回值当清理函数。
+  // `load` 一旦改成返回 Promise（像 ConfigPanel 那样为了 await 重读），
+  // 那样写就会在卸载时炸 `destroy is not a function` —— 而且只在
+  // 两个组件同时挂载时才暴露，极难联想到真正的原因。
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   async function choose(app: string, cat: Category) {
     setBusy(true);
@@ -127,7 +141,11 @@ export default function SettingsPage() {
         )}
       </div>
 
-      <ConfigPanel />
+      {!rulesOnly && (
+        <div className="mt-3 rounded-md border border-line bg-surface-2 p-3">
+          <ConfigPanel />
+        </div>
+      )}
     </section>
   );
 }
@@ -173,13 +191,3 @@ function CategoryPicker({
   );
 }
 
-// 配置区单独一个组件：它要独立加载、独立报错，
-// 与规则区共用外壳但不该共用一份错误状态。
-function ConfigPanel() {
-  return (
-    <div className="mt-3 rounded-md border border-line bg-surface-2 p-3">
-      <h2 className="text-sm font-medium text-ink">行为参数</h2>
-      <p className="mt-1 text-xs text-ink-faint">正在接入…</p>
-    </div>
-  );
-}

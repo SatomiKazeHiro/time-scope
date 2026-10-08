@@ -202,3 +202,31 @@ export async function addRule(application: string, category: Category): Promise<
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke<void>("add_rule", { application, category });
 }
+
+/** `config.toml` 的前端镜像。字段与 Rust 的 `AppConfig` 一一对应。 */
+export interface AppConfig {
+  idleThresholdS: number;
+  gracePeriodS: number;
+  minSegmentDurationS: number;
+  heartbeatEveryS: number;
+  autostart: boolean;
+  closeBehavior: string;
+  eventsRetentionDays: number;
+}
+
+export async function getConfig(): Promise<AppConfig> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<AppConfig>("get_config");
+}
+
+/**
+ * 改一个配置项，返回**是否需要重启才生效**。
+ *
+ * 这个判定由后端给出（依据是参数绑在哪里），前端不自己猜 ——
+ * 复制一份表就多一处会跟实现对不上的地方，而那种对不上
+ * 表现为「界面说不用重启、实际要重启」，最难查。
+ */
+export async function setConfig(key: string, value: string): Promise<boolean> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<boolean>("set_config", { key, value });
+}
