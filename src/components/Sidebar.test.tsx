@@ -101,4 +101,25 @@ describe("Sidebar", () => {
     const second = THEME_LABEL.light;
     expect(screen.getByRole("button", { name: `主题：${second}` })).toBeTruthy();
   });
+
+  // 以下两条原本在 ThemeToggle.test.tsx。组件删掉时（2026-10-08，无任何引用）
+  // 一并搬过来 —— 它们测的是 useTheme 的持久化与容错，不是那个死组件的渲染。
+
+  it("记住选择，下次启动直接恢复", () => {
+    const first = render(<Harness />);
+    const btn = () => screen.getByRole("button", { name: /^主题：/ });
+    fireEvent.click(btn()); // system → light
+    fireEvent.click(btn()); // light → dark
+    expect(localStorage.getItem("time-scope.theme")).toBe("dark");
+    first.unmount();
+
+    render(<Harness />);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+  });
+
+  it("存了非法值时退回跟随系统，而不是渲染出一个坏主题", () => {
+    localStorage.setItem("time-scope.theme", "chartreuse");
+    render(<Harness />);
+    expect(document.documentElement.dataset.theme).toBe("system");
+  });
 });

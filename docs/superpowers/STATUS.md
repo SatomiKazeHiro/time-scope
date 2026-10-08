@@ -10,7 +10,7 @@
 
 ```
 Rust  38 文件 / 7238 行    TS/TSX  23 文件 / 3649 行     （均不含测试）
-测试  359 Rust + 327 前端 = 686 条，全绿
+测试  359 Rust + 324 前端 = 683 条，全绿
 提交  main..phase1-polish 94 个，未合并
 ```
 
@@ -63,7 +63,7 @@ Rust  38 文件 / 7238 行    TS/TSX  23 文件 / 3649 行     （均不含测�
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 359 passed
 cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets   # 0 warning
-pnpm test                                                       # 327 passed
+pnpm test                                                       # 324 passed
 pnpm build                                                      # 无 tsc 报错
 node design-system/time-scope/verify-palette.mjs                # 色板校验，exit 0
 ```
@@ -132,9 +132,11 @@ design-system/time-scope/    UI 规范（MASTER.md）+ 色板校验脚本
 src/
   styles/theme.css           设计 token + 深浅两套主题
   design/                    categories.ts 类别元数据 / useTheme.ts 三态主题
-  components/                SegmentTimeline（时间线·三态指标）/ MetricPicker
+  components/                共 13 个：Sidebar / PageChrome / SettingsPage（空壳）
+                             SegmentTimeline（时间线·三态指标）/ MetricRow / MetricPicker
+                             GranularityPicker / DaySummary / EventDetail
                              ContributionWall（热力图）/ DonutChart / DayPartChart
-                             RankedList / DaySummary / EventDetail / PageChrome
+                             RankedList
   lib/                       bucket.ts 切片+汇总 / metrics.ts 每桶指标 / summary.ts 热力图布局
   views/SummaryPage.tsx      汇总页
   preview*.test.tsx          视觉预览（整页 / 碎片时间线 / 汇总页）
@@ -182,6 +184,7 @@ docs/superpowers/
 | **标题统计没有预聚合/索引** | `json_extract(payload,…)` 必须回表。5 天 199ms，一年约 15s。**约 3 个月（≈90 天）时重新评估** |
 | 78 项验证清单未勾 | §2 |
 | CI 只跑过基线配置 | 长期没变过依赖，改依赖时要盯一眼 |
+| `docs/superpowers/specs/` 三份里引用的 `ThemeToggle.tsx` 已不存在 | 2026-10-08 删掉了这个死组件（无任何引用，Sidebar 内联了同一个按钮）。spec 是冻结快照，**不动** —— 见 §6 |
 
 ---
 

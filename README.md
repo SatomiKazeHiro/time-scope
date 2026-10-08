@@ -80,7 +80,7 @@ pnpm tauri dev
 cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 359 passed
 
 # 前端
-pnpm test                                                       # 327 passed
+pnpm test                                                       # 324 passed
 ```
 
 ## 代码结构
@@ -90,14 +90,16 @@ src/                     React 前端
   styles/theme.css       设计 token（色板 / 字阶 / 间距 / 圆角）+ 深浅两套主题
   design/categories.ts   类别元数据：中文名、层级、CSS 变量引用
   design/useTheme.ts     跟随系统 / 浅色 / 深色 三态
-  components/
-    Sidebar / PageChrome 主导航 + 两页共用的页头外壳
-    SegmentTimeline      24h 时间线（SVG，三态指标）
-    MetricRow/MetricPicker  顶部指标卡与粒度切换
-    ContributionWall     53 周热力图
-    DonutChart/DayPartChart/RankedList  汇总页的圆环、时段分布、标题排名
-    EventDetail/SegmentDetail  详情面板
-    SettingsPage         空壳
+  components/                共 13 个（不含测试）
+    Sidebar.tsx         72px 图标导航 + 主题/设置；上层两个页面，下层两个工具
+    PageChrome.tsx      两页共用的页头外壳
+    SettingsPage.tsx    空壳（等 get_config / set_config）
+    SegmentTimeline.tsx 24h 时间线（SVG，类别/专注度/切换次数三态）
+    MetricRow.tsx       顶部五个指标卡   MetricPicker.tsx 三态指标切换
+    GranularityPicker.tsx 粒度切换（10/30/60/120 分钟）
+    DaySummary.tsx      当日汇总        EventDetail.tsx 选中段的详情
+    ContributionWall.tsx 53 周热力图
+    DonutChart.tsx / DayPartChart.tsx / RankedList.tsx  汇总页的三个图表
   views/SummaryPage.tsx  汇总页
   lib/                   bucket 切片+汇总 / metrics 每桶指标 / summary 热力图布局
                        （同名 .test.ts 里有「每个 var(--x) 都必须在 theme.css 有定义」的守卫）
