@@ -59,12 +59,20 @@ struct AppState {
     /// 已重放过的日期。启动只重放"今天"；用户翻到别的日子时按需重放，
     /// 把上次崩溃留下的孤儿事件补成分段（spec §7.4）。
     replayed: ReplayedDays,
-    rules: activity_engine::RuleSet,
+    /// 当前生效的规则集。设置页「加规则」后**热替换**，不等重启。
+    ///
+    /// 共享可变是因为两处要读它：engine 线程的分类（`EngineRuntime.rules`）
+    /// 与「按需重放」的历史日期重放。两者都是低频读，写只发生在用户点保存时。
+    rules: Arc<Mutex<activity_engine::RuleSet>>,
     config: activity_engine::EngineConfig,
     /// 标题脱敏器。consumer 与"按需重放"两条路径共用（spec §11）。
     redactor: Arc<Redactor>,
     /// 原始事件保留天数（B3）。0 = 永不删。
-    retention_days: u32,
+    ///
+    /// 与 `rules` 同理做成共享可变：留 365 天改 30 天应当**立刻**开始按新值清理，
+    /// 而不是等到下次启动。清理本身仍挂在 `get_segments` 上按 24h 至多一次，
+    /// 不为它另开定时线程（见 B3 的原注释）。
+    retention_days: Arc<Mutex<u32>>,
 }
 
 /// 取某天的全部 ActivitySegment（spec §9）。
@@ -80,14 +88,24 @@ fn get_segments(
 
     // B3：每 24h 至多清一次过期原始事件。挂在这条稳定的高频 IPC 上，
     // 而不是为此再开一个定时线程（代价只是每次多一次原子读）。
-    retention::prune_if_due(&state.conn, state.retention_days, activity_storage::now_ms());
+    // 每次现读现用：用户在设置页改保留期后，下一次轮询就按新值清理。
+    let retention_days = *state
+        .retention_days
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    retention::prune_if_due(&state.conn, retention_days, activity_storage::now_ms());
 
     // 首次查看某一天时按需重放：启动只做了"今天"，别的日子可能还留着
     // 上次崩溃前没被引擎处理过的孤儿事件。
+    let rules = state
+        .rules
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
     replay_day_once(
         &state.conn,
         &state.replayed,
-        &state.rules,
+        &rules,
         &state.config,
         &date,
         offset,
@@ -235,6 +253,33 @@ fn get_uncovered_programs(
         .map_err(|e| e.to_string())
 }
 
+/// 设置页的「给这个程序加一条规则」。
+///
+/// 写回 `rules.toml` 并**立刻热替换**内存里的规则集 —— 用户加完规则
+/// 就不该被要求重启，这正是这个入口存在的理由。
+///
+/// `confidence` 固定 0.9：内置规则里跟 IDE / 浏览器同级的一律 0.9，
+/// 终端那种宽泛匹配才给 0.7。从「程序名精确匹配」这个表单产生的规则
+/// 没有理由比同类的低。
+#[tauri::command(async)]
+fn add_rule(
+    state: tauri::State<'_, AppState>,
+    application: String,
+    category: String,
+) -> Result<(), String> {
+    let new_set = rules::append_rule(&rules::rules_path(), &application, &category, 0.9)?;
+
+    // 引擎的实时流：换掉规则集，下一个 Event 就按新规则分类
+    if let Ok(mut rt) = state.engine.lock() {
+        rt.rules = new_set.clone();
+    }
+    // 「按需重放」历史日期时读的那一份也要换，否则两边口径不一致
+    if let Ok(mut rs) = state.rules.lock() {
+        *rs = new_set;
+    }
+    Ok(())
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         // 必须第一个注册（spec §12）：它靠抢全局锁判定"是不是第一个实例"，
@@ -348,10 +393,10 @@ pub fn run() {
                 conn: Arc::clone(&conn),
                 engine,
                 replayed,
-                rules: rule_set,
+                rules: Arc::new(Mutex::new(rule_set)),
                 config,
                 redactor,
-                retention_days: app_config.events_retention_days,
+                retention_days: Arc::new(Mutex::new(app_config.events_retention_days)),
             });
             Ok(())
         })
@@ -362,6 +407,7 @@ pub fn run() {
             get_summary,
             get_top_titles,
             get_uncovered_programs,
+            add_rule,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
