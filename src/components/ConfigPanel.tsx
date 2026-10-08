@@ -18,6 +18,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { AppConfig, getConfig, setConfig } from "../types";
+import { CircleAlert } from "lucide-react";
 
 type Editable = {
   [K in keyof AppConfig]: string;
@@ -143,43 +144,46 @@ useEffect(() => {
   }
 
   if (error && !cfg) {
+    // 整块读不出来：这是「这一区没有内容」，不是一个字段的校验错误。
+    // 样式跟两页共用的 PageAlert 一致，之前汇总页漏了警告图标就是这个
     return (
-      <p role="alert" className="mt-2 text-xs text-state-critical">
-        {error}
+      <p role="alert" className="flex items-start gap-2 rounded-md border border-line bg-surface-1 p-3 text-sm text-ink">
+        <CircleAlert size={15} className="mt-0.5 shrink-0 text-state-critical" aria-hidden />
+        <span>{error}</span>
       </p>
     );
   }
   if (!cfg || !draft) {
-    return <p className="mt-2 text-sm text-ink-faint">正在读取…</p>;
+    return <p className="text-sm text-ink-faint">正在读取…</p>;
   }
 
   const dirty = FIELDS.some((f) => draft[f.key] !== cfg[f.key]);
 
   return (
     <div>
-      <h2 className="text-sm font-medium text-ink">行为参数</h2>
-      <p className="mt-1 text-xs text-ink-faint">
-        存在 %APPDATA%\time-scope\config.toml 里。带「重启后生效」的那几项绑在
-        采集线程和引擎构造参数上，进程内改不了。
-      </p>
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <span className="panel-title">行为参数</span>
+        <span className="text-micro text-ink-faint">存在 %APPDATA%\time-scope\config.toml</span>
+      </div>
 
       {error && (
-        <p role="alert" className="mt-2 text-xs text-state-critical">
-          {error}
+        <p role="alert" className="mb-3 flex items-start gap-2 rounded-md border border-line bg-surface-1 p-3 text-sm text-ink">
+          <CircleAlert size={15} className="mt-0.5 shrink-0 text-state-critical" aria-hidden />
+          <span>{error}</span>
         </p>
       )}
       {notice === "restart" && (
-        <p role="status" className="mt-2 text-xs text-state-warning">
+        <p role="status" className="mb-3 text-label text-state-warning">
           已保存。上面标「重启后生效」的那几项要退出再启动才起作用。
         </p>
       )}
       {notice === "saved" && (
-        <p role="status" className="mt-2 text-xs text-ink-faint">
+        <p role="status" className="mb-3 text-label text-ink-faint">
           已保存，立刻生效。
         </p>
       )}
 
-      <dl className="mt-3 grid gap-3">
+      <dl className="grid gap-3">
         {FIELDS.map((f) => (
           <Field
             key={f.key}
@@ -197,9 +201,9 @@ useEffect(() => {
         type="button"
         disabled={!dirty || busy}
         onClick={save}
-        className="mt-3 rounded-md border border-line px-3 py-1 text-xs text-ink hover:bg-surface-2 disabled:opacity-40"
+        className="mt-3 cursor-pointer rounded-md border border-line px-3 py-1 text-sm text-ink transition-colors duration-[--duration-fast] hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        保存
+        {busy ? "保存中…" : "保存"}
       </button>
     </div>
   );
@@ -224,14 +228,18 @@ function Field({
   const isChoice = CLOSE_BEHAVIORS.includes(value as (typeof CLOSE_BEHAVIORS)[number]);
 
   return (
-    <div className="grid grid-cols-1 gap-1">
-      <dt className="text-xs text-ink">
+    <div className="grid grid-cols-1 items-baseline gap-x-4 gap-y-0.5 sm:grid-cols-[minmax(0,14rem)_auto_minmax(0,1fr)] sm:items-center">
+      <dt className="text-label text-ink">
         {label}
         {restart && (
-          <span className="ml-1.5 text-[10px] text-ink-ghost">重启后生效</span>
+          // 「重启后生效」是这个控件的一部分，不是一行附注 ——
+          // 用户改完它发现没反应时，第一眼就要看到这句。
+          // ink-faint 而非 ink-ghost：后者 theme.css 标注「仅非文字」
+          // （3.84 / 3.07:1），而这句是要被读到的信息
+          <span className="ml-1.5 text-micro text-ink-faint">重启后生效</span>
         )}
       </dt>
-      <dd className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)] items-center gap-2">
+      <dd className="contents">
         {isBool ? (
           <input
             type="checkbox"
@@ -239,7 +247,7 @@ function Field({
             checked={value === "true"}
             disabled={disabled}
             onChange={(e) => onChange(String(e.target.checked))}
-            className="size-4 accent-[var(--color-neutral-solid)]"
+            className="size-4 justify-self-start accent-[var(--color-neutral-solid)]"
           />
         ) : isChoice ? (
           <select
@@ -247,7 +255,7 @@ function Field({
             value={value}
             disabled={disabled}
             onChange={(e) => onChange(e.target.value)}
-            className="rounded-sm border border-line bg-surface-1 px-2 py-1 text-xs text-ink"
+            className="w-32 rounded-sm border border-line bg-surface-1 px-2 py-1 text-label text-ink"
           >
             {CLOSE_BEHAVIORS.map((b) => (
               <option key={b} value={b}>
@@ -262,10 +270,10 @@ function Field({
             value={value}
             disabled={disabled}
             onChange={(e) => onChange(e.target.value)}
-            className="rounded-sm border border-line bg-surface-1 px-2 py-1 text-xs tabular-nums text-ink"
+            className="tnum w-32 rounded-sm border border-line bg-surface-1 px-2 py-1 text-label text-ink"
           />
         )}
-        <span className="text-[11px] text-ink-faint">{hint}</span>
+        <span className="text-micro text-ink-faint">{hint}</span>
       </dd>
     </div>
   );
