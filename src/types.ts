@@ -177,3 +177,28 @@ export async function getTopTitles(
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<MergedTitle[]>("get_top_titles", { from, to, limit });
 }
+
+/**
+ * 一个「有记录但没规则覆盖」的程序。
+ *
+ * `shareOfUncovered` 的分母是**未覆盖总时长**，不是全天 ——
+ * 用户打开设置页要回答的是「我漏配的时间里有多少给了它」。
+ * 与后端 `uncovered_programs` 的注释同款。
+ */
+export interface UncoveredProgram {
+  application: string;
+  totalMs: number;
+  shareOfUncovered: number;
+  segmentCount: number;
+}
+
+export async function getUncoveredPrograms(days = 30): Promise<UncoveredProgram[]> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<UncoveredProgram[]>("get_uncovered_programs", { days });
+}
+
+/** 给一个程序加分类规则。**立即生效**，不需要重启。 */
+export async function addRule(application: string, category: Category): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke<void>("add_rule", { application, category });
+}
