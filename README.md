@@ -26,7 +26,11 @@ Windows 事件/输入 ─▶ collector ─▶ Event ─▶ SQLite(WAL)
 ```
 
 两个页面（**监控采集** / **汇总**）由左侧 72px 图标侧边栏切换，下层是主题与设置。
-**设置页目前是空壳**，只有标题。
+
+**设置页**有两块：**规则覆盖**列出最近 30 天有时间但没落进任何类别的程序，
+点「归类…」选个类别就写回 `rules.toml` 并**立刻生效**；
+**行为参数**是 `config.toml` 的七个字段，其中三项立刻生效、
+四项要重启才生效（界面上标出来了）。
 
 `rules.toml` 在 `%APPDATA%/time-scope/`，首次启动自动生成 15 条默认规则，
 可自由编辑。改坏了也不会崩——退回内置默认并保留你的文件。
@@ -48,7 +52,9 @@ heartbeat_every_s = 10   # 心跳聚合窗口
 close_behavior = "ask"  # ask = 问一次 / minimize = 最小化到托盘 / quit = 退出
 ```
 
-**改 `config.toml` 目前只能手改文件 + 重启** —— 设置页是空壳，`get_config` / `set_config` 未实现。
+**改 `config.toml`**：现在可以在设置页改，也可以手改文件。
+四个采集/引擎参数（空闲阈值、宽限窗口、短段合并、心跳窗口）绑在进程构造上，
+**改了要重启**；`autostart`、`close_behavior`、`events_retention_days` 立刻生效。
 
 点窗口的 ✕ 第一次会问一次（选什么就记住什么）；此后只隐藏到托盘，**托盘菜单的「退出」是唯一退出入口**。
 锁屏与合盖记成 idle，不再把 8 小时锁屏算成 8 小时活跃。
@@ -77,10 +83,10 @@ pnpm tauri dev
 
 ```bash
 # Rust：必须带 --workspace，否则只跑根包、core/engine/storage/collector 全部被跳过
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 359 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 373 passed
 
 # 前端
-pnpm test                                                       # 324 passed
+pnpm test                                                       # 339 passed
 ```
 
 ## 代码结构
@@ -90,10 +96,10 @@ src/                     React 前端
   styles/theme.css       设计 token（色板 / 字阶 / 间距 / 圆角）+ 深浅两套主题
   design/categories.ts   类别元数据：中文名、层级、CSS 变量引用
   design/useTheme.ts     跟随系统 / 浅色 / 深色 三态
-  components/                共 13 个（不含测试）
+  components/                共 14 个（不含测试）
     Sidebar.tsx         72px 图标导航 + 主题/设置；上层两个页面，下层两个工具
     PageChrome.tsx      两页共用的页头外壳
-    SettingsPage.tsx    空壳（等 get_config / set_config）
+    SettingsPage.tsx    规则覆盖 + 行为参数（ConfigPanel.tsx）
     SegmentTimeline.tsx 24h 时间线（SVG，类别/专注度/切换次数三态）
     MetricRow.tsx       顶部五个指标卡   MetricPicker.tsx 三态指标切换
     GranularityPicker.tsx 粒度切换（10/30/60/120 分钟）
@@ -124,11 +130,10 @@ design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 
 | 优先级 | 缺什么 | 影响 |
 |---|---|---|
-| 🟠 | **设置界面** | `get_config` / `set_config` 未实现，改 `config.toml` 只能手改文件 |
-| 🟠 | **哪些程序还没规则覆盖** | 界面只有「未分类」一个总数，没法行动。自然属于设置页 |
-| 🟡 | 扩内置默认规则 | 15 条只覆盖通用软件，自带工具链（Zed / DBeaver…）会有三成以上时间落进 unknown |
-| 🟡 | `segment-updated` 实时推送 | 现用 5 秒轮询整表，功能等价，段多了浪费。优先级最低 |
-| 🟡 | 规则 / 配置热重载 | 改完要重启。`EngineConfig` 是构造注入的，热重载要重放当天，spec 提了但**没定义行为** |
+| 🟡 | 扩内置默认规则 | 15 条只覆盖通用软件，自带工具链（Zed / DBeaver…）会有三成以上时间落进 unknown。设置页的未覆盖列表现在能指出具体是哪几个，但**批量导入清单**还没有 |
+| 🟡 | 改已有规则 / 编辑脱敏规则 | 设置页只能**加**规则。改一条已有规则、或编辑 `[[redact]]` 正则，仍要手工编辑 `rules.toml` |
+| 🟡 | 配置热重载 | 四个采集/引擎参数改了要重启。`EngineConfig` 是构造注入的，热重载要重放当天，spec 提了但**没定义行为** |
+| ⚪ | `segment-updated` 实时推送 | 现用 5 秒轮询整表，功能等价，段多了浪费。优先级最低 |
 
 ## 启动慢（`pnpm tauri dev` 白屏）
 
@@ -166,7 +171,7 @@ design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 | 文档 | 回答 | 什么时候读 |
 |---|---|---|
 | **本文** | 怎么跑起来、现在有什么 | 第一次接触这个项目 |
-| [`STATUS.md`](docs/superpowers/STATUS.md) | **别改什么** —— 25 条「看起来像 bug 但是故意的」，加上遗留工作与关键决策 | **动手改代码之前** |
+| [`STATUS.md`](docs/superpowers/STATUS.md) | **别改什么** —— 28 条「看起来像 bug 但是故意的」，加上遗留工作与关键决策 | **动手改代码之前** |
 | [`MASTER.md`](design-system/time-scope/MASTER.md) | **为什么这样设计** —— 色板推导、组件约定、token 理由 | 改 UI 之前 |
 
 `docs/superpowers/specs/` 是**历史快照**，顶部已标注不是现状说明，
