@@ -33,3 +33,4 @@ src-tauri/gen/schemas/
 
 # Claude Code 本地配置与 skill
 .claude/
+.superpowers/

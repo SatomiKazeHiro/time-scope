@@ -1,7 +1,12 @@
 # Time Scope 汇总页 — 指标、热力图与范围下钻
 
+> **本文是 2026-10-05 的设计快照。** 已知与现状不符：指标区（MetricRow）
+> 后来按**信息层级**重做过 —— 原来是一排等大的盒子，现在是英雄数字 + 主体 + 诊断行；
+> 见 [`MASTER.md`](../../../design-system/time-scope/MASTER.md) 的「面板的层级」。
+> **当前状态看 [`../../STATUS.md`](../STATUS.md)。**
+
 **日期**：2026-10-05
-**状态**：待审阅
+**状态**：已实施（见 STATUS）
 **对应 spec**：[`2026-10-01-time-scope-phase1-design.md`](2026-10-01-time-scope-phase1-design.md) §9 / §10
 **UI 依据**：[`../../../design-system/time-scope/MASTER.md`](../../../design-system/time-scope/MASTER.md)
 **范围**：侧边栏新增「汇总」页。顶部指标 + GitHub 式监控热力图 + 范围下钻
