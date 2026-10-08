@@ -167,8 +167,12 @@ design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 | [`STATUS.md`](docs/superpowers/STATUS.md) | **别改什么** —— 25 条「看起来像 bug 但是故意的」，加上遗留工作与关键决策 | **动手改代码之前** |
 | [`MASTER.md`](design-system/time-scope/MASTER.md) | **为什么这样设计** —— 色板推导、组件约定、token 理由 | 改 UI 之前 |
 
-`docs/superpowers/specs/` 与 `audits/` 是**历史快照**，顶部已标注不是现状说明，
+`docs/superpowers/specs/` 是**历史快照**，顶部已标注不是现状说明，
 只在追溯「当初为什么那么想」时才需要翻。
+
+`docs/superpowers/audits/` 是 2026-10-06 的隐藏问题审计。
+**注意它开头的「请按 §1 的顺序修」是当时的指示，不是现在的** ——
+那 16 条多数已在 10-06/07 修掉，逐条现状见 [`STATUS.md`](docs/superpowers/STATUS.md) §4.3。
 
 ## 已知注意事项
 
