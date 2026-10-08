@@ -10,7 +10,7 @@
 
 ```
 Rust  38 文件    TS/TSX  24 文件      （均不含测试）
-测试  373 Rust + 339 前端 = 712 条，全绿
+测试  373 Rust + 346 前端 = 719 条，全绿
 提交  main..phase1-polish 105 个，未合并
 ```
 
@@ -56,6 +56,8 @@ Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 | 26 | 设置页给同一个程序加了两次规则，界面说「已有一条规则」，改不了 | **故意的。** 引擎按文件顺序取第一个命中的，追加第二条会让用户刚选的类别永远不生效 —— 而界面会说「已保存」。那种静默失败比报错难查 | 修改已有规则目前要手工编辑 `rules.toml`。**别改成「追加并覆盖」** —— 追加式写法无法在不重排全文、不丢注释的前提下替换一条 |
 | 27 | 配置页改了空闲阈值，时间线不变 | **要重启。** 那四项绑在采集线程参数与 `EngineConfig` 的构造注入上 | 界面已经标了「重启后生效」角标并在保存后弹提示。**别为了让滑块立刻有反应就去改热重载** —— 那要先定义重放行为（§4.1） |
 | 28 | 未覆盖列表里 `idle` / `unknown` 不可选 | **它们不是类别。** 是「没在用」和「没认出来」，写成规则只会造出永远命中不了的死规则 | 前后端都要挡：界面不给出点不动的选项，`append_rule` 再挡一次 |
+| 29 | 设置页看起来「就那样」，跟别的页不太一样 | **是骨架没跟上。** 一个 panel 里又套带边框的卡片、自己写 `<h1>` 而不是 `PageHeader`、页面自己加 `overflow-y-auto`（那是「三层嵌套滚动条」那个已修问题）、字阶用裸 `text-[10px]` 而非 token | 照抄汇总页骨架。约定都写在 MASTER §7「面板的层级」了 —— 写之前先看一眼，那是**这个项目**的写法，不是通用 React 的写法 |
+| 30 | 用 `text-ink-ghost` 让小字「低调一点」 | **那个 token 标注「仅非文字」**（3.84:1 深 / 3.07:1 浅，`theme.css` 第 44 行）。字要用 `ink-faint` | 改 `theme.css` 的 token 注释时记得这两个数字也变 |
 
 ---
 
@@ -66,7 +68,7 @@ Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 373 passed
 cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets   # 0 warning
-pnpm test                                                       # 339 passed
+pnpm test                                                       # 346 passed
 pnpm build                                                      # 无 tsc 报错
 node design-system/time-scope/verify-palette.mjs                # 色板校验，exit 0
 ```
@@ -139,13 +141,14 @@ src/
   styles/theme.css           设计 token + 深浅两套主题
   design/                    categories.ts 类别元数据 / useTheme.ts 三态主题
   components/                共 14 个：Sidebar / PageChrome / SettingsPage + ConfigPanel
+                             （设置页骨架见 MASTER §7「面板的层级」）
                              SegmentTimeline（时间线·三态指标）/ MetricRow / MetricPicker
                              GranularityPicker / DaySummary / EventDetail
                              ContributionWall（热力图）/ DonutChart / DayPartChart
                              RankedList
   lib/                       bucket.ts 切片+汇总 / metrics.ts 每桶指标 / summary.ts 热力图布局
   views/SummaryPage.tsx      汇总页
-  preview*.test.tsx          视觉预览（整页 / 碎片时间线 / 汇总页）
+  preview*.test.tsx          视觉预览（整页 / 碎片时间线 / 汇总页 / 设置页）
 src-tauri/
   src/                       app 壳：config / tray / rules / redact / 留存期 / 标题归一化 …
   crates/{core,engine,storage,collector}

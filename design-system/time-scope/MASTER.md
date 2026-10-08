@@ -1,7 +1,7 @@
 # 时迹 设计系统
 
 > **动色板或组件约定之前，先看 [`docs/superpowers/STATUS.md`](../../docs/superpowers/STATUS.md)
-> 开头的「⛔ 别动这里」一节。** 那里列了 28 条「看起来像 bug 但是故意的」。
+> 开头的「⛔ 别动这里」一节。** 那里列了 30 条「看起来像 bug 但是故意的」。
 
 **两份活文档各管一件事，别互相抄** —— 抄着抄着就会分叉，
 而分叉了没人会发现，因为两边看起来都还说得通：
@@ -430,6 +430,38 @@ App 根节点是 `h-full`（不是 `min-h-full`）+ `overflow-hidden`，底部�
 
 `.panel` 是唯一的容器写法（圆角 6px、内边距 `p-3` 或 `p-4`）。曾出现第三种
 （`rounded-lg … px-3 py-2`），圆角和内边距都和别处不一样，一眼看得出是另写的。
+
+**一个页面是「扁平 panel 分区 + `gap-3` flex 列」，不是一个 panel 里套面板。**
+设置页曾写成 `<section class="panel p-4">` 里再套 `rounded-md border
+border-line bg-surface-2` 的卡片 —— 两道边框套在一起，读起来像「卡片里的卡片」，
+而且那个外层 `.panel` 自带的 `p-4` 与 `<main>` 的重复了。骨架照抄汇总页：
+
+```
+<div class="flex min-w-0 flex-1 flex-col gap-3">
+  <PageHeader title="…" />      ← 两页共用，别自己写 <h1>
+  {error && <PageAlert />}      ← 带警告图标的共用错误条
+  <section class="panel p-4" aria-label="…"> … </section>
+  <section class="panel p-4" aria-label="…"> … </section>
+</div>
+```
+
+**页面自己不要加 `overflow-y-auto`。** App 的根是 `min-h-screen`，整页滚是既定
+决定（窄窗口下「面板各自滚 + 页面滚」会出现三层嵌套滚动条，每个面板只剩一两行）。
+页面里再开一个滚动容器，正是那个已经修过的问题。
+
+**根节点用 `<section aria-label>` 而不是 `<div>`**：带可访问名的 `<section>`
+是 role=region，读屏用户能在地标列表里直接跳到这一页。
+
+**字阶用 token，不用裸 Tailwind**：`text-label`（12px 字段名）、`text-micro`
+（11px 刻度/角标）、`.tnum`（数字等宽）。曾写成 `text-[10px]` —— 比 MASTER §4
+定的 11px 下限还低一档。
+
+**`ink-ghost` 不能当文字色**：`theme.css` 标注它「仅网格线等非文字」
+（3.84:1 深 / 3.07:1 浅）。文字用 `ink-faint`。
+
+**「从若干个里挑一个」用分段控件**（`GranularityPicker` 是范式：
+`gap-0.5` + `p-0.5` 的容器、`rounded-sm` 的按钮）。另发明一套会让两个控件
+看起来不是一家的。
 
 **五个指标卡曾是一排一模一样的盒子**，塞了三种不同性质的东西（累计读数 / 比例构成 /
 时间分布），行高被其中一张撑起来、其余各空一半。后来按**信息性质**排：
