@@ -73,6 +73,8 @@ struct AppState {
     /// 而不是等到下次启动。清理本身仍挂在 `get_segments` 上按 24h 至多一次，
     /// 不为它另开定时线程（见 B3 的原注释）。
     retention_days: Arc<Mutex<u32>>,
+    /// `config.toml` 的路径。写回要定位文件；`residency` 里也有一份同样的。
+    config_path: std::path::PathBuf,
 }
 
 /// 取某天的全部 ActivitySegment（spec §9）。
@@ -280,6 +282,107 @@ fn add_rule(
     Ok(())
 }
 
+/// 前端拿到的配置形状。与 `AppConfig` 字段一一对应，但：
+/// - `close_behavior` 用字符串（枚举在 Rust 侧、前端不认）
+/// - 附带每个字段**改完何时生效**，界面靠它标注「重启后生效」
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigOut {
+    pub idle_threshold_s: u32,
+    pub grace_period_s: u32,
+    pub min_segment_duration_s: u32,
+    pub heartbeat_every_s: u32,
+    pub autostart: bool,
+    pub close_behavior: String,
+    pub events_retention_days: u32,
+}
+
+/// 读配置。**每次现读磁盘**而不是返回启动时的快照 ——
+/// 用户可能手改过 `config.toml`，界面显示陈旧的值比报错还误导。
+#[tauri::command(async)]
+fn get_config(state: tauri::State<'_, AppState>) -> Result<ConfigOut, String> {
+    let path = state.config_path.clone();
+    let cfg = config::load_or_create(&path);
+    Ok(ConfigOut {
+        idle_threshold_s: cfg.idle_threshold_s,
+        grace_period_s: cfg.grace_period_s,
+        min_segment_duration_s: cfg.min_segment_duration_s,
+        heartbeat_every_s: cfg.heartbeat_every_s,
+        autostart: cfg.autostart,
+        close_behavior: cfg.close_behavior.as_str().to_string(),
+        events_retention_days: cfg.events_retention_days,
+    })
+}
+
+/// 改配置的一个字段。
+///
+/// **只改磁盘上的那一行**（`patch_line`），不覆盖整份文件、不抹掉注释。
+/// 文件坏了就拒绝写入并把原因带回去 —— 与 `rules.toml` 的既定行为一致。
+///
+/// `needs_restart` 是返回值而不是让界面自己猜：**哪些字段热生效、
+/// 哪些必须重启，是后端的事实**（引擎参数构造注入、采集线程参数绑定），
+/// 让前端复制一份这个表，迟早会跟实现对不上。
+#[tauri::command(async)]
+fn set_config(
+    state: tauri::State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<bool, String> {
+    let rendered = match key.as_str() {
+        // 数字：先解析再回写，让 clamp 与默认值逻辑只有一份（在 config::parse 里）
+        "idle_threshold_s" | "grace_period_s" | "min_segment_duration_s"
+        | "heartbeat_every_s" | "events_retention_days" => {
+            let n: i64 = value
+                .parse()
+                .map_err(|_| format!("`{value}` 不是数字"))?;
+            // clamp 在 parse 里做，这里复用一份默认值走同样的路
+            let probe = config::parse(&format!("{key} = {n}\n"));
+            let clamped = match key.as_str() {
+                "idle_threshold_s" => probe.idle_threshold_s,
+                "grace_period_s" => probe.grace_period_s,
+                "min_segment_duration_s" => probe.min_segment_duration_s,
+                "heartbeat_every_s" => probe.heartbeat_every_s,
+                _ => probe.events_retention_days,
+            };
+            clamped.to_string()
+        }
+        "autostart" => match value.as_str() {
+            "true" => "true".to_string(),
+            "false" => "false".to_string(),
+            other => return Err(format!("`{other}` 不是 true / false")),
+        },
+        "close_behavior" => {
+            let cb = config::CloseBehavior::from_str(&value)
+                .ok_or_else(|| "关窗行为只能是 ask / minimize / quit".to_string())?;
+            format!("\"{}\"", cb.as_str())
+        }
+        other => return Err(format!("未知配置项 `{other}`")),
+    };
+
+    config::patch_line(&state.config_path, &key, &rendered).map_err(|e| e.to_string())?;
+
+    // 保留期改成热生效：下一次 5 秒轮询就按新值清理
+    if key == "events_retention_days" {
+        if let Ok(mut days) = state.retention_days.lock() {
+            *days = rendered.parse().unwrap_or(*days);
+        }
+    }
+
+    Ok(config_field_needs_restart(&key))
+}
+
+/// 这个字段改完**必须重启**才生效吗？
+///
+/// 依据是各参数被绑定到哪里，不是界面偏好：
+/// - `autostart` / `close_behavior` —— 托盘与关窗时每次现读 config，
+///   已经在热生效（`residency.rs` 就在写回这两项）
+/// - `events_retention_days` —— 挂在 `get_segments` 上现读（见上面 IPC）
+/// - 四个采集/引擎参数 —— 绑进 `spawn_input_poller` 的线程参数与
+///   `EngineConfig` 的构造注入，进程内改不了（STATUS §4.1「配置热重载」那条）
+fn config_field_needs_restart(key: &str) -> bool {
+    !matches!(key, "autostart" | "close_behavior" | "events_retention_days")
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         // 必须第一个注册（spec §12）：它靠抢全局锁判定"是不是第一个实例"，
@@ -397,6 +500,7 @@ pub fn run() {
                 config,
                 redactor,
                 retention_days: Arc::new(Mutex::new(app_config.events_retention_days)),
+                config_path: config::config_path(),
             });
             Ok(())
         })
@@ -408,6 +512,8 @@ pub fn run() {
             get_top_titles,
             get_uncovered_programs,
             add_rule,
+            get_config,
+            set_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
