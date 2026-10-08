@@ -95,7 +95,13 @@ export default function ConfigPanel() {
         setCfg(c);
         setDraft(toEditable(c));
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => {
+        // 界面文案只是给人看的；**日志才是给排查用的**。
+        // setError 里的那句话经过好几个模块才到屏幕上，真要追
+        // 「到底是哪个 IPC、哪次写回、哪个字段出的问题」，只能靠这里。
+        console.error("[ConfigPanel] 读取 config 失败", e);
+        setError(String(e));
+      });
   }, []);
 
   // 注意不要写成 `useEffect(load, ...)`：`load` 现在返回 Promise，
@@ -122,9 +128,12 @@ useEffect(() => {
       // 重读一次：clamp 可能改了用户填的值（填 0 的 idle 会被夹到 10）
       load();
     } catch (e) {
-      // 顺序要紧：先重读磁盘上的真值，再把错误放回去。
+      // 两件事都要：日志给排查，界面文案给用户。
+      //
+      // 顺序要紧：**先重读磁盘上的真值，再把错误放回去**。
       // 反过来会被 `load()` 开头的 `setError(null)` 抹掉 ——
       // 写回失败却什么都不显示，是最难查的那种 bug。
+      console.error("[ConfigPanel] 写回 config 失败", e);
       const msg = String(e);
       await load();
       setError(msg);

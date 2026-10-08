@@ -328,6 +328,10 @@ fn set_config(
     key: String,
     value: String,
 ) -> Result<bool, String> {
+    // 保留期的数值单独带出来给热生效用 —— 不在下面把 `rendered` 重新
+    // parse 一遍：那是第二次解析、且解析失败只能静默忽略（`unwrap_or`）。
+    // 这里多带一个值，换掉一条「出错也看不见」的路。
+    let mut new_retention: Option<u32> = None;
     let rendered = match key.as_str() {
         // 数字：先解析再回写，让 clamp 与默认值逻辑只有一份（在 config::parse 里）
         "idle_threshold_s" | "grace_period_s" | "min_segment_duration_s"
@@ -342,7 +346,10 @@ fn set_config(
                 "grace_period_s" => probe.grace_period_s,
                 "min_segment_duration_s" => probe.min_segment_duration_s,
                 "heartbeat_every_s" => probe.heartbeat_every_s,
-                _ => probe.events_retention_days,
+                _ => {
+                    new_retention = Some(probe.events_retention_days);
+                    probe.events_retention_days
+                }
             };
             clamped.to_string()
         }
@@ -362,9 +369,9 @@ fn set_config(
     config::patch_line(&state.config_path, &key, &rendered).map_err(|e| e.to_string())?;
 
     // 保留期改成热生效：下一次 5 秒轮询就按新值清理
-    if key == "events_retention_days" {
-        if let Ok(mut days) = state.retention_days.lock() {
-            *days = rendered.parse().unwrap_or(*days);
+    if let Some(days) = new_retention {
+        if let Ok(mut cur) = state.retention_days.lock() {
+            *cur = days;
         }
     }
 

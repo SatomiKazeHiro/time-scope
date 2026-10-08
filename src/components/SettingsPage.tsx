@@ -50,7 +50,13 @@ export default function SettingsPage({ rulesOnly = false }: { rulesOnly?: boolea
     setError(null);
     getUncoveredPrograms(WINDOW_DAYS)
       .then((r) => setRows(r))
-      .catch((e) => setError(String(e)));
+      .catch((e) => {
+        // 界面文案给人看，日志给排查用 —— 错误要流过
+        // IPC → types.ts → 这里才变成一行字，只有 console 里那条
+        // 带着原始的异常对象和调用点
+        console.error("[SettingsPage] 读取未覆盖程序失败", e);
+        setError(String(e));
+      });
   }, []);
 
   // 不写成 `useEffect(load, ...)`：React 会把返回值当清理函数。
@@ -71,7 +77,10 @@ export default function SettingsPage({ rulesOnly = false }: { rulesOnly?: boolea
       setPicking(null);
       load();
     } catch (e) {
-      // 失败必须说清并留在原地让人重试 —— 静默失败会让人以为配好了
+      // 失败必须说清并留在原地让人重试 —— 静默失败会让人以为配好了。
+      // 程序名和类别一起打进日志：报障时用户只会说「加规则失败了」，
+      // 日志里这两个值才认得出是哪一条
+      console.error(`[SettingsPage] 给 ${app} 加规则失败（category=${cat}）`, e);
       setError(String(e));
     } finally {
       setBusy(false);
