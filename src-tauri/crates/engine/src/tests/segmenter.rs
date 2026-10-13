@@ -1,5 +1,7 @@
 use crate::{reduce, EngineConfig, EngineState, RuleSet, DEFAULT_RULES_TOML};
-use activity_core::{Event, EventType, InputHeartbeatPayload, WindowFocusPayload};
+use activity_core::{
+    Event, EventType, InputHeartbeatPayload, WindowFocusPayload, WindowTitleChangePayload,
+};
 
 fn rules() -> RuleSet {
     RuleSet::from_toml(DEFAULT_RULES_TOML).unwrap()
@@ -1111,4 +1113,89 @@ fn merging_a_short_segment_never_widens_the_target_across_other_time() {
             w[0].start_at, w[0].end_at, w[1].start_at, w[1].end_at
         );
     }
+}
+
+// ===========================================================================
+// 段的时间边界：全局不变式
+//
+// 2026-10-13：空档守卫、重叠去重、切换次数同名那三轮修下来，根因是同一个 ——
+// 段的 start_at / end_at 在 segmenter.rs 里有 6 处独立地写，每处自己决定
+// 往哪边取 min/max。空档守卫只加在 close_current 一处，另外几处照样越界。
+//
+// 这条测试钉住「任意两条段不得重叠」这个全局不变式。它不是为了复现某个
+// 具体 bug（那种合成用例会被绕过，见 STATUS §4.3），而是为了让**任何改动**
+// 之后它都得是绿的。
+// ===========================================================================
+
+/// 一整天的段两两不得重叠，且时长不超过墙钟跨度。
+///
+/// 「时长不超过墙钟跨度」比「不重叠」更强：它是引擎「不凭空造时间」这条
+/// 原则的可观测形式（合并与复活都可能把墙钟拉长，而不重叠未必能抓到）。
+#[test]
+fn segments_of_a_whole_day_never_overlap() {
+    let mut st = EngineState::initial();
+    let mut all = Vec::new();
+    let mut ts = 1_700_000_000_000i64;
+
+    let apps = ["Code.exe", "msedge.exe", "WindowsTerminal.exe", "explorer.exe"];
+    // 密集事件 + 抖动：标题变化、心跳、focus 来回切。
+    // 密度是真实重叠的触发条件（10-10 那段 77 分钟 4117 个事件），
+    // 这里按 ~100ms 一个事件的密度跑一小时。
+    for i in 0..6_000i64 {
+        let app = apps[(i as usize) % apps.len()];
+        ts += 100;
+        let ev = match i % 4 {
+            0 => focus(ts, app),
+            1 => {
+                Event::new(
+                    EventType::WindowTitleChange(WindowTitleChangePayload {
+                        process_name: app.into(),
+                        window_title: Some(format!("t{i}")),
+                    }),
+                    ts,
+                )
+            }
+            2 => {
+                Event::new(
+                    EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 10 }),
+                    ts,
+                )
+            }
+            _ => focus(ts + 40, apps[(i as usize + 1) % apps.len()]),
+        };
+        let out = crate::reduce(&st, &ev, &rules(), &EngineConfig::default());
+        st = out.state;
+        all.extend(out.closed_segments);
+    }
+
+    // 末尾还在 pending 的当前段也要算进来，否则「一段都没释放」时会越界
+    if let Some(open) = st.open_segment_snapshot(&rules(), &EngineConfig::default()) {
+        all.push(open);
+    }
+    all.sort_by_key(|s| s.start_at);
+    if all.is_empty() {
+        panic!("一段都没产生 —— 测试数据有问题");
+    }
+    let span = all.last().unwrap().end_at - all[0].start_at;
+    let total: i64 = all.iter().map(|s| s.end_at - s.start_at).sum();
+
+    for w in all.windows(2) {
+        assert!(
+            w[0].end_at <= w[1].start_at,
+            "段两两重叠：[{}+, {}+] 与 [{}+, {}+]（{} vs {}）",
+            w[0].start_at,
+            w[0].end_at,
+            w[1].start_at,
+            w[1].end_at,
+            w[0].category.as_str(),
+            w[1].category.as_str()
+        );
+    }
+
+    assert!(
+        total <= span,
+        "段总时长 {}ms 超过墙钟跨度 {}ms —— 引擎凭空造了时间",
+        total,
+        span
+    );
 }
