@@ -113,20 +113,31 @@ export function bucketMetrics(
     const apps = new Set<string>();
     const byCategory = new Map<Category, number>();
 
-    // **重叠去重**：库里存在真实重叠的段（引擎侧成因另查）。
-    // 逐段独立累加会把同一段时间数两遍，`activeMs` 被抬高、
+    // **重叠去重**：逐段独立累加会把同一段时间数两遍，`activeMs` 被抬高、
     // 于是 `focus` 这个「主导类别占比」的分母虚高、专注度被稀释。
     //
     // 规则与后端 `clip_to_uncovered` 一致：**先开始的段拥有重叠部分**
     // （first-wins by startAt）。两处必须同规则，否则汇总页与时间线
     // 对同一个重叠会给出不同的解释（STATUS 第 22 条「三处同源」）。
+    //
+    // **去掉的量必须可见**，与后端同理（2026-10-13）：静默去重会让
+    // 「引擎又产出坏数据」这件事完全隐形 —— 数字仍然对，但排查时
+    // 根本看不出问题出在读侧还是引擎。宁可吵，不可静。
     let coveredUntil = Number.NEGATIVE_INFINITY;
+    let hiddenMs = 0;
+    let hiddenCount = 0;
     for (let i = 0; i < b.segments.length; i++) {
       const s = b.segments[i];
       apps.add(s.application ?? "（未知）");
       const from = Math.max(s.startAt, coveredUntil);
       const clamped = Math.max(0, Math.min(s.endAt, b.end) - from);
-      if (clamped > 0) coveredUntil = Math.min(s.endAt, b.end);
+      if (clamped > 0) {
+        coveredUntil = Math.min(s.endAt, b.end);
+      } else {
+        // 整段被更早的段盖住 —— 只可能是重叠造成的数据缺陷
+        hiddenMs += Math.min(s.endAt, b.end) - Math.max(s.startAt, b.start);
+        hiddenCount += 1;
+      }
       if (s.category !== "idle") {
         b.activeMs += clamped;
         byCategory.set(s.category, (byCategory.get(s.category) ?? 0) + clamped);
@@ -134,6 +145,14 @@ export function bucketMetrics(
       if (i > 0 && (b.segments[i - 1].application ?? "（未知）") !== (s.application ?? "（未知）")) {
         b.switches++;
       }
+    }
+    if (hiddenCount > 0) {
+      console.error(
+        `[metrics] 桶 #${buckets.indexOf(b)} 有 ${hiddenCount} 段被重叠覆盖，共 ${hiddenMs}ms。` +
+          `时长已去重（数字是对的），但这说明 activities 表里存在重叠段 ——` +
+          `引擎侧已于 2026-10-08 修过（见 segmenter 的 fold_short_segments open 分支）。` +
+          `历史数据需重放才能修掉。`,
+      );
     }
     b.appCount = apps.size;
 

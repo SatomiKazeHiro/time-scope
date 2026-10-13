@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   bucketMetrics,
   focusStep,
@@ -347,3 +347,41 @@ describe("重叠段不被数两遍", () => {
   });
 });
 
+
+// --- 兜底必须可见（2026-10-13）---
+
+describe("重叠去重不静默", () => {
+  const seg = (id: string, startAt: number, endAt: number, category: Category, application: string) =>
+    ({ id, startAt, endAt, category, application, confidence: 1, classifier: "rule", classifierVersion: "1", evidenceEventIds: [] }) as Segment;
+  const H = 3_600_000;
+
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => errSpy.mockRestore());
+
+  it("重叠被去重时必须报出来 —— 静默会让引擎侧的问题隐形", () => {
+    const segs = [
+      seg("a", 0, 3 * H, "work", "Code.exe"),
+      seg("b", H, 2 * H, "browsing", "msedge.exe"), // 完全落在 a 之内 → 被整段盖住
+    ];
+    bucketMetrics(segs, 0, 12 * H);
+
+    expect(errSpy).toHaveBeenCalled();
+    const msg = String(errSpy.mock.calls[0][0]);
+    expect(msg).toContain("重叠");       // 说清是什么问题
+    expect(msg).toContain("引擎");       // 说清该去哪儿查
+    expect(msg).toMatch(/ms/);          // 带量，能判断严重程度
+  });
+
+  it("没有重叠时安静 —— 报对了但天天报就成了噪音", () => {
+    const segs = [
+      seg("a", 0, 2 * H, "work", "Code.exe"),
+      seg("b", 2 * H, 3 * H, "work", "Code.exe"), // 首尾相接，不算重叠
+    ];
+    bucketMetrics(segs, 0, 12 * H);
+
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+});

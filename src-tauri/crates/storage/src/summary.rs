@@ -148,15 +148,39 @@ const TOP_APPS_LIMIT: usize = 5;
 ///
 /// 首尾相接（`prev.end_at == next.start_at`）**不是**重叠：
 /// `covered_until` 取的是 `<=`，相接时 `max(start, covered) == start`，仍计满。
+///
+/// **被去重掉的量必须可见**（2026-10-13）。这里曾经只去重、不留痕 ——
+/// 于是「库里又出现重叠」这件事是静默的：数字仍然对（去重了），但没人知道
+/// 引擎又产出了坏数据，排查时看不出是「读侧在擦屁股」还是「引擎本来就这样」。
+/// 那个静默让重叠问题被反复当成新 bug 查了三轮。
+///
+/// 现在每次真的发生重叠都往 stderr 打一行，带**被藏掉的毫秒数**。
+/// 这是兜底的记账：读侧负责让数字正确，引擎负责不再产生，
+/// 两者任一失效都会立刻在日志里显形。
 pub(crate) fn clip_to_uncovered(spans: &[SegmentSpan]) -> Vec<(i64, i64, &str, Option<&str>)> {
     let mut out = Vec::with_capacity(spans.len());
     let mut covered_until = i64::MIN;
+    let mut hidden_ms: i64 = 0;
+    let mut hidden_pairs = 0usize;
     for s in spans {
         let start = s.start_at.max(covered_until);
         if start < s.end_at {
             out.push((start, s.end_at, s.category.as_str(), s.application.as_deref()));
             covered_until = s.end_at;
+        } else {
+            // 整段被更早的段盖住（或零长度）—— 这只可能是重叠造成的数据缺陷
+            hidden_ms += s.end_at - s.start_at;
+            hidden_pairs += 1;
         }
+    }
+    if hidden_pairs > 0 {
+        eprintln!(
+            "[time-scope] activities 表存在重叠段：本次查询藏起 {hidden_pairs} 段 / {hidden_ms} ms。\
+             时长已按「先开始的段拥有重叠部分」去重，数字是对的；\
+             但这说明引擎产出了本不该有的重叠段（2026-10-08 修过一次，\
+             见 segmenter 的 fold_short_segments open 分支的相邻检查）。\
+             历史数据需重放才能修掉。"
+        );
     }
     out
 }

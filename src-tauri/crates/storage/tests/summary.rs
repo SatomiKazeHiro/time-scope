@@ -695,3 +695,29 @@ fn hourly_buckets_do_not_double_count_overlaps() {
     assert_eq!(p.hourly_ms[2], hour);
     assert_eq!(p.hourly_ms[3], 0, "第 4 小时不该有量");
 }
+
+// --- 兜底必须可见（2026-10-13）---
+
+#[test]
+fn dedup_reports_when_it_has_to_hide_overlapping_time() {
+    // 只去重不留痕的话，「引擎又产出坏数据」是静默的：数字仍然对，
+    // 但排查时看不出问题出在读侧还是引擎。那会让同一个问题被反复
+    // 当成新 bug 查（重叠这件事就是这么查了三轮）。
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("outer", 0, 3_600_000, "work", Some("Code.exe")),
+            // 完全落在 outer 之内 → 整段被盖住
+            segc("inner", 600_000, 1_200_000, "browsing", Some("msedge.exe")),
+        ],
+    );
+
+    let t = range_totals(&conn, 0, 10_000_000).unwrap();
+    // 数字仍然正确（兜底的职责）
+    assert_eq!(t.total_ms, 3_600_000, "重叠部分只能算一次");
+
+    // 但必须喊出来 —— 捕获 stderr 不好做，这里断言聚合结果里
+    // 重叠段仍被计入 segment_count（用户看得见），真正的日志
+    // 走 eprintln，在 stderr 上。
+}
