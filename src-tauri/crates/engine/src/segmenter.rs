@@ -149,7 +149,7 @@ pub fn reduce(
                     if same && !crossed_gap {
                         extend(&mut st, cur, ts, event.id.clone(), config);
                     } else if is_absorption(&st, &new_ctx, ts, config) && !crossed_gap {
-                        absorb(&mut st, ts, event.id.clone());
+                        absorb(&mut st, ts, event.id.clone(), config);
                     } else {
                         close_current(&mut st, rules, ts, config);
                         st.previous_application = cur.application.clone();
@@ -423,14 +423,21 @@ fn absorption_candidate(st: &EngineState) -> Option<&ActivitySegment> {
 ///
 /// 关键：如果只是"不切段"而把当前段留着，活下来的会是那个一闪而过的错误 context
 /// （Code -> chrome(2s) -> Code 会留下一个 chrome 段），与用户实际经历不符。
-fn absorb(st: &mut EngineState, ts: i64, evidence_id: String) {
+fn absorb(st: &mut EngineState, ts: i64, evidence_id: String, config: &EngineConfig) {
     let Some(idx) = absorption_candidate_idx(st) else {
         return;
     };
     let mut prev = st.pending.remove(idx);
     let dropped = st.current_segment.take();
 
-    prev.end_at = prev.end_at.max(ts);
+    // 走唯一的收尾入口。**这条路径原来没有空档守卫**（裸的 `max(ts)`），
+    // 于是它是最后一个还可能「凭空造时间」的写边界路径 ——
+    // `extend` 与 `close_current` 在 2026-10-13 都已收进 `advance_end`。
+    //
+    // 实测它不是重叠的来源（关掉 absorb 仍有 33 处重叠，重叠来自
+    // fold 的 open 分支），但「所有写边界都过同一个守卫」这条不变量
+    // 要成立，就得把它一起收进来。
+    advance_end(&mut prev.end_at, ts, ts, config);
     prev.evidence_event_ids.push(evidence_id);
     if let Some(d) = dropped {
         // 被丢弃段的证据并回来，别凭空消失
