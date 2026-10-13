@@ -90,7 +90,7 @@ pub fn reduce(
             // （锁屏与合盖各发一次），每次都开新段会把一段连续的空闲切碎。
             match st.current_segment.clone() {
                 Some(cur) if cur.category == Category::Idle => {
-                    extend(&mut st, cur, ts, event.id.clone());
+                    extend(&mut st, cur, ts, event.id.clone(), config);
                 }
                 _ => {
                     close_current(&mut st, rules, ts, config);
@@ -145,9 +145,9 @@ pub fn reduce(
                     // 当前段在自己的最后一条证据处收尾，这条事件另开一段。
                     // 放在 extend/absorb **之前**判定，是因为那两条路都会把段
                     // 用 `max(ts)` 拉到下一条事件 —— 那正是凭空造时间的入口。
-                    let crossed_gap = crossed_observation_gap(&cur, ts, config);
+                    let crossed_gap = crossed_observation_gap(cur.last_evidence_at, ts, config);
                     if same && !crossed_gap {
-                        extend(&mut st, cur, ts, event.id.clone());
+                        extend(&mut st, cur, ts, event.id.clone(), config);
                     } else if is_absorption(&st, &new_ctx, ts, config) && !crossed_gap {
                         absorb(&mut st, ts, event.id.clone());
                     } else {
@@ -313,6 +313,48 @@ fn merge_into(target: &mut ActivitySegment, extra: &ActivitySegment) {
     target.evidence_event_ids.extend(extra.evidence_event_ids.clone());
 }
 
+// ===========================================================================
+// 段的时间边界：唯一的所有者
+//
+// 2026-10-13。空档守卫、重叠去重、切换次数同名那三轮修下来，根因是同一个：
+// 段的 start_at / end_at 在本文件里有 6 处独立地写，每处自己决定往哪边取
+// min/max。代码里早就写着「不可凭空造时间」，但守卫只加在 close_current 一处，
+// 另外 5 处照样能违反它 —— 所以重叠查了三轮都查不完。
+//
+// **下面这两个函数是唯一允许改边界的地方。** 别的代码只能读 start_at/end_at。
+// 要新增一条写边界的路径，先想清楚它属于哪一种。
+//
+// 两条不变式：
+//   1. 段之间不得重叠（合并/复活都会撑大时间跨度，可能越过邻居）
+//   2. end_at 不得超过「最后一条证据」所在的时间 —— 没有观测就没有时间
+// ===========================================================================
+
+/// 空档判定：`ts` 与最后一条证据相距超过阈值 ⇒ 这段时间**没有观测**。
+///
+/// 与 `max_observation_gap_s` 的语义是「没有观测」，不是「没有输入」
+/// —— `idle_threshold_s` 管的是后者，两者不要合并。
+pub fn crossed_observation_gap(last_evidence_at: i64, ts: i64, config: &EngineConfig) -> bool {
+    ts.saturating_sub(last_evidence_at) > (config.max_observation_gap_s as i64) * 1000
+}
+
+/// 把段的 `end_at` 推到 `ts` —— **唯一**允许往后推边界的地方。
+///
+/// 跨过观测空档时不推，停在最后一条证据：那段时间没有事件，就没有时间。
+/// 这就是「不可凭空造时间」的实现。
+pub fn advance_end(end_at: &mut i64, last_evidence_at: i64, ts: i64, config: &EngineConfig) {
+    let cap = if crossed_observation_gap(last_evidence_at, ts, config) {
+        last_evidence_at
+    } else {
+        ts
+    };
+    *end_at = (*end_at).max(cap);
+}
+
+/// `[start, end)` 与 `[other_start, other_end)` 是否重叠。首尾相接不算。
+pub fn ranges_overlap(start: i64, end: i64, other_start: i64, other_end: i64) -> bool {
+    other_start < end && start < other_end
+}
+
 /// spec §7.3 的 grace 判定：距上次切换在宽限窗口内，**且新 context 与"再前一个"相同**。
 ///
 /// 附加条件：前一段还留在 `pending` 里（没落库）。已落库的段无法复活，
@@ -430,12 +472,17 @@ fn new_open_segment(
  * 守卫是 `mergeable()`）—— 当时只加在了短段合并路径上，
  * extend/close 这两条路径漏了。两条路径现在口径一致。
  */
-fn crossed_observation_gap(open: &OpenSegment, ts: i64, config: &EngineConfig) -> bool {
-    ts.saturating_sub(open.last_evidence_at) > (config.max_observation_gap_s as i64) * 1000
-}
-
-fn extend(st: &mut EngineState, mut cur: OpenSegment, ts: i64, evidence_id: String) {
-    cur.end_at = cur.end_at.max(ts);
+fn extend(
+    st: &mut EngineState,
+    mut cur: OpenSegment,
+    ts: i64,
+    evidence_id: String,
+    config: &EngineConfig,
+) {
+    // 走唯一的收尾入口：跨过观测空档时**不推** end。
+    // 原来这里是裸的 `max(ts)`，空档守卫只加在 close_current ——
+    // 两条路径口径不一致，就是 6 处写边界各自为政的典型后果。
+    advance_end(&mut cur.end_at, cur.last_evidence_at, ts, config);
     cur.last_evidence_at = ts;
     cur.evidence_event_ids.push(evidence_id);
     st.current_segment = Some(cur);
@@ -445,13 +492,9 @@ fn close_current(st: &mut EngineState, rules: &RuleSet, ts: i64, config: &Engine
     let Some(mut open) = st.current_segment.take() else {
         return;
     };
-    // 守卫：收尾以**最后一条证据**为准，而不是「这段一直活到 ts」。
+    // 收尾以**最后一条证据**为准，而不是「这段一直活到 ts」。
     // `reduce` 里那些直接 `close_current` 的分支（切应用、resume）都过这里。
-    if crossed_observation_gap(&open, ts, config) {
-        open.end_at = open.last_evidence_at;
-    } else {
-        open.end_at = open.end_at.max(ts);
-    }
+    advance_end(&mut open.end_at, open.last_evidence_at, ts, config);
     st.pending.push(ActivitySegment {
         id: format!("seg-{}", open.start_at),
         start_at: open.start_at,

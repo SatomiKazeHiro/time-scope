@@ -85,21 +85,47 @@
 运行时 13.5 秒偏长（引擎的 `pending` 排序是 O(n²)）。已在计划里记下，
 步骤 2 收敛边界时如果顺手能减小 pending 规模就一起做，否则维持 6000。
 
-### 步骤 2：引入 `Segment` 边界方法（本次的核心）
+### 步骤 2：引入边界方法（本次的核心）
 
-在 `segmenter.rs` 里定义一个小的收敛点，只管三件事：
+**✅ 已完成（第一步：收敛 `extend` 与 `close_current`）**
 
+在 `segmenter.rs` 里落下收敛点，只有两个函数：
+
+```rust
+pub fn crossed_observation_gap(last_evidence_at, ts, config) -> bool
+pub fn advance_end(end_at: &mut i64, last_evidence_at, ts, config)   // 唯一允许往后推边界
+pub fn ranges_overlap(start, end, other_start, other_end) -> bool
 ```
-Segment::advance_to(ts, gap_guard)   // 收尾：带空档守卫（复用现有 crossed_observation_gap）
-Segment::merge(other) -> bool        // 合并：若会重叠则返回 false，不做
-Segment::revive(other) -> bool       // 复活：若会跨过已释放段则返回 false，不做
-```
 
-- 每个方法**内部**检查不变式（重叠、空档），不满足就**拒绝**并返回 `false`。
-- 调用方（`extend` / `absorb` / `merge_into` / `close_current`）改成调它们，
-  拿到 `false` 时走「宁可不并」的原路径（这是 `fold_short_segments` 已有的取舍：
-  「宁可不并，不可凭空造时间」）。
-- **不改** `new_open_segment`（它的 `start_at = ts` 本来就正确）。
+`extend` 与 `close_current` 都改调 `advance_end`。
+
+**顺带修掉一个真实的口径不一致**：`extend` 原来是**裸的 `end_at = max(ts)`**，
+空档守卫只加在 `close_current` —— 也就是说「不凭空造时间」这条原则，
+在这两条最主要的路径上只有一条守住了。现在两条都走 `advance_end`，
+`extend` 也拿到了它本来该有的守卫。
+
+**387 个 Rust 测试全绿，没有一条旧语义被破坏。**
+
+**真实数据验证（步骤 4 的前半，2026-10-13）**：
+```
+day         segs  overlaps  total_h    span_h
+2026-10-04    262       15    22.34    22.12
+2026-10-10    299        9    16.84    16.76
+2026-10-12     64        2     5.72    23.98
+```
+**重叠数与收敛前一致**（15 / 9 / 2），时长也没有明显损失。
+
+**这说明什么（重要）**：重叠**不是** `extend` 造成的。
+`extend` 造成的是「凭空造时间」（已修，见 commit 74dc175 与本次）。
+重叠另有来源 —— 就是探针查到的「两个应用各自开段撞车」，
+落在 `absorb` 复活与 `merge_into` 的 min/max 上，**还没动**。
+
+### 步骤 2b：继续收敛 `absorb` 与 `merge_into`（未做）
+
+按同样的方式改这两处，并在动手前用 `ranges_overlap` 做前置检查。
+**这一步是真正会消掉重叠的那一步** —— 但如上面所测，
+它必须解决「两个应用各自开段」而不仅仅是「撑大越过邻居」，
+所以预计要配合一次探针定位，不能照搬 extend 的改法。
 
 ### 步骤 3：把 5 处写边界改成调方法
 
