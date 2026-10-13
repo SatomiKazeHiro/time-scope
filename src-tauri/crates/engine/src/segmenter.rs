@@ -93,7 +93,7 @@ pub fn reduce(
                     extend(&mut st, cur, ts, event.id.clone());
                 }
                 _ => {
-                    close_current(&mut st, rules, ts);
+                    close_current(&mut st, rules, ts, config);
                     let mut open = new_open_segment(ts, Category::Idle, None, 0.0);
                     open.evidence_event_ids.push(event.id.clone());
                     st.current_segment = Some(open);
@@ -104,7 +104,7 @@ pub fn reduce(
         }
         EventType::SystemResume | EventType::SessionUnlock => {
             // idle 段在 resume 时收尾；下一条事件会开新的 context 段
-            close_current(&mut st, rules, ts);
+            close_current(&mut st, rules, ts, config);
             st.current_context = Some(new_ctx);
         }
         // --- context 分支 ---
@@ -140,12 +140,18 @@ pub fn reduce(
                     // 让 application 参与判定会把一段连续的空闲切成碎片。
                     let same = (st.is_idle && cur.category == Category::Idle)
                         || (cur.application == new_ctx.application && cur.category == category);
-                    if same {
+
+                    // **空档守卫在这里生效**：跨过观测空档时，
+                    // 当前段在自己的最后一条证据处收尾，这条事件另开一段。
+                    // 放在 extend/absorb **之前**判定，是因为那两条路都会把段
+                    // 用 `max(ts)` 拉到下一条事件 —— 那正是凭空造时间的入口。
+                    let crossed_gap = crossed_observation_gap(&cur, ts, config);
+                    if same && !crossed_gap {
                         extend(&mut st, cur, ts, event.id.clone());
-                    } else if is_absorption(&st, &new_ctx, ts, config) {
+                    } else if is_absorption(&st, &new_ctx, ts, config) && !crossed_gap {
                         absorb(&mut st, ts, event.id.clone());
                     } else {
-                        close_current(&mut st, rules, ts);
+                        close_current(&mut st, rules, ts, config);
                         st.previous_application = cur.application.clone();
                         let mut open = new_open_segment(
                             ts,
@@ -403,6 +409,31 @@ fn new_open_segment(
     }
 }
 
+/**
+ * 观测空档守卫（2026-10-12 事故）。
+ *
+ * `ts` 与「上一条证据」相距超过 `max_observation_gap_s` 时，
+ * **空档本身不产生任何段**：当前段在它自己的 `last_evidence_at` 处收尾，
+ * 调用方（`reduce`）随后按新事件另开一段。
+ *
+ * 为什么必须在这里：原来的 `end_at = end_at.max(ts)` 把段一路拉到
+ * 下一条事件的���间戳。应用退出 / 机器睡眠的整段时间里**一条事件都没有**，
+ * 于是空白被当成同一应用的连续工作记下来 —— 一次停机凭空造出 11 小时。
+ * 2026-10-12 那天因此被记成 18.29 小时 unknown，界面随之说谎
+ * （24h 时段分布 18/24 根柱子满格、专注度大片 100%）。
+ *
+ * 与 `idle_threshold_s` 的区别：那条是「**没有输入**」（heartbeat 说用户没动，
+ * 记成 idle）；这条是「**没有观测**」（压根没事件，可能是进程没跑），
+ * 正确处理是**什么都不记**，而不是补一段 idle 或 unknown。
+ *
+ * 这个原则在 `fold_short_segments` 里早就写着（「不可凭空造出时间」，
+ * 守卫是 `mergeable()`）—— 当时只加在了短段合并路径上，
+ * extend/close 这两条路径漏了。两条路径现在口径一致。
+ */
+fn crossed_observation_gap(open: &OpenSegment, ts: i64, config: &EngineConfig) -> bool {
+    ts.saturating_sub(open.last_evidence_at) > (config.max_observation_gap_s as i64) * 1000
+}
+
 fn extend(st: &mut EngineState, mut cur: OpenSegment, ts: i64, evidence_id: String) {
     cur.end_at = cur.end_at.max(ts);
     cur.last_evidence_at = ts;
@@ -410,11 +441,17 @@ fn extend(st: &mut EngineState, mut cur: OpenSegment, ts: i64, evidence_id: Stri
     st.current_segment = Some(cur);
 }
 
-fn close_current(st: &mut EngineState, rules: &RuleSet, ts: i64) {
+fn close_current(st: &mut EngineState, rules: &RuleSet, ts: i64, config: &EngineConfig) {
     let Some(mut open) = st.current_segment.take() else {
         return;
     };
-    open.end_at = open.end_at.max(ts);
+    // 守卫：收尾以**最后一条证据**为准，而不是「这段一直活到 ts」。
+    // `reduce` 里那些直接 `close_current` 的分支（切应用、resume）都过这里。
+    if crossed_observation_gap(&open, ts, config) {
+        open.end_at = open.last_evidence_at;
+    } else {
+        open.end_at = open.end_at.max(ts);
+    }
     st.pending.push(ActivitySegment {
         id: format!("seg-{}", open.start_at),
         start_at: open.start_at,

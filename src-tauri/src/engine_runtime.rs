@@ -462,4 +462,64 @@ mod midnight_tests {
             "结束于午夜的段不该重复算进今天"
         );
     }
+
+    /// 重放后残留的 open 段必须被钉在**最后一条重放事件**上。
+    ///
+    /// 2026-10-12 事故的第二条入口：应用重启时 `bootstrap_today` 重放当天事件，
+    /// 返回的运行时**带着一条没收尾的 open 段**，直接接进实时流。
+    /// 于是重启前的最后一条事件与重启后的第一条事件之间那段空白，
+    /// 被当成连续工作记了下来 —— 一次重启凭空造出一段。
+    ///
+    /// 这里钉住它：不钉的话，`day_replay.rs:123` 那个返回值就在替引擎
+    /// 撒一个谎（说「这段一直活到现在」）。
+    #[test]
+    fn a_replayed_open_segment_is_pinned_to_its_last_event() {
+        let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
+        let cfg = EngineConfig::default()
+            .with_min_segment_duration_s(0)
+            .with_grace_period_s(0);
+        // 重放到一半停下：只喂了 DAY 09:15 那一条，open 段没收到尾事件
+        let (rt, _) = EngineRuntime::bootstrap(&[focus(DAY + 9 * 3_600_000, "explorer.exe")], rules, cfg);
+
+        let segs = rt.segments_for_day(vec![], DAY, DAY + DAY);
+        assert_eq!(segs.len(), 1, "重放后的 open 段应当仍然可见（它是当前段）");
+        assert_eq!(
+            (segs[0].start_at, segs[0].end_at),
+            (DAY + 9 * 3_600_000, DAY + 9 * 3_600_000),
+            "open 段的结束时间必须等于它最后一条证据，而不是「现在」"
+        );
+        assert_eq!(
+            segs[0].end_at - segs[0].start_at,
+            0,
+            "一条证据撑不起一段时长 —— 否则重启一次就凭空多出一段时间"
+        );
+    }
+
+    /// 重启场景端到端：重放 → 实时流恢复。
+    ///
+    /// 这才是 2026-10-12 的实际经过：09:15 有事件，应用退出，
+    /// 20:13 重启后第一条实时事件到达 —— 空白被记成了一整段工作。
+    /// 两条路径都要验：bootstrap 留下的 open 段，以及随后 extend 的那条。
+    #[test]
+    fn a_restart_between_two_events_does_not_invent_a_segment() {
+        let hour = 3_600_000i64;
+        let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
+        let cfg = EngineConfig::default()
+            .with_min_segment_duration_s(0)
+            .with_grace_period_s(0);
+        // 启动时只重放了 09:15 那条
+        let (mut rt, _) =
+            EngineRuntime::bootstrap(&[focus(DAY + 9 * hour, "explorer.exe")], rules, cfg);
+
+        // 20:13 应用恢复，第一条实时事件到达 —— 与上一条隔了 11 小时
+        rt.ingest(&focus(DAY + 20 * hour, "explorer.exe"));
+
+        let segs = rt.segments_for_day(vec![], DAY, DAY + DAY);
+        let total: i64 = segs.iter().map(|s| s.end_at - s.start_at).sum();
+        assert_eq!(
+            total, 0,
+            "11 小时的停机不该被记成工作时间（实际记了 {} ms）",
+            total
+        );
+    }
 }

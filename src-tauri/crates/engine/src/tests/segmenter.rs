@@ -928,3 +928,84 @@ fn an_idle_short_segment_is_not_merged_into_work() {
         "idle 段不该消失"
     );
 }
+
+// --- 空档守卫：引擎不得凭空造出时间 ---
+//
+// 下面这组是 2026-10-12 那天的真实事故：两条 explorer.exe 的 unknown 段
+// 分别长 7.31h 与 10.98h，而那两段时间里**一条事件都没有**（采集侧如实
+// 什么都没记）。段的起止与事件空档的边界**误差 0.0 秒** —— 它不是观测到的，
+// 是 `extend` 的 `end_at.max(ts)` 从「上一条事件」一路拉到「下一条事件」造出来的。
+//
+// 一天 24 小时因此被记成 18.29 小时 unknown，界面随之说谎：
+// 24h 时段分布 18/24 根柱子满格，专注度大片 100%。
+
+/// 观测空档超过阈值时，把段收在**最后一条证据**处，空档本身不产生任何段。
+#[test]
+fn a_long_observation_gap_does_not_get_stretched_into_the_segment() {
+    let hour = 3_600_000i64;
+    // 09:15 一条事件，20:13 又一条 —— 中间 11 小时什么都没有
+    let events = vec![focus(0, "explorer.exe"), focus(11 * hour, "explorer.exe")];
+    let segs = all_segments(&events, &rules(), &emit_now());
+
+    // 两条零长度的段，各自在自己的那条证据上，另一条是「正在生长」的那个。
+    // 关键不是段数，是**时长**：空档那 11 小时没有分到任何一段上。
+    assert_eq!(segs.len(), 2, "空档把同应用的连续使用切成了两段");
+    assert_eq!(
+        segs[0].end_at, 0,
+        "第一段的结束时间应当是它自己的证据时间，而不是下一条事件的时间"
+    );
+    assert_eq!(
+        segs[1].start_at, 11 * hour,
+        "第二段从新事件开始 —— 空档没有被算进任何一段"
+    );
+}
+
+/// 空档超过阈值时，空档应当**真的空着** —— 不是补一段 unknown。
+#[test]
+fn a_gap_longer_than_the_threshold_leaves_no_time_accounted_for() {
+    let hour = 3_600_000i64;
+    let events = vec![focus(0, "Code.exe"), focus(11 * hour, "Code.exe")];
+    let segs = all_segments(&events, &rules(), &emit_now());
+    let total: i64 = segs.iter().map(|s| s.duration_ms()).sum();
+    assert_eq!(
+        total, 0,
+        "11 小时的空档里没有任何证据，总时长应当是 0 而不是 11 小时"
+    );
+}
+
+/// 阈值以内的正常间隔**不受影响** —— 这是绝大多数真实场景。
+#[test]
+fn a_short_gap_still_extends_the_segment() {
+    let events = vec![focus(0, "Code.exe"), focus(5_000, "Code.exe")];
+    let segs = all_segments(&events, &rules(), &emit_now());
+    assert_eq!(segs.len(), 1, "5 秒的间隔不该切段");
+    assert_eq!(
+        (segs[0].start_at, segs[0].end_at),
+        (0, 5_000),
+        "正常间隔应当照常延长"
+    );
+}
+
+/// 阈值取自 `idle_threshold_s` 的量级但语义不同 ——
+/// 那条是「无输入」，这条是「无观测」，所以复用同一个配置项但要能单独覆盖。
+#[test]
+fn the_gap_guard_follows_its_own_threshold() {
+    let hour = 3_600_000i64;
+    let events = vec![focus(0, "Code.exe"), focus(2 * hour, "Code.exe")];
+    // 阈值 4 小时 > 2 小时间隔 → 照常延长
+    let loose = EngineConfig::default()
+        .with_min_segment_duration_s(0)
+        .with_grace_period_s(0)
+        .with_max_observation_gap_s(4 * 3600);
+    let segs = all_segments(&events, &rules(), &loose);
+    assert_eq!((segs[0].start_at, segs[0].end_at), (0, 2 * hour), "宽松阈值下应当延长");
+
+    // 阈值 1 小时 < 2 小时间隔 → 收在最后一条证据
+    let tight = EngineConfig::default()
+        .with_min_segment_duration_s(0)
+        .with_grace_period_s(0)
+        .with_max_observation_gap_s(3600);
+    let segs = all_segments(&events, &rules(), &tight);
+    assert_eq!((segs[0].start_at, segs[0].end_at), (0, 0), "严格阈值下应当收尾");
+}
+
