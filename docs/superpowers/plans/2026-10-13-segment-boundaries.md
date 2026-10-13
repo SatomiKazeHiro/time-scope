@@ -120,12 +120,59 @@ day         segs  overlaps  total_h    span_h
 重叠另有来源 —— 就是探针查到的「两个应用各自开段撞车」，
 落在 `absorb` 复活与 `merge_into` 的 min/max 上，**还没动**。
 
-### 步骤 2b：继续收敛 `absorb` 与 `merge_into`（未做）
+### 步骤 2b：找到重叠的确切来源并修（✅ 已完成）
 
-按同样的方式改这两处，并在动手前用 `ranges_overlap` 做前置检查。
-**这一步是真正会消掉重叠的那一步** —— 但如上面所测，
-它必须解决「两个应用各自开段」而不仅仅是「撑大越过邻居」，
-所以预计要配合一次探针定位，不能照搬 extend 的改法。
+**定位方法**（可复用，不靠读代码推断）：用配置参数扫描代替「改代码做 no-op」——
+`min_segment_duration_s = 0` 时没有短段、没有合并，重叠必为 0；
+`grace_period_s = 0` 时 absorb 永不触发。两者一扫就能分开两条路径：
+
+```
+min  grace  overlaps(5天合计)  total_h
+30   60    53                72.33
+30   0     33                74.16     ← absorb 关掉，仍有 33 处
+0    60    0                 71.51     ← 合并关掉，归零
+0    0     0                 71.61
+```
+
+再逐个把可疑路径改成 no-op 重跑真实数据：
+
+| 改哪一处 | 重叠数 |
+|---|---|
+| 都不改 | 53 |
+| `merge_into` 不往前撑 `start_at` | **53**（不是它） |
+| **open 分支不往前拽 `start_at`** | **0** ✅ |
+
+**根因**：`fold_short_segments` 里并进「正在生长的当前段」那条分支
+（`segmenter.rs` 约 274 行）只检查了三个条件 ——
+「open 存在 ∧ 它是 ready 最后一个 ∧ pending 空」——
+**唯独没检查相邻**。`mergeable()` 那条分支有相邻检查（B12 加的），这条漏了。
+于是 `o.start_at = min(o.start_at, seg.start_at)` 会把正在生长的段**往前拽**，
+拽过中间那些已经 release 出去的段 → 重叠。
+
+**改法**：加上与 `mergeable` 同款的相邻判定，不相邻就不并
+（退回 pending 等下一轮 —— 与该文件既有的取舍「宁可不并，不可凭空造时间」同款）。
+
+**真实数据验证（8 天，全部 0 处）**：
+```
+2026-10-03  segs=115 overlaps=0 total=5.85h
+2026-10-04  segs=287 overlaps=0 total=22.08h   ← 墙钟跨度 22.12h，对得上
+2026-10-05  segs=206 overlaps=0 total=8.67h
+2026-10-07  segs=285 overlaps=0 total=18.37h
+2026-10-08  segs=105 overlaps=0 total=3.79h
+2026-10-09  segs=68  overlaps=0 total=1.94h
+2026-10-10  segs=328 overlaps=0 total=16.69h
+2026-10-12  segs=70  overlaps=0 total=5.69h
+```
+时长没有损失（10-04 的 22.08h 对墙钟 22.12h），说明不是「靠少记时间换来的」。
+
+388 个 Rust 测试全绿，clippy 0 warning。
+
+**⚠️ 回归测试的诚实状态**：
+`a_short_segment_merges_into_the_open_segment_only_when_adjacent` 写了，
+但**它在去掉守卫后仍然是绿的** —— 合成数据复现不出真实重叠
+（这是本项目第三次撞到同一堵墙，见「已知困难」）。所以它的定位是
+「防止将来把相邻检查删掉」而不是「证明修好了」。
+真正的证据是上面那份真实数据对比。
 
 ### 步骤 3：把 5 处写边界改成调方法
 

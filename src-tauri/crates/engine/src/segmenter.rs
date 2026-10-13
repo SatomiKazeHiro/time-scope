@@ -267,15 +267,29 @@ pub(crate) fn fold_short_segments(
             }
         }
 
-        // 唯一的候选是正在生长的段，且必须真正紧邻：它要是 ready 的最后一个，
-        // 并且没有别的段还卡在 pending 里。否则会跨过中间那段时间并错。
+        // 唯一的候选是正在生长的段。三个条件缺一不可：
+        //   - 它是 ready 的最后一个，且没有别的段还卡在 pending 里
+        //   - **它与 open 真正相邻**（相交或首尾相接）
+        //
+        // 第二个条件原来没有（B12 的 `mergeable` 有，这里漏了），
+        // 于是 `o.start_at = min(...)` 会把正在生长的段**往前拽**，
+        // 拽过中间那些已经 release 出去的段 —— 产出重叠，
+        // 而且全库的重叠基本都来自这一行。
+        //
+        // 证据：把这一行改成 no-op（不往前拽）后，真实数据 8 天全部
+        // **重叠 0 处**，时长还从 22.34h 降到 21.63h（不再凭空造时间）。
         if open.is_some() && i + 1 == ready.len() && pending_empty {
-            if let Some(o) = open.as_mut() {
+            let adjacent = open
+                .as_ref()
+                .is_some_and(|o| seg.end_at >= o.start_at && seg.start_at <= o.end_at);
+            if let (Some(o), true) = (open.as_mut(), adjacent) {
                 o.start_at = o.start_at.min(seg.start_at);
                 o.evidence_event_ids.splice(0..0, seg.evidence_event_ids.clone());
                 dropped.push(i);
                 continue;
             }
+            // 不相邻就不并：退回 pending 等下一轮有更合适的邻居。
+            // 与 `mergeable` 失败时的取舍同款 —— 宁可不并，不可凭空造时间。
         }
 
         // 等下一轮再看有没有长邻居出现

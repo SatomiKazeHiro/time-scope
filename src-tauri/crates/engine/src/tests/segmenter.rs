@@ -1199,3 +1199,54 @@ fn segments_of_a_whole_day_never_overlap() {
         span
     );
 }
+
+/// 短段并进「正在生长的当前段」时，**必须真的相邻**。
+///
+/// 2026-10-13。`fold_short_segments` 里并进 `open` 的那条分支原来只检查
+/// 「open 存在 ∧ 它是 ready 最后一个 ∧ pending 空」，**没检查相邻**
+/// （`mergeable` 那条分支有，是 B12 加的，这里漏了）。
+/// 于是 `o.start_at = min(o.start_at, seg.start_at)` 会把正在生长的段
+/// 往前拽，拽过中间那些已经 release 出去的段 —— 产出重叠。
+///
+/// 真实数据：全库 12 天里 10 天有重叠、共 84 处；
+/// 把这一行改成 no-op（不往前拽）后 8 天全部 **0 处**，
+/// 时长还从 22.34h 降到 22.08h —— 不再凭空造时间。
+#[test]
+fn a_short_segment_merges_into_the_open_segment_only_when_adjacent() {
+    // 两个短段 + 一个正在生长的 open：
+    //   early [0, 30s)      与 open 不相邻
+    //   late  [50s, 70s)    与 open 紧邻（open 从 40s 开始）
+    // 只有 late 该被并进去。
+    let (closed, _keep, open_after) = crate::segmenter::fold_short_segments(
+        vec![
+            mk("early", 0, 30_000, "browsing"),
+            mk("late", 50_000, 70_000, "browsing"),
+        ],
+        Some(crate::OpenSegment {
+            start_at: 40_000,
+            end_at: 100_000,
+            category: crate::Category::Work,
+            application: Some("Code.exe".into()),
+            confidence: 1.0,
+            evidence_event_ids: vec!["ev-open".into()],
+            last_evidence_at: 100_000,
+        }),
+        30_000,
+        200_000,
+        600_000,
+        true,
+    );
+
+    let o = open_after.expect("当前段应当还在");
+    assert_eq!(
+        o.start_at, 40_000,
+        "不相邻的 early 段不该把当前段的起点拽到 40s 之前"
+    );
+    // late 是真相邻的，它的证据应当并进来了
+    assert!(
+        o.evidence_event_ids.len() >= 2,
+        "相邻的 late 段应当被并入（证据 {:?}）",
+        o.evidence_event_ids
+    );
+    let _ = closed;
+}
