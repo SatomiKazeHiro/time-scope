@@ -10,7 +10,7 @@
 
 ```
 Rust  38 文件    TS/TSX  24 文件      （均不含测试）
-测试  373 Rust + 346 前端 = 719 条，全绿
+测试  379 Rust + 346 前端 = 725 条，全绿
 提交  main..phase1-polish 105 个，未合并
 ```
 
@@ -58,6 +58,9 @@ Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 | 28 | 未覆盖列表里 `idle` / `unknown` 不可选 | **它们不是类别。** 是「没在用」和「没认出来」，写成规则只会造出永远命中不了的死规则 | 前后端都要挡：界面不给出点不动的选项，`append_rule` 再挡一次 |
 | 29 | 设置页看起来「就那样」，跟别的页不太一样 | **是骨架没跟上。** 一个 panel 里又套带边框的卡片、自己写 `<h1>` 而不是 `PageHeader`、页面自己加 `overflow-y-auto`（那是「三层嵌套滚动条」那个已修问题）、字阶用裸 `text-[10px]` 而非 token | 照抄汇总页骨架。约定都写在 MASTER §7「面板的层级」了 —— 写之前先看一眼，那是**这个项目**的写法，不是通用 React 的写法 |
 | 30 | 用 `text-ink-ghost` 让小字「低调一点」 | **那个 token 标注「仅非文字」**（3.84:1 深 / 3.07:1 浅，`theme.css` 第 44 行）。字要用 `ink-faint` | 改 `theme.css` 的 token 注释时记得这两个数字也变 |
+| 31 | 停机 / 合盖期间那一大段时间不见了 | **已修（2026-10-13）。** 原来 `extend` 用 `end_at.max(ts)` 把段拉到「下一条事件」，于是应用退出/机器睡眠的**整段空白被当成连续工作记下来**。2026-10-12 因此凭空多出 18.29 小时 unknown，一天被记成 24.25 小时 | 已加 `max_observation_gap_s`（默认 2 小时）空档守卫。**它与 `idle_threshold_s` 不是一回事**：那条是「没有输入」（记 idle），这条是「**没有观测**」（什么都不记）。别把两者合并成一个参数 |
+| 32 | `unknown` 不该算进专注度分母 | **修它治不好「专注度 100%」。** 排除名单确实只有 idle（`metrics.ts`），但全库 185 个满档桶里 **148 个（80%）是单类别桶** —— `focus = bestMs/activeMs`，桶内只有一类时恒等于 1。10-12 实测：38 个 100% 桶，排除 unknown 后仍有 10 个（全 browsing 主导） | 这是**产品口径问题**不是 bug：「浏览 30 分钟」算不算高度专注？`FOCUS_LEGEND` 恰好给这档写了「高度专注」。定口径前别改代码 |
+| 33 | 24h 时段分布里「几乎所有柱子满」 | **已随第 31 条一起修。** `add_to_hours` 把跨小时的段劈进每个它碰到的小时（本身正确），但那 18 小时的伪造段被劈进 10 个小时，每桶约 1h，与真实活动时段量级相同 → 18/24 根满格 | 另有一处独立：`DayPartChart` 按 **max 归一化**（`Math.max(...h, 1)`），所以「全天 5 分钟」与「全天 20 小时」画成同一张图。这个已被 `DayPartChart.test.tsx` 钉成规范行为，改之前要先有产品决定 |
 
 ---
 
@@ -66,7 +69,7 @@ Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 ### 自动化（可随时重跑，全绿）
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 373 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 379 passed
 cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets   # 0 warning
 pnpm test                                                       # 346 passed
 pnpm build                                                      # 无 tsc 报错
@@ -227,6 +230,8 @@ docs/superpowers/
 |---|---|
 | **读操作仍与写路径共用一条连接** | 审计 A3 修法第 2 条未做：`get_top_titles` 跑那 20 秒时 `BatchWriter` 与 engine 线程照样写不进去。加 async 后界面不再冻结（触发丢数据的那条链断了），但内存队列在长查询期间仍会堆积 |
 | **标题统计没有预聚合/索引** | `json_extract(payload,…)` 必须回表。5 天 199ms，一年约 15s。**约 3 个月（≈90 天）时重新评估** |
+| **两处「切换次数」定义不同却同名** | `App.tsx`（时间线，`bucketMetrics` 逐桶数相邻应用变化）与 `summary.rs`（汇总页，数相邻段之间空了很久 ≥5 分钟）都以「切换次数」呈现。2026-10-12 实测：**1 次 vs 48 次**，差 48 倍。改任一处都要想清楚另一个的口径 |
+| **重叠段被双计** | `summary.rs` 的 `add_to_hours` 与 `metrics.ts` 的桶内累加都逐段独立相加、**不去重**。2026-10-12 有两处真实重叠（125.8 秒 / 357.7 秒），导致全天时长 24.25h > 24h。全库唯一一天出现，但那是输入有重叠就会发生 |
 | 95 项验证清单未勾 | §2 |
 | CI 只跑过基线配置 | 长期没变过依赖，改依赖时要盯一眼 |
 | `docs/superpowers/specs/` 三份里引用的 `ThemeToggle.tsx` 已不存在 | 2026-10-08 删掉了这个死组件（无任何引用，Sidebar 内联了同一个按钮）。spec 是冻结快照，**不动** —— 见 §6 |
