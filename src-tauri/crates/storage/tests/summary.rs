@@ -577,3 +577,128 @@ fn pacing_spans_match_the_timeline_spans() {
         assert_eq!(s.category, t.category);
     }
 }
+
+// --- 重叠段去重 ---
+//
+// 全库有 84 处重叠段（12 天里 10 天有），引擎侧成因另查（10-06 修过一次，
+// 只堵住一条路径）。这里只修**读侧**：重叠的时间被算了两遍，
+// 于是 `total_ms` 可以 > 24h（2026-10-12 是 24.25h）。
+//
+// **归属规则：先开始的段拥有重叠部分**（first-wins by start_at）。
+// 理由：确定、不需要新数据、且与时间线的阅读顺序一致
+// （时间线也是从左往右读，先出现的那段先占位）。
+// 实测重叠的两段类别总是不同（work×browsing 17 处最多），
+// 所以这条规则是必须的 —— 不选就会把同一段时间记给两个类别。
+
+#[test]
+fn overlapping_segments_are_not_counted_twice() {
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("a", 0, 3_600_000, "work", Some("Code.exe")),
+            // 与 a 重叠 600_000ms
+            segc("b", 3_000_000, 5_400_000, "browsing", Some("msedge.exe")),
+        ],
+    );
+
+    let t = range_totals(&conn, 0, 10_000_000).unwrap();
+
+    // 并集是 [0, 5_400_000]，不是 3_600_000 + 2_400_000
+    assert_eq!(
+        t.total_ms,
+        5_400_000,
+        "重叠部分只能算一次，否则全天总时长会 > 24h"
+    );
+}
+
+#[test]
+fn overlapping_time_is_attributed_to_the_earlier_segment() {
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("a", 0, 3_600_000, "work", Some("Code.exe")),
+            segc("b", 3_000_000, 5_400_000, "browsing", Some("msedge.exe")),
+        ],
+    );
+
+    let t = range_totals(&conn, 0, 10_000_000).unwrap();
+    let work = t.donut.iter().find(|d| d.key == "work").unwrap().ms;
+    let browsing = t.donut.iter().find(|d| d.key == "browsing").unwrap().ms;
+
+    // a 是 [0, 3600s]，b 只拿到 [3600s, 5400s]
+    assert_eq!(work, 3_600_000, "先开的段应当拥有整段");
+    assert_eq!(browsing, 1_800_000, "后开的段只拿到不重叠的部分");
+    assert_eq!(
+        work + browsing,
+        t.total_ms,
+        "各档之和必须等于总数（与 STATUS 第 22 条的同源要求一致）"
+    );
+}
+
+#[test]
+fn a_segment_fully_covered_by_an_earlier_one_contributes_nothing() {
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("outer", 0, 5_400_000, "work", Some("Code.exe")),
+            // 完全被包住
+            segc("inner", 1_000_000, 2_000_000, "browsing", Some("msedge.exe")),
+        ],
+    );
+
+    let t = range_totals(&conn, 0, 10_000_000).unwrap();
+    assert_eq!(t.total_ms, 5_400_000, "被完全覆盖的段不额外贡献时长");
+    assert_eq!(
+        t.donut.iter().find(|d| d.key == "browsing").unwrap().ms,
+        0,
+        "完全被覆盖的段不该占任何档位"
+    );
+    // 段数仍然如实计数 —— 用户在时间线上确实看得见两条
+    assert_eq!(t.segment_count, 2);
+}
+
+#[test]
+fn non_overlapping_segments_are_untouched_by_dedup() {
+    let conn = open_in_memory();
+    put(
+        &conn,
+        vec![
+            segc("a", 0, 3_600_000, "work", Some("Code.exe")),
+            segc("b", 3_600_000, 5_400_000, "browsing", Some("msedge.exe")),
+        ],
+    );
+
+    let t = range_totals(&conn, 0, 10_000_000).unwrap();
+    assert_eq!(t.total_ms, 5_400_000, "首尾相接不是重叠，不该被去重影响");
+    assert_eq!(t.donut.iter().find(|d| d.key == "work").unwrap().ms, 3_600_000);
+    assert_eq!(t.donut.iter().find(|d| d.key == "browsing").unwrap().ms, 1_800_000);
+}
+
+#[test]
+fn hourly_buckets_do_not_double_count_overlaps() {
+    let conn = open_in_memory();
+    let hour = 3_600_000i64;
+    put(
+        &conn,
+        vec![
+            segc("a", 0, 2 * hour, "work", Some("Code.exe")),
+            // 跨同两个小时，与 a 重叠一小时
+            segc("b", hour, 3 * hour, "browsing", Some("msedge.exe")),
+        ],
+    );
+
+    let p = range_pacing(&conn, 0, 24 * hour, 0).unwrap();
+    let sum: i64 = p.hourly_ms.iter().sum();
+
+    assert_eq!(
+        sum, 3 * hour,
+        "24h 分布求和应当等于并集时长 3 小时，而不是 4 小时"
+    );
+    assert_eq!(p.hourly_ms[0], hour);
+    assert_eq!(p.hourly_ms[1], hour);
+    assert_eq!(p.hourly_ms[2], hour);
+    assert_eq!(p.hourly_ms[3], 0, "第 4 小时不该有量");
+}

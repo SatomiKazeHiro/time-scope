@@ -289,3 +289,61 @@ describe("色阶分档", () => {
     expect(SWITCH_LEGEND.length).toBe(5);
   });
 });
+
+// --- 重叠段去重（2026-10-13）---
+
+describe("重叠段不被数两遍", () => {
+  const seg = (id: string, startAt: number, endAt: number, category: Category, application: string) =>
+    ({ id, startAt, endAt, category, application, confidence: 1, classifier: "rule", classifierVersion: "1", evidenceEventIds: [] }) as Segment;
+
+  it("重叠部分只计一次，且归给先开始的段", () => {
+    const H = 3_600_000;
+    const dayStart = 0;
+    const width = 12 * H; // 12h 桶，两个段都在里面
+    const segs = [
+      seg("a", dayStart, dayStart + 2 * H, "work", "Code.exe"),
+      seg("b", dayStart + H, dayStart + 3 * H, "browsing", "msedge.exe"),
+    ];
+    const [b] = bucketMetrics(segs, dayStart, width);
+    // a 占 [0, 2h)，b 只拿到 [2h, 3h)
+    expect(b.activeMs).toBe(3 * H);
+    expect(b.activeMs).toBe(3 * H); // a 占 2h、b 只拿 1h
+  });
+
+  it("专注度不会被重叠的分母抬高", () => {
+    const H = 3_600_000;
+    const dayStart = 0;
+    const width = 12 * H;
+    const segs = [
+      seg("a", dayStart, dayStart + 2 * H, "work", "Code.exe"),
+      seg("b", dayStart + H, dayStart + 3 * H, "browsing", "msedge.exe"),
+    ];
+    const [b] = bucketMetrics(segs, dayStart, width);
+    // 去重后：work 2h / active 3h = 0.667。
+    // 不去重的话 active 会被算成 4h → 0.5，看起来像「被摊薄了」。
+    expect(b.focus).toBeCloseTo(2 / 3, 5);
+  });
+
+  it("首尾相接不是重叠，不受影响", () => {
+    const H = 3_600_000;
+    const segs = [
+      seg("a", 0, 2 * H, "work", "Code.exe"),
+      seg("b", 2 * H, 3 * H, "work", "Code.exe"),
+    ];
+    const [b] = bucketMetrics(segs, 0, 12 * H);
+    expect(b.activeMs).toBe(3 * H);
+  });
+
+  it("被完全覆盖的段不贡献时长", () => {
+    const H = 3_600_000;
+    const segs = [
+      seg("outer", 0, 3 * H, "work", "Code.exe"),
+      seg("inner", H, 2 * H, "browsing", "msedge.exe"),
+    ];
+    const [b] = bucketMetrics(segs, 0, 12 * H);
+    expect(b.activeMs).toBe(3 * H);
+    expect(b.dominantCategory).toBe("work");
+    expect(b.segmentCount).toBe(2); // 段数仍如实计数 —— 时间线上看得见两条
+  });
+});
+

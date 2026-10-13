@@ -105,18 +105,28 @@ export function bucketMetrics(
     b.segmentCount = b.segments.length;
     if (b.segmentCount === 0) continue;
 
-    // 覆盖时长截到桶宽：重叠的段（理论上不该有）也不该让覆盖率超过 1
+    // 覆盖时长截到桶宽：兜底（去重之后不该再超 1，见下）
     b.coveredMs = Math.min(b.coveredMs, width);
     b.coverage = b.coveredMs / width;
 
     b.segments.sort((a, z) => a.startAt - z.startAt);
     const apps = new Set<string>();
     const byCategory = new Map<Category, number>();
+
+    // **重叠去重**：库里存在真实重叠的段（引擎侧成因另查）。
+    // 逐段独立累加会把同一段时间数两遍，`activeMs` 被抬高、
+    // 于是 `focus` 这个「主导类别占比」的分母虚高、专注度被稀释。
+    //
+    // 规则与后端 `clip_to_uncovered` 一致：**先开始的段拥有重叠部分**
+    // （first-wins by startAt）。两处必须同规则，否则汇总页与时间线
+    // 对同一个重叠会给出不同的解释（STATUS 第 22 条「三处同源」）。
+    let coveredUntil = Number.NEGATIVE_INFINITY;
     for (let i = 0; i < b.segments.length; i++) {
       const s = b.segments[i];
       apps.add(s.application ?? "（未知）");
-      const ms = Math.min(s.endAt, b.end) - Math.max(s.startAt, b.start);
-      const clamped = Math.max(0, ms);
+      const from = Math.max(s.startAt, coveredUntil);
+      const clamped = Math.max(0, Math.min(s.endAt, b.end) - from);
+      if (clamped > 0) coveredUntil = Math.min(s.endAt, b.end);
       if (s.category !== "idle") {
         b.activeMs += clamped;
         byCategory.set(s.category, (byCategory.get(s.category) ?? 0) + clamped);

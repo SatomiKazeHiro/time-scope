@@ -9,6 +9,7 @@
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use crate::activity::SegmentSpan;
 
 /// 热力图的一格：某一天的监控总时长（**含 idle**）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -128,7 +129,37 @@ pub struct RangeTotals {
 /// spec §6：那样环才是完整 360°，且 `rules.toml` 命中它们时不至于无处可去。
 const DONUT_KEYS: [&str; 4] = ["work", "browsing", "idle", "unknown"];
 
-const TOP_APPS_LIMIT: i64 = 5;
+const TOP_APPS_LIMIT: usize = 5;
+
+/// **一段只被计入它未被更早的段占用的时间。**
+///
+/// 输入必须已按 `start_at` 升序（`CLIPPED_SPANS_FROM` 保证）。
+/// 维护一个「已占用的右边界」`covered_until`：本段只取 `[max(start, covered_until), end)`，
+/// 非空时才算入，并把 `covered_until` 推到 `max(covered_until, end)`。
+///
+/// **为什么需要**：库里存在真实重叠的段（引擎侧成因另查，
+/// 10-06 的 fc1c1bc 修过一条路径但没堵完）。逐段独立累加会把同一段时间
+/// 算两次，于是 2026-10-12 的全天总时长是 **24.25 小时**。
+///
+/// **归属规则：先开始的段拥有重叠部分**（first-wins by start_at）。
+/// 确定、不需要新数据、与时间线的阅读顺序一致（时间线也从左往右读）。
+/// 实测重叠的两段**类别总是不同**（work×browsing 最多，17 处），
+/// 所以这条规则是必须的 —— 不选就会把同一段时间记给两个类别。
+///
+/// 首尾相接（`prev.end_at == next.start_at`）**不是**重叠：
+/// `covered_until` 取的是 `<=`，相接时 `max(start, covered) == start`，仍计满。
+pub(crate) fn clip_to_uncovered(spans: &[SegmentSpan]) -> Vec<(i64, i64, &str, Option<&str>)> {
+    let mut out = Vec::with_capacity(spans.len());
+    let mut covered_until = i64::MIN;
+    for s in spans {
+        let start = s.start_at.max(covered_until);
+        if start < s.end_at {
+            out.push((start, s.end_at, s.category.as_str(), s.application.as_deref()));
+            covered_until = s.end_at;
+        }
+    }
+    out
+}
 
 /// `[start_ms, end_ms)` 半开区间内的时长三件套、段数、圆环、应用 Top。
 ///
@@ -150,16 +181,16 @@ pub fn range_totals(
         });
     }
 
+    // 按区间并集累加，不用 `SUM(MIN(end,?2)-MAX(start,?1)) GROUP BY category`：
+    // 那个写法逐段独立相加，重叠的时间会被数两遍（全库 84 处重叠）。
+    let spans = crate::activity::get_segment_spans_in_range(conn, start_ms, end_ms)?;
     let mut by_category: Vec<(String, i64)> = Vec::new();
-    for row in conn.prepare(
-        "SELECT category, SUM(MIN(end_at, ?2) - MAX(start_at, ?1)) AS ms FROM activities
-         WHERE start_at < ?2 AND end_at > ?1
-         GROUP BY category",
-    )?
-    .query_map(rusqlite::params![start_ms, end_ms], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-    })? {
-        by_category.push(row?);
+    for (start, end, cat, _app) in clip_to_uncovered(&spans) {
+        let ms = end - start;
+        match by_category.iter_mut().find(|(c, _)| c == cat) {
+            Some((_, acc)) => *acc += ms,
+            None => by_category.push((cat.to_string(), ms)),
+        }
     }
 
     let total_ms: i64 = by_category.iter().map(|(_, ms)| ms).sum();
@@ -182,20 +213,24 @@ pub fn range_totals(
         })
         .collect();
 
-    let mut top_apps: Vec<AppSlice> = Vec::new();
-    for row in conn.prepare(
-        "SELECT application, SUM(MIN(end_at, ?2) - MAX(start_at, ?1)) AS ms FROM activities
-         WHERE start_at < ?2 AND end_at > ?1 AND application IS NOT NULL
-         GROUP BY application ORDER BY ms DESC LIMIT ?3",
-    )?
-    .query_map(rusqlite::params![start_ms, end_ms, TOP_APPS_LIMIT], |r| {
-        Ok(AppSlice {
-            name: r.get::<_, String>(0)?,
-            ms: r.get::<_, i64>(1)?,
-        })
-    })? {
-        top_apps.push(row?);
+    // top_apps 与 by_category 用**同一个去重结果**（`clip_to_uncovered` 已按
+    // start_at 升序切好），否则两处会因重叠而对不上：类别按 first-wins 归属，
+    // 应用也必须同样，否则「某应用时长」会与「它出现的那些档位之和」矛盾。
+    let mut by_app: Vec<(String, i64)> = Vec::new();
+    for (start, end, _cat, app) in clip_to_uncovered(&spans) {
+        let Some(app) = app else { continue };
+        let ms = end - start;
+        match by_app.iter_mut().find(|(a, _)| a == app) {
+            Some((_, acc)) => *acc += ms,
+            None => by_app.push((app.to_string(), ms)),
+        }
     }
+    by_app.sort_by_key(|(_, ms)| std::cmp::Reverse(*ms));
+    let top_apps: Vec<AppSlice> = by_app
+        .into_iter()
+        .take(TOP_APPS_LIMIT)
+        .map(|(name, ms)| AppSlice { name, ms })
+        .collect();
 
     let segment_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM activities WHERE start_at < ?2 AND end_at > ?1",
@@ -283,11 +318,14 @@ pub fn range_pacing(
     }
 
     // 24h 分布：逐段按本地小时边界劈开，跨小时的段分给两桶。
-    for s in &segs {
-        if s.category == "idle" {
+    //
+    // **先去重再劈桶**（`clip_to_uncovered`）：逐段独立劈完累加会把重叠的时间
+    // 劈进两次，那 18 小时的伪造段就是被这样撒成 18/24 根满格的柱子。
+    for (start, end, cat, _app) in clip_to_uncovered(&segs) {
+        if cat == "idle" {
             continue;
         }
-        add_to_hours(&mut hourly_ms, s.start_at, s.end_at, offset_secs);
+        add_to_hours(&mut hourly_ms, start, end, offset_secs);
     }
 
     Ok(RangePacing {

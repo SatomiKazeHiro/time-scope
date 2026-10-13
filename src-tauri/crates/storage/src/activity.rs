@@ -144,6 +144,12 @@ fn write_all(
 /// `pacing_spans_match_the_timeline_spans` 钉住这一点。
 const CLIPPED_SPANS_SELECT: &str = "SELECT MAX(start_at, ?1) AS start_at, \
                                     MIN(end_at, ?2) AS end_at, category";
+/// `get_segment_spans_in_range` 专用：多带 `application`，好让读侧对重叠段
+/// 按应用也去重（`top_apps` 的分组键）。
+/// **不与 `CLIPPED_SPANS_SELECT` 合并** —— 后者被 `get_segments_in_range`
+/// 复用，那边自己已经取 application，合并会让下标错位。
+const CLIPPED_SPANS_WITH_APP_SELECT: &str =
+    "SELECT MAX(start_at, ?1) AS start_at, MIN(end_at, ?2) AS end_at, category, application";
 const CLIPPED_SPANS_FROM: &str = "FROM activities \
                                   WHERE start_at < ?2 AND end_at > ?1 \
                                   ORDER BY start_at ASC";
@@ -209,6 +215,9 @@ pub struct SegmentSpan {
     pub start_at: i64,
     pub end_at: i64,
     pub category: String,
+    /// 进程名。`top_apps` 的分组键 —— 补它是为了让读侧能对重叠段去重
+    /// （同一段时间被两个应用各记一遍，排名就虚高了）。
+    pub application: Option<String>,
 }
 
 /// 同 `get_segments_in_range` 的口径（相交 + 裁剪），但不碰证据表。
@@ -217,13 +226,14 @@ pub fn get_segment_spans_in_range(
     start_ms: i64,
     end_ms: i64,
 ) -> rusqlite::Result<Vec<SegmentSpan>> {
-    let sql = format!("{} {}", CLIPPED_SPANS_SELECT, CLIPPED_SPANS_FROM);
+    let sql = format!("{} {}", CLIPPED_SPANS_WITH_APP_SELECT, CLIPPED_SPANS_FROM);
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params![start_ms, end_ms], |row| {
         Ok(SegmentSpan {
             start_at: row.get(0)?,
             end_at: row.get(1)?,
             category: row.get(2)?,
+            application: row.get(3)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
