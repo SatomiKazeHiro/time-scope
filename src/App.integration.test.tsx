@@ -114,7 +114,7 @@ describe("App integration (segments)", () => {
     expect(screen.queryByText(/段 →/)).toBeNull();
 
     // 同一桶里 work→browsing 是一次应用切换
-    fireEvent.click(screen.getByRole("button", { name: "切换次数" }));
+    fireEvent.click(screen.getByRole("button", { name: "专注切换" }));
     await waitFor(() => expect(screen.getByText(/全天切换/)).toBeTruthy());
     expect(screen.getByText(/全天切换 1 次/)).toBeTruthy();
   });

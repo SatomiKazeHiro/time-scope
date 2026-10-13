@@ -132,7 +132,13 @@ export default function MetricRow({ summary, loading, rangeLabel, rangeDays }: M
       </div>
 
       {/* ⑤ 诊断行：段越短注意力切得越碎。原来「458 段 / 切换 12 次」占着一张卡，
-             而平均段长这个一眼能看懂的量反而没显示。 */}
+             而平均段长这个一眼能看懂的量反而没显示。
+
+             「切换 N 次」已移除（2026-10-13）。汇总页这个 switchCount 数的是
+             「相邻段之间空了 ≥5 分钟」，实测 0–4 次（10-12 是 1 次），几乎没有
+             信息量；而紧邻的「N 段」说的是同一件事 —— 段多就是切得碎。
+             它与时间线指标模式的「切换次数」（数相邻窗口变化，10-12 是 48 次）
+             **定义不同却同名**，用户会以为两边矛盾。保留时间线那个。 */}
       <div
         data-metric-card="segments"
         className="panel flex flex-wrap items-baseline gap-x-2 gap-y-1 p-3 sm:col-span-2 lg:col-span-12"
@@ -142,7 +148,7 @@ export default function MetricRow({ summary, loading, rangeLabel, rangeDays }: M
           {has && avgMs > 0 ? formatDuration(avgMs) : PLACEHOLDER}
         </b>
         <span className="tnum text-micro text-ink-ghost">
-          {has ? `· ${s!.segmentCount} 段 · 切换 ${s!.switchCount} 次` : " "}
+          {has ? `· ${s!.segmentCount} 段` : " "}
         </span>
         <span className="text-micro text-ink-ghost">
           —— 段越短，注意力切得越碎

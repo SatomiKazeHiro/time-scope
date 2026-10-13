@@ -29,7 +29,7 @@ const CSS_BUNDLE = existsSync("dist/assets")
 /**
  * 造一天：碎片为主，夹杂长段专注 —— 真实采集就是这个形状。
  *
- * 之前用的是 14 个整块的干净数据，专注度/切换次数在那种数据下几乎全是满档，
+ * 之前用的是 14 个整块的干净数据，专注度/专注切换在那种数据下几乎全是满档，
  * 看不出这两个指标是干什么的。碎片数据才有真实的分布。
  */
 function day(): Segment[] {
@@ -130,7 +130,7 @@ describe("preview", () => {
 
       // 切到要看的指标模式
       if (metric !== "category") {
-        fireEvent.click(screen.getByRole("button", { name: metric === "focus" ? "专注度" : "切换次数" }));
+        fireEvent.click(screen.getByRole("button", { name: metric === "focus" ? "专注度" : "专注切换" }));
       }
 
       // 选中一段，让详情面板也进画面

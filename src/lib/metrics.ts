@@ -22,7 +22,7 @@ export interface BucketMetric {
   /** 落在桶内的段数 */
   segmentCount: number;
   /**
-   * 切换次数 = 相邻段之间**应用不同**的次数。
+   * 专注切换 = 相邻段之间**应用不同**的次数（界面上的模式名，见 SegmentTimeline 的 METRIC_LABEL）。
    *
    * 不用「段数 − 1」：引擎会把同一次活动切成多段（标题变化、窗口切换），
    * 那些不是用户自己在跳。数应用变化才是"我换了个程序"。
@@ -172,7 +172,7 @@ export function focusStep(focus: number): number {
   return 1;
 }
 
-/** 切换次数 → 1..5 */
+/** 专注切换数 → 1..5 */
 export function switchStep(switches: number): number {
   if (switches <= 0) return 1;
   if (switches <= 2) return 2;

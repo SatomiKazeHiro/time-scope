@@ -8,7 +8,6 @@ const S: Summary = {
   activeMs: 167_400_000,     // 46.5h
   idleMs: 27_000_000,        // 7.5h
   segmentCount: 458,
-  switchCount: 12,
   hourlyMs: new Array(24).fill(0),
   donut: [
     { key: "work", ms: 5_700_000 },
@@ -43,13 +42,12 @@ describe("MetricRow 的层级", () => {
     expect(active.textContent).toContain("空闲 7 时 30 分");
   });
 
-  it("段数与切换次数降到诊断行，不占大字", () => {
+  it("段数降到诊断行，不占大字", () => {
     // 「引擎切成了 458 段」是诊断量，问「时间去哪了」的人不需要它当主读数
     render(<MetricRow summary={S} loading={false} />);
     const row = card("平均每段");
     expect(row.className).toContain("lg:col-span-12");
     expect(row.textContent).toContain("458 段");
-    expect(row.textContent).toContain("切换 12 次");
   });
 
   it("平均段长补上了 —— 数据早就在手上，除一下就行", () => {
@@ -170,4 +168,13 @@ describe("布局稳定性", () => {
     rerender(<MetricRow summary={S} loading={false} />);
     expect(container.querySelector("[data-metric-row]")!.getAttribute("aria-busy")).toBeNull();
   });
+});
+it("诊断行不再显示「切换 N 次」—— 那个数字几乎恒为 0–4 且与「N 段」重复", () => {
+  // 2026-10-13：汇总页的 switchCount 与时间线的 switches 定义不同
+  // （前者数「相邻段之间空了 ≥5 分钟」，实测 0–4 次，几乎没有信息量），
+  // 名字却都叫「切换次数」。保留时间线那个，汇总页删掉这个。
+  render(<MetricRow summary={S} loading={false} />);
+  const row = card("平均每段");
+  expect(row.textContent).toContain("458 段");
+  expect(row.textContent).not.toContain("切换");
 });

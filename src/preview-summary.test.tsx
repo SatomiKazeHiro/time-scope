@@ -90,8 +90,6 @@ function summaryFor(from?: string, to?: string): Summary {
     totalMs: total,
     activeMs: total - idle,
     idleMs: idle,
-    segmentCount: Math.max(1, Math.round(458 * k)),
-    switchCount: Math.max(0, Math.round(12 * k)),
     hourlyMs: hourly,
     donut: [
       { key: "work", ms: work },

@@ -43,7 +43,6 @@ const SUM: Summary = {
   activeMs: 167_400_000,
   idleMs: 27_000_000,
   segmentCount: 458,
-  switchCount: 12,
   hourlyMs: new Array(24).fill(3_600_000),
   donut: [
     { key: "work", ms: 5_700_000 },

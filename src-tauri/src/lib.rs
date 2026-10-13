@@ -159,7 +159,6 @@ struct SummaryOut {
     active_ms: i64,
     idle_ms: i64,
     segment_count: i64,
-    switch_count: i64,
     hourly_ms: Vec<i64>,
     donut: Vec<activity_storage::DonutSlice>,
     top_apps: Vec<activity_storage::AppSlice>,
@@ -192,7 +191,6 @@ fn get_summary(
         active_ms: totals.active_ms,
         idle_ms: totals.idle_ms,
         segment_count: totals.segment_count,
-        switch_count: pacing.switch_count,
         // Vec 而非 [i64; 24]：前端拿到的就是 24 个数的普通数组。
         hourly_ms: pacing.hourly_ms.to_vec(),
         donut: totals.donut,

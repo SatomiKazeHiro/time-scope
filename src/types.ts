@@ -144,7 +144,7 @@ export interface Summary {
   activeMs: number;
   idleMs: number;
   segmentCount: number;
-  switchCount: number;
+
   /** 24 个桶，按本地小时切。只含非 idle 时长。 */
   hourlyMs: number[];
   donut: DonutSlice[];

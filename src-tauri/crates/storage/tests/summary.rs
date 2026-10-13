@@ -327,44 +327,37 @@ use activity_storage::range_pacing;
 /// 本组测试固定东八区，不依赖运行机器的时区。
 const CST: i32 = 8 * 3600;
 
+// 以下两条原本测「切换次数」（相邻段之间空了 ≥5 分钟）。
+// 那个字段 2026-10-13 已删：实测全库 0–4 次（2026-10-12 是 1 次），几乎没有
+// 信息量，与紧邻的「N 段」重复；且与时间线指标模式的「专注切换」
+// （数相邻窗口变化，同日 48 次）定义不同却同名。见 RangePacing 的注释。
+
 #[test]
-fn short_gaps_are_not_switches() {
+fn gaps_do_not_create_phantom_time_in_the_hourly_profile() {
+    // 相邻段之间空 6 分钟 —— 那 6 分钟**不属于任何段**，不该出现在 24h 分布里。
+    // 曾经这个间隔还会被算成一次「切换」，现在那个字段没了，
+    // 但「空档不产生时长」这件事仍要守住。
     let conn = open_in_memory();
-    // 间隔 4 分钟、间隔 6 分钟 -> 只算 1 次切换
     put(
         &conn,
         vec![
             segc("a", 0, 60_000, "work", Some("Code.exe")),
-            segc("b", 4 * 60_000, 5 * 60_000, "work", Some("Code.exe")),
-            segc("c", 11 * 60_000, 12 * 60_000, "work", Some("Code.exe")),
+            segc("b", 6 * 60_000, 7 * 60_000, "work", Some("Code.exe")),
         ],
     );
-    assert_eq!(
-        range_pacing(&conn, 0, 3_600_000, CST).unwrap().switch_count,
-        1,
-        "4 分钟不算，6 分钟算"
-    );
+    let p = range_pacing(&conn, 0, 3_600_000, CST).unwrap();
+    let sum: i64 = p.hourly_ms.iter().sum();
+    assert_eq!(sum, 120_000, "只有两段各自的时长，空档不计入");
 }
 
 #[test]
-fn single_segment_has_no_switches() {
-    let conn = open_in_memory();
-    put(&conn, vec![segc("a", 0, 60_000, "work", Some("Code.exe"))]);
-    assert_eq!(
-        range_pacing(&conn, 0, 3_600_000, CST).unwrap().switch_count,
-        0
-    );
-}
-
-#[test]
-fn empty_range_yields_zero_switches_and_flat_profile() {
+fn empty_range_yields_a_flat_profile() {
     let conn = open_in_memory();
     put(
         &conn,
         vec![segc("a", 5_000_000, 6_000_000, "work", Some("Code.exe"))],
     );
     let p = range_pacing(&conn, 9_000_000, 1_000_000, CST).unwrap();
-    assert_eq!(p.switch_count, 0);
     assert_eq!(p.hourly_ms, [0i64; 24]);
 }
 

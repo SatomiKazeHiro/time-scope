@@ -61,7 +61,11 @@ export type MetricMode = "category" | "focus" | "switch";
 export const METRIC_LABEL: Record<MetricMode, string> = {
   category: "类别",
   focus: "专注度",
-  switch: "切换次数",
+  // 「专注切换」而不是「切换次数」（2026-10-13）：这个模式数的是**相邻窗口
+  // 之间**的切换，一眼能对上「我在几个程序之间跳」。汇总页原先也有一个叫
+  // 「切换次数」的数（数相邻段之间空了 ≥5 分钟，实测 0–4 次），定义不同、
+  // 量级差 48 倍，已一并删掉 —— 见 MetricRow 的诊断行。
+  switch: "专注切换",
 };
 
 interface Props {

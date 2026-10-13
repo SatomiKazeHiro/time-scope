@@ -270,24 +270,20 @@ fn empty_donut() -> Vec<DonutSlice> {
         .collect()
 }
 
-/// 相邻两个段之间空多久算「切换了一次」。
-///
-/// 阈值**固定 5 分钟，不读 `config.toml`** —— `idle_threshold_s` 改的是
-/// 「多久算空闲」，会改变哪些段被归成 idle、进而改变段本身。让两个指标
-/// 耦合在一个可调参数上，改一次配置会让两个数字的历史不可比（spec §3.2）。
-const SWITCH_GAP_MS: i64 = 5 * 60_000;
-
 const HOUR_MS: i64 = 3_600_000;
 
-/// 范围内必须逐段算的两项。
+/// 24h 活跃分布。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RangePacing {
-    pub switch_count: i64,
     pub hourly_ms: [i64; 24],
 }
 
-/// 切换次数与 24h 活跃分布。
+///
+/// `switch_count` 已删除（2026-10-13）：它数的是「相邻段之间空了 ≥5 分钟」，
+/// 实测全库 0–4 次（2026-10-12 是 1 次），几乎没有信息量，且与紧邻的「N 段」
+/// 说的是同一件事。它与时间线指标模式的「专注切换」（数相邻窗口变化，
+/// 同日 48 次）**定义不同却同名**，用户会以为两边矛盾 —— 保留后者。
 ///
 /// `offset_secs` 是本地 UTC 偏移的**秒数**，由 app 层从
 /// `UtcOffset::whole_seconds()` 传进来 —— storage crate 不依赖 `time`。
@@ -300,7 +296,6 @@ pub fn range_pacing(
     let mut hourly_ms = [0i64; 24];
     if start_ms >= end_ms {
         return Ok(RangePacing {
-            switch_count: 0,
             hourly_ms,
         });
     }
@@ -309,13 +304,6 @@ pub fn range_pacing(
     // 走专用的三列查询而不是 `get_segments_in_range`：后者对每个段都要再跑一次
     // evidence 查询（N+1），而这里一个字节都用不到（B1）。
     let segs = crate::activity::get_segment_spans_in_range(conn, start_ms, end_ms)?;
-
-    let mut switch_count = 0i64;
-    for pair in segs.windows(2) {
-        if pair[1].start_at - pair[0].end_at >= SWITCH_GAP_MS {
-            switch_count += 1;
-        }
-    }
 
     // 24h 分布：逐段按本地小时边界劈开，跨小时的段分给两桶。
     //
@@ -328,10 +316,7 @@ pub fn range_pacing(
         add_to_hours(&mut hourly_ms, start, end, offset_secs);
     }
 
-    Ok(RangePacing {
-        switch_count,
-        hourly_ms,
-    })
+    Ok(RangePacing { hourly_ms })
 }
 
 /// 把 `[start_ms, end_ms)` 按本地小时边界劈开，累加进 `buckets`。

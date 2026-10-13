@@ -5,7 +5,7 @@ import { FOCUS_LEGEND, SWITCH_LEGEND, scaleColor, SCALE_STEPS } from "../lib/met
 const MODES: MetricMode[] = ["category", "focus", "switch"];
 
 /**
- * 时间线看什么：类别 / 专注度 / 切换次数。
+ * 时间线看什么：类别 / 专注度 / 专注切换（相邻窗口之间的切换）。
  *
  * 三态都是**互斥**的，不会同时出现在一个视图里 —— 这也是紫色顺序色阶
  * 可以离类别色那么近的原因（蓝 ↔ 紫在红色盲下会塌陷，见 MASTER §2.5）。
