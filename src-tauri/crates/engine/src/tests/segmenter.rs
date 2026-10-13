@@ -1009,3 +1009,106 @@ fn the_gap_guard_follows_its_own_threshold() {
     assert_eq!((segs[0].start_at, segs[0].end_at), (0, 0), "严格阈值下应当收尾");
 }
 
+
+// --- 重叠：抖动吸收不许复活一个「中间已落库」的段 ---
+
+/// 复现真实事故：16:07:14 开的段被 absorb **复活 3 次**，而期间
+/// msedge 已经另开又关闭了 09:07:46→09:08:29 这一段。最终复活段
+/// [09:07:14, 09:09:52] 与它真实相交 43.4 秒。
+///
+/// 引擎**不该产出重叠段**：时间线上的每一段都代表「这段时间在做什么」，
+/// 两段重叠等于同一段时间有两个答案。
+#[test]
+fn absorb_does_not_resurrect_across_an_already_closed_sibling() {
+    let base = 1_791_767_234_996i64;
+    // A: 09:07:14 ���（work），被复活
+    // B: 09:07:46 开、09:08:29 关（browsing）—— 在 A 被复活**之前**就已经收尾
+    // C: 09:08:29 起（work）—— 回到 A 的应用，触发 absorb
+    let events = vec![
+        focus(base, "WindowsTerminal.exe"),
+        focus(base + 32_000, "msedge.exe"),
+        focus(base + 75_000, "WindowsTerminal.exe"), // B 收尾
+        focus(base + 76_000, "WindowsTerminal.exe"), // C 开 → 抖动 → absorb
+    ];
+
+    // **必须保留默认 grace**：absorb 的门槛是 `grace_period_s`，
+    // 用 emit_now()（grace=0）会让 absorb 永不触发，测不到任何东西。
+    let cfg = EngineConfig::default().with_min_segment_duration_s(0);
+    let segs = all_segments(&events, &rules(), &cfg);
+
+    for w in segs.windows(2) {
+        assert!(
+            w[0].end_at <= w[1].start_at,
+            "重叠段：[{}+, {}+] 与 [{}+, {}+]",
+            w[0].start_at,
+            w[0].end_at,
+            w[1].start_at,
+            w[1].end_at
+        );
+    }
+}
+
+/// 不管 absorb 怎么判定，**引擎产出的段两两不得重叠**。
+/// 这条是「时间线上一段时间只能有一个答案」的形式化。
+#[test]
+fn segments_never_overlap_each_other() {
+    // A → B → A 的典型抖动，配上各种时间间隔扫一遍
+    for gap_ms in [1_000i64, 20_000, 45_000, 70_000] {
+        let base = 1_000_000_000_000i64;
+        let events = vec![
+            focus(base, "Code.exe"),
+            focus(base + gap_ms, "chrome.exe"),
+            focus(base + 2 * gap_ms, "Code.exe"),
+            focus(base + 3 * gap_ms, "chrome.exe"),
+            focus(base + 4 * gap_ms, "Code.exe"),
+        ];
+        let cfg = EngineConfig::default().with_min_segment_duration_s(0);
+        let segs = all_segments(&events, &rules(), &cfg);
+        for w in segs.windows(2) {
+            assert!(
+                w[0].end_at <= w[1].start_at,
+                "gap={gap_ms}ms 时产出重叠：[{}+, {}+] vs [{}+, {}+]",
+                w[0].start_at,
+                w[0].end_at,
+                w[1].start_at,
+                w[1].end_at
+            );
+        }
+    }
+}
+
+/// 短段合并**不许跨过已经存在的时间**。
+///
+/// `mergeable` 现在允许「相交或首尾相接」就并 —— 这是为了让 3 秒的抖动
+/// 能并进邻居。但如果 `extra` 比 target 长、且它跨过了别的时间，
+/// `merge_into` 的 `min(start)/max(end)` 会把 target 撑大到覆盖那段，
+/// 于是 target 与它中间的真实段**重叠**。
+///
+/// 生产默认（`min_segment_duration_s = 30`）下真实重放 2026-10-10
+/// 复现出 9 对重叠、2026-10-07 复现出 14 对，与库里逐条吻合；
+/// `min=0` 时（没有短段、没有合并）重叠为 0。
+#[test]
+fn merging_a_short_segment_never_widens_the_target_across_other_time() {
+    // 用默认参数：min=30 才有短段，才会走合并路径
+    let cfg = EngineConfig::default();
+    let base = 1_700_000_000_000i64;
+    // A 很长(0..600s)，中间插入 B(300..320s) 短段，C(400..410s) 短段
+    // B 与 C 都短于 30s? 否 —— 它们各 20s 与 10s，才算短段
+    let events = vec![
+        focus(base, "Code.exe"),
+        focus(base + 300_000, "chrome.exe"),
+        focus(base + 320_000, "Code.exe"),
+        focus(base + 400_000, "chrome.exe"),
+        focus(base + 410_000, "Code.exe"),
+        // 再喂足够久，让 pending 全部释放
+        focus(base + 600_000, "Code.exe"),
+    ];
+    let segs = all_segments(&events, &rules(), &cfg);
+    for w in segs.windows(2) {
+        assert!(
+            w[0].end_at <= w[1].start_at,
+            "合并后产出重叠：[{}+, {}+] 与 [{}+, {}+]",
+            w[0].start_at, w[0].end_at, w[1].start_at, w[1].end_at
+        );
+    }
+}
