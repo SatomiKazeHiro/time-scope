@@ -168,7 +168,19 @@ fn run_listener(
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        // 诊断（2026-10-13）：只打**消息号与 wparam**，不打窗口标题。
+        // 现在的问题分两种，读代码分不出来：
+        //   (a) 消息根本没来 → 泵没转 / 注册其实没成功
+        //   (b) 消息来了但 translate 没认出来
+        // 这一行能一次分开两者。只在会话相关消息上打，免得刷屏。
+        if matches!(msg, WM_WTSSESSION_CHANGE | WM_POWERBROADCAST) {
+            eprintln!(
+                "[time-scope] session 收到消息 msg={msg} wparam=0x{:x}",
+                wparam.0
+            );
+        }
         if let Some(sig) = translate(msg, wparam.0) {
+            eprintln!("[time-scope] session 消息 -> 采集信号 {sig:?}");
             SENDER.with(|s| {
                 if let Some(tx) = s.borrow().as_ref() {
                     // 通道断了（consumer 已退出）不该让窗口过程 panic
@@ -247,11 +259,19 @@ fn run_listener(
     // 却因为电源失败而让锁屏事件一条都发不出来。
     let wts_ok = match unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) } {
         Ok(()) => true,
-        Err(_) => {
-            eprintln!("[time-scope] WTSRegisterSessionNotification 失败：锁屏/解锁将不被记录");
+        Err(e) => {
+            // 诊断（2026-10-13）：把错误码打出来。原来只判 `is_err()`，
+            // 错误码被丢掉了 —— 排查时只能知道「失败了」，不知道「为什么」。
+            eprintln!("[time-scope] WTSRegisterSessionNotification 失败：锁屏/解锁将不被记录（{e:?}）");
             false
         }
     };
+    if wts_ok {
+        // 注册成功 ≠ 消息会来（2026-10-13 实测：注册成功但一条消息都没有）。
+        // 这一行把「已注册」明确打出来，和下面的「收到消息」对照着看，
+        // 就能区分「没注册上」与「注册上了但消息没来」。
+        eprintln!("[time-scope] WTSRegisterSessionNotification 成功（锁屏/解锁通道已注册）");
+    }
 
     let mut power_handle: *mut std::ffi::c_void = std::ptr::null_mut();
     let power = unsafe {
@@ -261,7 +281,10 @@ fn run_listener(
     if !power_ok {
         // 只说这一路没了，**不说「整个监听不可用」** —— 那是之前那句误导人的话，
         // 用户正是被它误导才以为锁屏也没在记
-        eprintln!("[time-scope] PowerRegisterSuspendResumeNotification 失败：合盖/唤醒将不被记录");
+        eprintln!(
+            "[time-scope] PowerRegisterSuspendResumeNotification 失败：合盖/唤醒将不被记录（{:?}）",
+            power.to_hresult()
+        );
     }
 
     let reg = SessionRegistration { wts_ok, power_ok };
