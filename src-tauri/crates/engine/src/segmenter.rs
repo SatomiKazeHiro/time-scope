@@ -47,6 +47,7 @@ impl EngineState {
             classifier: CLASSIFIER_RULE.to_string(),
             classifier_version: rules.version.clone(),
             evidence_event_ids: open.evidence_event_ids.clone(),
+            active_ms: open.active_ms,
         })
     }
 }
@@ -67,6 +68,22 @@ pub fn reduce(
 ) -> EngineOutput {
     let mut st = state.clone();
     let ts = event.timestamp;
+
+    // 0. 心跳的「有输入秒数」记到**当前正在生长的段**上（2026-10-13）。
+    //    必须在下面切段逻辑**之前**做 —— 心跳不携带 application，
+    //    它不会自己开段，但它是「用户确实在动」这件事唯一的直接证据。
+    //    这段时长只作附加量，不碰任何边界（见 OpenSegment::active_ms）。
+    if let EventType::InputHeartbeat(p) = &event.event_type {
+        if p.active_seconds > 0 {
+            if let Some(cur) = st.current_segment.as_mut() {
+                // 上限是「从段起点到**这个心跳所在时刻**」，不是段到当前
+                // `end_at` 的距离 —— 心跳到来时 `extend` 还没跑，`end_at` 仍等于
+                // `start_at`，拿它当上限会把这一笔整个丢掉。
+                let room = (ts - cur.start_at).max(0);
+                cur.active_ms = (cur.active_ms + i64::from(p.active_seconds) * 1000).min(room);
+            }
+        }
+    }
 
     // 1. idle 状态翻转
     match event.event_type {
@@ -451,6 +468,7 @@ fn absorb(st: &mut EngineState, ts: i64, evidence_id: String, config: &EngineCon
         confidence: prev.confidence,
         evidence_event_ids: prev.evidence_event_ids,
         last_evidence_at: ts,
+        active_ms: prev.active_ms,
     });
     // 抖动不是真切换：last_switch_at 与 previous_application 都保持不动
 }
@@ -469,6 +487,7 @@ fn new_open_segment(
         confidence,
         evidence_event_ids: Vec::new(),
         last_evidence_at: ts,
+        active_ms: 0,
     }
 }
 
@@ -526,5 +545,6 @@ fn close_current(st: &mut EngineState, rules: &RuleSet, ts: i64, config: &Engine
         classifier: CLASSIFIER_RULE.to_string(),
         classifier_version: rules.version.clone(),
         evidence_event_ids: open.evidence_event_ids,
+        active_ms: open.active_ms,
     });
 }

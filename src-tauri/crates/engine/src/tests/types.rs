@@ -11,6 +11,7 @@ fn seg(category: Category, start: i64, end: i64) -> ActivitySegment {
         classifier: CLASSIFIER_RULE.into(),
         classifier_version: "test-v1".into(),
         evidence_event_ids: vec![],
+        active_ms: 0,
     }
 }
 

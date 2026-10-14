@@ -71,6 +71,15 @@ pub struct ActivitySegment {
     /// 支撑这个结论的 Event id 列表（spec §6 evidence）。
     #[serde(default)]
     pub evidence_event_ids: Vec<String>,
+    /// 这段里**用户确实有输入**的时长（毫秒），2026-10-13 新增。
+    ///
+    /// 专注度的新分母（用户拍板：`focus = 主导类别时长 / 有输入时长`）。
+    /// 见 `OpenSegment::active_ms` 的说明 —— 它只是附加量，不参与边界计算。
+    ///
+    /// **`0` 不代表「没有输入」，可能代表「这段是 2026-10-13 之前的历史数据」**
+    /// （旧行没有这个量）。调用方要区分「无输入」与「无数据」，别都当成 0%。
+    #[serde(default)]
+    pub active_ms: i64,
 }
 
 impl ActivitySegment {
@@ -113,4 +122,15 @@ pub struct OpenSegment {
     pub evidence_event_ids: Vec<String>,
     /// 关闭时用哪个时间点收尾。可能被后续 Event 撑大。
     pub last_evidence_at: i64,
+    /// 这段里**用户确实有输入**的时长（毫秒），2026-10-13 新增。
+    ///
+    /// 专注度的分母用它（用户 2026-10-13 拍板的口径）：
+    /// `focus = 主导类别时长 / 有输入时长`。这样
+    /// - 「人不在」（锁屏 / 连续无输入）不进分母
+    /// - 「人在但不专注」（看视频、手间歇性动）进分母但拿不到 100%
+    ///
+    /// **不参与任何边界计算** —— 只作附加量。段的时间边界另有归属
+    /// （`advance_end` / `crossed_observation_gap`，见 MASTER §7）。
+    /// 让它去影响边界就是「凭空造时间」的又一次翻版。
+    pub active_ms: i64,
 }

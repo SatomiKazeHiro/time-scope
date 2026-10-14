@@ -838,6 +838,7 @@ fn mk(id: &str, start: i64, end: i64, cat: &str) -> crate::ActivitySegment {
         classifier: "rule".into(),
         classifier_version: "v".into(),
         evidence_event_ids: vec![format!("ev-{id}")],
+        active_ms: 0,
     }
 }
 
@@ -1230,6 +1231,7 @@ fn a_short_segment_merges_into_the_open_segment_only_when_adjacent() {
             confidence: 1.0,
             evidence_event_ids: vec!["ev-open".into()],
             last_evidence_at: 100_000,
+            active_ms: 0,
         }),
         30_000,
         200_000,
@@ -1249,4 +1251,79 @@ fn a_short_segment_merges_into_the_open_segment_only_when_adjacent() {
         o.evidence_event_ids
     );
     let _ = closed;
+}
+
+// --- 「有输入时长」（2026-10-13，专注度的新分母）---
+//
+// 用户拍板的口径：`focus = 主导类别时长 / 有输入时长`。
+// 关键实测：看视频时心跳是 0 与非 0 **交替**（报 0 比例 14–74%），
+// 但**从不连续 300 秒** —— 所以这个量能区分「人不在」与「人在但不专注」。
+
+#[test]
+fn a_segment_accumulates_the_time_the_user_actually_had_input() {
+    let cfg = emit_now();
+    let base = 1_700_000_000_000i64;
+    // Code 段：40 秒里两次心跳各报 10 秒有输入
+    let events = vec![
+        focus(base, "Code.exe"),
+        heartbeat(base + 10_000, 10),
+        heartbeat(base + 20_000, 10),
+        heartbeat(base + 30_000, 0), // 这一窗没动
+        heartbeat(base + 40_000, 10),
+        focus(base + 45_000, "msedge.exe"), // 切走，收尾
+    ];
+    let segs = all_segments(&events, &rules(), &cfg);
+    let code = segs
+        .iter()
+        .find(|s| s.application.as_deref() == Some("Code.exe"))
+        .expect("应该有 Code 段");
+    assert_eq!(
+        code.active_ms, 30_000,
+        "40 秒里报了三次 10 秒有输入 = 30 秒；报 0 的那 10 秒不该算进去"
+    );
+    assert!(
+        code.active_ms <= code.duration_ms(),
+        "有输入时长不可能超过段的时长（{} > {}）",
+        code.active_ms,
+        code.duration_ms()
+    );
+}
+
+#[test]
+fn a_fully_idle_period_accumulates_no_input_time() {
+    let cfg = emit_now();
+    let base = 1_700_000_000_000i64;
+    let events = vec![
+        focus(base, "Code.exe"),
+        heartbeat(base + 10_000, 0),
+        heartbeat(base + 20_000, 0),
+        heartbeat(base + 30_000, 0),
+        focus(base + 40_000, "msedge.exe"),
+    ];
+    let segs = all_segments(&events, &rules(), &cfg);
+    let code = segs.iter().find(|s| s.application.as_deref() == Some("Code.exe")).unwrap();
+    assert_eq!(code.active_ms, 0, "全程无输入 → 有输入时长为 0");
+}
+
+#[test]
+fn active_ms_never_exceeds_the_segments_own_duration() {
+    // 心跳窗口可能跨过段的边界：段只开了 5 秒，心跳却报了 10 秒。
+    // 那样 active_ms 会大于段时长，专注度分母比分子还大 —— 荒谬。
+    let cfg = emit_now();
+    let base = 1_700_000_000_000i64;
+    let events = vec![
+        focus(base, "Code.exe"),
+        heartbeat(base + 2_000, 10), // 段才开了 2 秒
+        focus(base + 3_000, "msedge.exe"),
+    ];
+    let segs = all_segments(&events, &rules(), &cfg);
+    for s in &segs {
+        assert!(
+            s.active_ms <= s.duration_ms(),
+            "{:?} 的 active_ms={} 超过自身时长 {}",
+            s.application,
+            s.active_ms,
+            s.duration_ms()
+        );
+    }
 }
