@@ -83,10 +83,10 @@ pnpm tauri dev
 
 ```bash
 # Rust：必须带 --workspace，否则只跑根包、core/engine/storage/collector 全部被跳过
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 379 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 389 passed
 
 # 前端
-pnpm test                                                       # 346 passed
+pnpm test                                                       # 353 passed
 ```
 
 ## 代码结构
@@ -171,7 +171,7 @@ design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 | 文档 | 回答 | 什么时候读 |
 |---|---|---|
 | **本文** | 怎么跑起来、现在有什么 | 第一次接触这个项目 |
-| [`STATUS.md`](docs/superpowers/STATUS.md) | **别改什么** —— 33 条「看起来像 bug 但是故意的」，加上遗留工作与关键决策 | **动手改代码之前** |
+| [`STATUS.md`](docs/superpowers/STATUS.md) | **别改什么** —— 36 条「看起来像 bug 但是故意的」，加上遗留工作与关键决策 | **动手改代码之前** |
 | [`MASTER.md`](design-system/time-scope/MASTER.md) | **为什么这样设计** —— 色板推导、组件约定、token 理由 | 改 UI 之前 |
 
 `docs/superpowers/specs/` 是**历史快照**，顶部已标注不是现状说明，
@@ -179,7 +179,7 @@ design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 
 `docs/superpowers/audits/` 是 2026-10-06 的隐藏问题审计。
 **注意它开头的「请按 §1 的顺序修」是当时的指示，不是现在的** ——
-那 16 条多数已在 10-06/07 修掉，逐条现状见 [`STATUS.md`](docs/superpowers/STATUS.md) §4.3。
+那 16 条多数已在 10-06/07 修掉，逐条现状见 [`STATUS.md`](docs/superpowers/STATUS.md) §4.5。
 
 ## 已知注意事项
 
