@@ -154,9 +154,12 @@ const TOP_APPS_LIMIT: usize = 5;
 /// 引擎又产出了坏数据，排查时看不出是「读侧在擦屁股」还是「引擎本来就这样」。
 /// 那个静默让重叠问题被反复当成新 bug 查了三轮。
 ///
-/// 现在每次真的发生重叠都往 stderr 打一行，带**被藏掉的毫秒数**。
-/// 这是兜底的记账：读侧负责让数字正确，引擎负责不再产生，
-/// 两者任一失效都会立刻在日志里显形。
+/// **但也不能每次查询都打一行**（同一天踩的）：前端每 5 秒轮询一次，
+/// 一次刷新要跑好几个聚合查询，于是同一批重叠会被报几十遍 ——
+/// 「报对了但天天报就成了噪音」，那样日志反而没人看。
+///
+/// 所以走 `OverlapReporter`：**累计**藏了多少段、多少毫秒，每分钟最多打一行汇总。
+/// 一次说清总量与频率，噪音可控，问题照样藏不住。
 pub(crate) fn clip_to_uncovered(spans: &[SegmentSpan]) -> Vec<(i64, i64, &str, Option<&str>)> {
     let mut out = Vec::with_capacity(spans.len());
     let mut covered_until = i64::MIN;
@@ -174,15 +177,52 @@ pub(crate) fn clip_to_uncovered(spans: &[SegmentSpan]) -> Vec<(i64, i64, &str, O
         }
     }
     if hidden_pairs > 0 {
+        OverlapReporter::record(hidden_pairs, hidden_ms);
+    }
+    out
+}
+
+/// 重叠情况的**节流汇报**。
+///
+/// 为什么需要它：前端的 5 秒轮询会让同一次「数据是脏的」被反复报出来。
+/// 累积 + 每分钟一行，既保证「藏了多少」随时可查，又不至于把日志淹掉。
+struct OverlapReporter {
+    pairs: std::sync::atomic::AtomicU64,
+    ms: std::sync::atomic::AtomicI64,
+    last_printed: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl OverlapReporter {
+    const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+    fn record(pairs: usize, ms: i64) {
+        use std::sync::atomic::Ordering;
+        static R: std::sync::OnceLock<OverlapReporter> = std::sync::OnceLock::new();
+        let r = R.get_or_init(|| OverlapReporter {
+            pairs: Default::default(),
+            ms: Default::default(),
+            last_printed: std::sync::Mutex::new(None),
+        });
+        r.pairs.fetch_add(pairs as u64, Ordering::Relaxed);
+        r.ms.fetch_add(ms, Ordering::Relaxed);
+
+        let Ok(mut last) = r.last_printed.lock() else { return };
+        let now = std::time::Instant::now();
+        if last.is_some_and(|t| now.duration_since(t) < Self::MIN_INTERVAL) {
+            return;
+        }
+        *last = Some(now);
+        drop(last);
         eprintln!(
-            "[time-scope] activities 表存在重叠段：本次查询藏起 {hidden_pairs} 段 / {hidden_ms} ms。\
+            "[time-scope] activities 表存在重叠段：累计藏起 {} 段 / {} ms。\
              时长已按「先开始的段拥有重叠部分」去重，数字是对的；\
              但这说明引擎产出了本不该有的重叠段（2026-10-08 修过一次，\
              见 segmenter 的 fold_short_segments open 分支的相邻检查）。\
-             历史数据需重放才能修掉。"
+             历史数据需重放才能修掉。同一情况每分钟最多报一次。",
+            r.pairs.load(Ordering::Relaxed),
+            r.ms.load(Ordering::Relaxed),
         );
     }
-    out
 }
 
 /// `[start_ms, end_ms)` 半开区间内的时长三件套、段数、圆环、应用 Top。

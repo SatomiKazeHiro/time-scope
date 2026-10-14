@@ -58,6 +58,38 @@ export interface BucketMetric {
  * `intervalMs` 非法时退回默认粒度，而不是静默返回空数组 ——
  * 返回空数组会让整条时间线消失，比粒度不对更难排查。
  */
+/**
+ * 重叠情况的**节流汇报**（2026-10-13）。
+ *
+ * 为什么不能每桶每刷都打：时间线每 5 秒轮询一次，一次刷新要重算全部桶，
+ * 于是同一批重叠会刷出几十行 —— 控制台被自己的告警淹没之后，
+ * 真正该看的那一行也就没人看了。
+ *
+ * 与后端 `summary.rs` 的 `OverlapReporter` 同款：累积 + 每分钟最多一行。
+ * 后端那边已经有汇总行，前端这行是同一件事在浏览器侧的第二次计数，
+ * 保留它是为了「是谁造成的」在 devtools 里也一眼可见。
+ */
+let overlapAccum = { pairs: 0, ms: 0, lastAt: 0 };
+
+function reportOverlap(pairs: number, ms: number): void {
+  overlapAccum.pairs += pairs;
+  overlapAccum.ms += ms;
+  const now = Date.now();
+  if (now - overlapAccum.lastAt < 60_000) return;
+  overlapAccum.lastAt = now;
+  console.error(
+    `[metrics] 段被重叠覆盖：累计 ${overlapAccum.pairs} 段 / ${overlapAccum.ms}ms。` +
+      `时长已去重（数字是对的），但这说明 activities 表里存在重叠段 ——` +
+      `引擎侧已于 2026-10-08 修过（见 segmenter 的 fold_short_segments open 分支）。` +
+      `历史数据需重放才能修掉。同一情况每分钟最多报一次。`,
+  );
+}
+
+/** **仅测试用**：清掉节流状态，否则「一小时内只报一次」会让测试互相干扰。 */
+export function __resetOverlapReportForTest(): void {
+  overlapAccum = { pairs: 0, ms: 0, lastAt: 0 };
+}
+
 export function bucketMetrics(
   segments: Segment[],
   dayStartMs: number,
@@ -147,12 +179,7 @@ export function bucketMetrics(
       }
     }
     if (hiddenCount > 0) {
-      console.error(
-        `[metrics] 桶 #${buckets.indexOf(b)} 有 ${hiddenCount} 段被重叠覆盖，共 ${hiddenMs}ms。` +
-          `时长已去重（数字是对的），但这说明 activities 表里存在重叠段 ——` +
-          `引擎侧已于 2026-10-08 修过（见 segmenter 的 fold_short_segments open 分支）。` +
-          `历史数据需重放才能修掉。`,
-      );
+      reportOverlap(hiddenCount, hiddenMs);
     }
     b.appCount = apps.size;
 

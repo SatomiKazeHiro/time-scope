@@ -265,7 +265,9 @@ fn run_listener(
     }
 
     let reg = SessionRegistration { wts_ok, power_ok };
-    if reg.is_fully_broken() {
+    // **消息泵对两路都必要** —— 它是那个 HWND 上消息被分发的唯一途径。
+    // 所以判据是「有一路可用就跑」，不是「两路都成功才跑」。
+    if !reg.should_pump() {
         let reason = "锁屏与电源两条注册都失败";
         eprintln!("[time-scope] {reason}：该时段完全不会被记录，其余功能正常");
         let out = RegistrationOutcome::Failed { reason };
@@ -274,12 +276,19 @@ fn run_listener(
     }
 
     // **进消息泵之前**回传结果 —— 握手就靠它（见 `spawn_listener` 的注释）。
-    // 只有两路都成功才报 Ok；一路成功是「部分可用」。
+    // 只有两路都成功才报 Ok；一路成功时给出**具体是哪一路可用**。
+    // reason 只描述事实，不带「部分可用」这种结论词 ——
+    // 上层 `lib.rs` 会加前缀，写两遍就成了
+    // 「部分可用（部分可用（…））」（2026-10-13 真机上出现过）。
     let outcome = if reg.wts_ok && reg.power_ok {
         RegistrationOutcome::Ok
+    } else if reg.wts_ok {
+        RegistrationOutcome::Failed {
+            reason: "合盖/唤醒不可用，锁屏/解锁正常",
+        }
     } else {
         RegistrationOutcome::Failed {
-            reason: "部分可用（锁屏与合盖只记到其中一类）",
+            reason: "锁屏/解锁不可用，合盖/唤醒正常",
         }
     };
     let _ = ready.send(outcome);

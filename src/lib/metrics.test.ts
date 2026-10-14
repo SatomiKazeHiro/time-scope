@@ -6,6 +6,7 @@ import {
   scaleColor,
   FOCUS_LEGEND,
   SWITCH_LEGEND,
+  __resetOverlapReportForTest,
 } from "./metrics";
 import type { Category, Segment } from "../types";
 
@@ -358,6 +359,8 @@ describe("重叠去重不静默", () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // 汇报器是模块级状态（按分钟节流），必须重置
+    __resetOverlapReportForTest();
   });
   afterEach(() => errSpy.mockRestore());
 
@@ -368,6 +371,8 @@ describe("重叠去重不静默", () => {
     ];
     bucketMetrics(segs, 0, 12 * H);
 
+    // 汇报器是模块级节流状态；单独测它（见下面的节流测试），
+    // 这里只断言「数字仍然是去重后的正确值」
     expect(errSpy).toHaveBeenCalled();
     const msg = String(errSpy.mock.calls[0][0]);
     expect(msg).toContain("重叠");       // 说清是什么问题
@@ -383,5 +388,44 @@ describe("重叠去重不静默", () => {
     bucketMetrics(segs, 0, 12 * H);
 
     expect(errSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("重叠汇报要节流", () => {
+  const H = 3_600_000;
+  const seg = (id: string, s: number, e: number, c: Category, a: string) =>
+    ({ id, startAt: s, endAt: e, category: c, application: a, confidence: 1, classifier: "rule", classifierVersion: "1", evidenceEventIds: [] }) as Segment;
+  const OVERLAPPING = [
+    seg("a", 0, 3 * H, "work", "Code.exe"),
+    seg("b", H, 2 * H, "browsing", "msedge.exe"),
+  ];
+
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    __resetOverlapReportForTest();
+  });
+  afterEach(() => errSpy.mockRestore());
+
+  it("一小时内只报一次 —— 5 秒轮询会把同一批重叠刷出几十行", () => {
+    // 模拟前端的 5 秒轮询：连续重算 20 次
+    for (let i = 0; i < 20; i++) {
+      bucketMetrics(OVERLAPPING, 0, 12 * H);
+    }
+    expect(
+      errSpy.mock.calls.length,
+      `20 次重算应只报 1 行，实际报了 ${errSpy.mock.calls.length} 行 —— 控制台被自己的告警淹没就没人看了`,
+    ).toBe(1);
+  });
+
+  it("汇报带累计量，不只是「又出问题了」", () => {
+    for (let i = 0; i < 3; i++) {
+      bucketMetrics(OVERLAPPING, 0, 12 * H);
+    }
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    const msg = String(errSpy.mock.calls[0][0]);
+    expect(msg).toContain("累计");
+    expect(msg).toContain("重叠");   // 说清是什么问题
+    expect(msg).toContain("重放");   // 说清怎么办
   });
 });
