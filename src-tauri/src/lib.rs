@@ -481,9 +481,13 @@ pub fn run() {
             eprintln!(
                 "[time-scope] 锁屏/睡眠监听 {}",
                 match session {
-                    activity_collector::session::RegistrationOutcome::Ok => "已就绪",
-                    activity_collector::session::RegistrationOutcome::Failed { .. } => {
-                        "不可用，该时段将不被记录"
+                    activity_collector::session::RegistrationOutcome::Ok => "已就绪".to_string(),
+                    // **别笼统说「不可用」**（2026-10-13）：真实事故里
+                    // 只有电源注册失败、锁屏那一路其实正常，却被这句话
+                    // 说成「该时段都不被记录」，害得以为锁屏没在记。
+                    // 具体哪一路坏了，上面那两行各自已经说清了。
+                    activity_collector::session::RegistrationOutcome::Failed { reason } => {
+                        format!("部分可用（{reason}）")
                     }
                 }
             );

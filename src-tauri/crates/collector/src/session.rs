@@ -34,6 +34,43 @@ pub enum RegistrationOutcome {
     Failed { reason: &'static str },
 }
 
+/// 两条注册通路的**独立**结果（2026-10-13）。
+///
+/// **为什么要有这个类型**：原来两条注册写在同一个函数里，任何一条失败都直接
+/// `return` —— 于是一条失败会**连坐**另一条，而且函数提前返回意味着消息泵
+/// 根本没启动，已成功注册的那个 HWND 也没人收消息。
+///
+/// 真实事故（2026-10-13）用户终端里打的是
+/// `PowerRegisterSuspendResumeNotification 失败：合盖/唤醒将不被记录`
+/// 紧接着 `锁屏/睡眠监听 不可用`。而 `WTSRegisterSessionNotification`
+/// 其实**成功了** —— 只是因为电源失败提前 return，锁屏事件也一条都发不出来。
+///
+/// 修好之后：两路各自成败，**只要有一路可用，消息泵就必须启动**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionRegistration {
+    pub wts_ok: bool,
+    pub power_ok: bool,
+}
+
+impl SessionRegistration {
+    /// 锁屏/解锁可用吗
+    pub fn lock_unlock_works(&self) -> bool {
+        self.wts_ok
+    }
+    /// 合盖/唤醒可用吗
+    pub fn power_works(&self) -> bool {
+        self.power_ok
+    }
+    /// **两路都**不可用 —— 只有这时消息泵才可以不启动
+    pub fn is_fully_broken(&self) -> bool {
+        !self.wts_ok && !self.power_ok
+    }
+    /// 只要有一路可用就该跑消息泵
+    pub fn should_pump(&self) -> bool {
+        !self.is_fully_broken()
+    }
+}
+
 /// 纯函数：把 Win32 的 Result 转成可断言的结论。
 pub fn registration_outcome(raw: Result<(), &'static str>) -> RegistrationOutcome {
     match raw {
@@ -80,16 +117,17 @@ pub fn spawn_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
     let spawned = std::thread::Builder::new()
         .name("ts-session".into())
         .spawn(move || {
-            let outcome = run_listener(sender);
-            // 启动结果回传；失败时线程直接结束，不进消息循环
-            let _ = ready_tx.send(outcome);
+            // `run_listener` 在**进入消息泵之前**就把注册结果发回去。
+            // 原来是把返回值等到消息泵退出（= 进程结束）才发，
+            // 于是这个 5 秒握手**永远超时** —— 监听其实好好的，
+            // 界面却报「不可用」。
+            let _ = run_listener(sender, ready_tx);
         });
     if spawned.is_err() {
         let reason = "session 监听线程启动失败";
         eprintln!("[time-scope] {reason}：锁屏/解锁与合盖/唤醒将不被记录，其余功能正常");
         return RegistrationOutcome::Failed { reason };
     }
-    // 监听线程会阻塞在消息循环里，所以它一定会在进入循环前先回传结果
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .unwrap_or(RegistrationOutcome::Failed {
@@ -98,7 +136,10 @@ pub fn spawn_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
 }
 
 #[cfg(windows)]
-fn run_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
+fn run_listener(
+    sender: Sender<RawSignal>,
+    ready: std::sync::mpsc::Sender<RegistrationOutcome>,
+) -> RegistrationOutcome {
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Power::{
@@ -143,9 +184,11 @@ fn run_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
     let instance = match unsafe { GetModuleHandleW(None) } {
         Ok(h) => h,
         Err(_) => {
-            return RegistrationOutcome::Failed {
+            let out = RegistrationOutcome::Failed {
                 reason: "GetModuleHandleW 失败",
-            }
+            };
+            let _ = ready.send(out);
+            return out;
         }
     };
     let hinstance = HINSTANCE(instance.0);
@@ -166,8 +209,10 @@ fn run_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
     }) } == 0
     {
         let reason = "RegisterClassW 失败";
-        eprintln!("[time-scope] {reason}：锁屏/解锁与合盖/唤醒将不被记录，其余功能正常");
-        return RegistrationOutcome::Failed { reason };
+        eprintln!("[time-scope] {reason}：该时段不会被记录，其余功能正常");
+        let out = RegistrationOutcome::Failed { reason };
+        let _ = ready.send(out);
+        return out;
     }
 
     let hwnd = match unsafe {
@@ -189,26 +234,55 @@ fn run_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
         Ok(h) => h,
         Err(_) => {
             let reason = "CreateWindowExW 失败";
-            eprintln!("[time-scope] {reason}：锁屏/解锁与合盖/唤醒将不被记录，其余功能正常");
-            return RegistrationOutcome::Failed { reason };
+            eprintln!("[time-scope] {reason}：该时段不会被记录，其余功能正常");
+            let out = RegistrationOutcome::Failed { reason };
+            let _ = ready.send(out);
+            return out;
         }
     };
 
-    if unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) }.is_err() {
-        let reason = "WTSRegisterSessionNotification 失败";
-        eprintln!("[time-scope] {reason}：锁屏/解锁将不被记录，其余功能正常");
-        return RegistrationOutcome::Failed { reason };
-    }
+    // 两条注册**各自成败，不要连坐**（2026-10-13）。
+    // 原来任何一条失败都直接 return，函数提前退出 → 消息泵从未启动 →
+    // 已经成功注册的那个 HWND 也没人收消息。真实事故里 WTS 注册成功了，
+    // 却因为电源失败而让锁屏事件一条都发不出来。
+    let wts_ok = match unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) } {
+        Ok(()) => true,
+        Err(_) => {
+            eprintln!("[time-scope] WTSRegisterSessionNotification 失败：锁屏/解锁将不被记录");
+            false
+        }
+    };
 
     let mut power_handle: *mut std::ffi::c_void = std::ptr::null_mut();
     let power = unsafe {
         PowerRegisterSuspendResumeNotification(DEVICE_NOTIFY_WINDOW_HANDLE, hwnd, &mut power_handle)
     };
-    if power.to_hresult().is_err() {
-        let reason = "PowerRegisterSuspendResumeNotification 失败";
-        eprintln!("[time-scope] {reason}：合盖/唤醒将不被记录，其余功能正常");
-        return RegistrationOutcome::Failed { reason };
+    let power_ok = power.to_hresult().is_ok();
+    if !power_ok {
+        // 只说这一路没了，**不说「整个监听不可用」** —— 那是之前那句误导人的话，
+        // 用户正是被它误导才以为锁屏也没在记
+        eprintln!("[time-scope] PowerRegisterSuspendResumeNotification 失败：合盖/唤醒将不被记录");
     }
+
+    let reg = SessionRegistration { wts_ok, power_ok };
+    if reg.is_fully_broken() {
+        let reason = "锁屏与电源两条注册都失败";
+        eprintln!("[time-scope] {reason}：该时段完全不会被记录，其余功能正常");
+        let out = RegistrationOutcome::Failed { reason };
+        let _ = ready.send(out);
+        return out;
+    }
+
+    // **进消息泵之前**回传结果 —— 握手就靠它（见 `spawn_listener` 的注释）。
+    // 只有两路都成功才报 Ok；一路成功是「部分可用」。
+    let outcome = if reg.wts_ok && reg.power_ok {
+        RegistrationOutcome::Ok
+    } else {
+        RegistrationOutcome::Failed {
+            reason: "部分可用（锁屏与合盖只记到其中一类）",
+        }
+    };
+    let _ = ready.send(outcome);
 
     // 消息泵：一直转到进程结束。这里的循环体是空的——处理都在 wnd_proc 里。
     let mut msg = MSG::default();
@@ -222,7 +296,9 @@ fn run_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
             let _ = DispatchMessageW(&msg);
         }
     }
-    RegistrationOutcome::Ok
+    // 泵是进程生命周期内一直在跑的；走到这里说明收到 WM_QUIT 或 GetMessage 出了错。
+    // 对外结论早在进泵之前就通过 `ready` 回传过了，这里只是让类型对得上。
+    outcome
 }
 
 #[cfg(not(windows))]
