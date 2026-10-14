@@ -12,6 +12,7 @@ fn seg(id: &str, start_ms: i64, end_ms: i64) -> StoredSegment {
         confidence: 1.0,
         classifier: "rule".into(),
         classifier_version: "1".into(),
+        active_ms: None,
         evidence_event_ids: Vec::new(),
     }
 }
@@ -205,6 +206,7 @@ fn segc(
         confidence: 1.0,
         classifier: "rule".into(),
         classifier_version: "1".into(),
+        active_ms: None,
         evidence_event_ids: Vec::new(),
     }
 }

@@ -197,6 +197,7 @@ fn pruning_leaves_activities_completely_alone() {
         confidence: 1.0,
         classifier: "rule".into(),
         classifier_version: "v".into(),
+        active_ms: None,
         evidence_event_ids: vec![],
     };
     activity_storage::insert_segments(&conn, &[(seg, vec![])]).unwrap();

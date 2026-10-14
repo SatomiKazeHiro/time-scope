@@ -99,11 +99,17 @@ fn migrate_is_a_noop_when_already_at_current_version() {
 
 #[test]
 fn migrate_lifts_a_version_0_database_to_current() {
-    // 模拟"还没记录版本的老库"（user_version 默认 0）
+    // 模拟「还没记录版本的老库」（user_version 默认 0）。
+    //
+    // **必须把 activities 也删掉**（2026-10-13）：`open_in_memory()` 自己已经
+    // 跑过一次 migrate，`activities` 上已经有 v2 加的 `active_ms` 列。
+    // 只把 user_version 改回 0 而留着那张表，得到的是一个**真实库不会有的状态**
+    // —— v2 再 ALTER 一次就撞 `duplicate column name: active_ms`。
+    // 真实的 v0 库是「这些表压根不存在」。
     let conn = open_in_memory();
     conn.pragma_update(None, "user_version", 0i64).unwrap();
-    // 把表删掉，模拟结构不存在
-    conn.execute_batch("DROP TABLE events").unwrap();
+    conn.execute_batch("DROP TABLE events; DROP TABLE activity_evidence; DROP TABLE activities;")
+        .unwrap();
 
     activity_storage::migrate(&conn).unwrap();
 
@@ -116,6 +122,11 @@ fn migrate_lifts_a_version_0_database_to_current() {
         .query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='events'", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 1, "迁移应重建缺失的表");
+    // v2 的列也必须在新表里
+    let cols: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pragma_table_info('activities') WHERE name='active_ms'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(cols, 1, "v2 迁移应加上 active_ms 列");
 }
 
 #[test]

@@ -89,6 +89,8 @@ pub fn segment_to_stored(s: &ActivitySegment) -> StoredSegment {
         confidence: s.confidence,
         classifier: s.classifier.clone(),
         classifier_version: s.classifier_version.clone(),
+        // 引擎算出来的量，专注度的新分母（2026-10-13）
+        active_ms: Some(s.active_ms),
         evidence_event_ids: Vec::new(),
     }
 }

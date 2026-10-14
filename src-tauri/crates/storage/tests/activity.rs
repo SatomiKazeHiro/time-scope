@@ -13,6 +13,7 @@ fn seg(id: &str, start: i64, end: i64, cat: &str) -> StoredSegment {
         confidence: 0.9,
         classifier: "rule".into(),
         classifier_version: "rules:3".into(),
+        active_ms: None,
         evidence_event_ids: vec![],
     }
 }

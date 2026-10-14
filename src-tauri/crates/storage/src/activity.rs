@@ -15,6 +15,13 @@ pub struct StoredSegment {
     pub classifier_version: String,
     #[serde(default)]
     pub evidence_event_ids: Vec<String>,
+    /// 这段里**用户确实有输入**的时长（毫秒），2026-10-13 新增（schema v2）。
+    ///
+    /// **`None` = 2026-10-13 之前的数据，没有这个量**；`Some(0)` = 这段
+    /// 确实没有输入。两者必须能分开 —— 显示成同一个 0% 会让历史日期
+    /// 看起来像「那段时间完全没人用电脑」。
+    #[serde(default)]
+    pub active_ms: Option<i64>,
 }
 
 /// 单事务写入 segments 及其 evidence。`(段, 该段的 evidence event id)` 配对。
@@ -111,8 +118,8 @@ fn write_all(
 ) -> rusqlite::Result<()> {
     let mut ins = tx.prepare(
         "INSERT OR REPLACE INTO activities
-            (id, start_at, end_at, category, application, confidence, classifier, version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (id, start_at, end_at, category, application, confidence, classifier, version, active_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )?;
     let mut del = tx.prepare("DELETE FROM activity_evidence WHERE activity_id = ?1")?;
     let mut ev = tx.prepare(
@@ -128,6 +135,7 @@ fn write_all(
             s.confidence,
             &s.classifier,
             &s.classifier_version,
+            s.active_ms,
         ])?;
         del.execute(rusqlite::params![&s.id])?;
         for e in evidence {
@@ -175,7 +183,7 @@ pub fn get_segments_in_range(
     // 分两趟：先取段，再补证据。避免在外层 stmt 还没 drop 时又发起查询。
     let mut segments: Vec<StoredSegment> = {
         let sql = format!(
-            "{}, id, application, confidence, classifier, version {}",
+            "{}, id, application, confidence, classifier, version, active_ms {}",
             CLIPPED_SPANS_SELECT, CLIPPED_SPANS_FROM
         );
         let mut stmt = conn.prepare(&sql)?;
@@ -189,6 +197,9 @@ pub fn get_segments_in_range(
                 confidence: row.get(5)?,
                 classifier: row.get(6)?,
                 classifier_version: row.get(7)?,
+                // 历史行是 NULL（v1 建库时没这列）→ None，与「这段确实无输入」的
+                // Some(0) 分得开。COALESCE 成 0 会把「没数据」说成「没人用电脑」。
+                active_ms: row.get(8)?,
                 evidence_event_ids: Vec::new(),
             })
         })?;

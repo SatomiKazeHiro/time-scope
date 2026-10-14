@@ -438,6 +438,7 @@ mod atomicity_tests {
                     confidence: 1.0,
                     classifier: "rule".into(),
                     classifier_version: "old".into(),
+                    active_ms: None, // 旧版本的段没有这个量
                     evidence_event_ids: vec![],
                 },
                 vec![],
