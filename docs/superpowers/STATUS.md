@@ -10,8 +10,8 @@
 
 ```
 Rust  38 文件    TS/TSX  24 文件      （均不含测试）
-测试  408 Rust + 365 前端 = 773 条，全绿
-提交  main..phase1-polish 137 个，未合并
+测试  408 Rust + 367 前端 = 775 条，全绿
+提交  main..phase1-polish 138 个，未合并
 ```
 
 ---
@@ -82,7 +82,7 @@ Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 408 passed
 cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets   # 0 warning
-pnpm test                                                       # 365 passed
+pnpm test                                                       # 367 passed
 pnpm build                                                      # 无 tsc 报错
 node design-system/time-scope/verify-palette.mjs                # 色板校验，exit 0
 ```

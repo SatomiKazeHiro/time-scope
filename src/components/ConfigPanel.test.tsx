@@ -100,6 +100,30 @@ describe("ConfigPanel", () => {
     expect(marked.some((t) => t.includes("关窗"))).toBe(true);
   });
 
+  it("没改动时保存按钮是禁用的", async () => {
+    render(<ConfigPanel />);
+    await waitFor(() => expect(screen.getByDisplayValue("300")).toBeTruthy());
+
+    // 草稿全部来自刚读回来的值，一个字没改就不该让人白按一次
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("只改一项就只写那一项，不顺手重写另外六行", async () => {
+    render(<ConfigPanel />);
+    await waitFor(() => expect(screen.getByDisplayValue("300")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText(/无输入多少秒/), { target: { value: "120" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      const calls = invoke.mock.calls.filter((c) => c[0] === "set_config");
+      expect(calls).toHaveLength(1);
+      expect(calls[0][1]).toEqual({ key: "idle_threshold_s", value: "120" });
+    });
+  });
+
   it("改一个要重启的项后弹提示，而不是静默保存", async () => {
     render(<ConfigPanel />);
     await waitFor(() => expect(screen.getByDisplayValue("300")).toBeTruthy());

@@ -93,7 +93,7 @@ pnpm tauri dev
 cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 408 passed
 
 # 前端
-pnpm test                                                       # 365 passed
+pnpm test                                                       # 367 passed
 ```
 
 ## 代码结构

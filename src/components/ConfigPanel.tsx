@@ -123,7 +123,8 @@ useEffect(() => {
 }, [load]);
 
   async function save() {
-    if (!draft) return;
+    // cfg 一起挡：没有它就不知道「用户改没改」，而按钮在这之前压根不会渲染
+    if (!draft || !cfg) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -132,7 +133,7 @@ useEffect(() => {
       // 某一项失败不影响其余项已经落盘（部分成功是常态，不是异常）
       let needsRestart = false;
       for (const f of FIELDS) {
-        if (draft[f.key] === cfg?.[f.key]) continue;
+        if (isUnchanged(f.key, draft, cfg)) continue;
         const r = await setConfig(f.tomlKey, draft[f.key]);
         needsRestart = needsRestart || r;
       }
@@ -168,7 +169,7 @@ useEffect(() => {
     return <p className="text-sm text-ink-faint">正在读取…</p>;
   }
 
-  const dirty = FIELDS.some((f) => draft[f.key] !== cfg[f.key]);
+  const dirty = FIELDS.some((f) => !isUnchanged(f.key, draft, cfg));
 
   return (
     <div>
@@ -288,6 +289,20 @@ function Field({
       </dd>
     </div>
   );
+}
+
+/** 这一项的草稿值与磁盘上的原值相同吗？
+ *
+ * **两边类型不一样** —— 草稿全是字符串（`toEditable` 里 `String(...)` 过），
+ * 而 `cfg` 里数字是 number、`autostart` 是 boolean。直接 `===` 恒为 false，
+ * 于是「用户改没改」判不出来：保存按钮永远可点、每次保存把七行全部重写
+ * （`close_behavior` 是唯一躲过的，因为它两边都是字符串）。
+ *
+ * 两处比较都走这一个函数 —— 「有没有改动」在保存按钮与写回循环里各用一次，
+ * 抄两遍就是下一次只改一处的地方。
+ */
+function isUnchanged(key: ConfigKey, draft: Editable, cfg: AppConfig): boolean {
+  return draft[key] === String(cfg[key]);
 }
 
 function toEditable(c: AppConfig): Editable {
