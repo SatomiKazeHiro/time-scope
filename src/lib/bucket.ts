@@ -28,17 +28,31 @@ export interface SummaryRow {
  * 当日汇总。spec §9：后端不提供 summary 接口，由前端从 segments 聚合。
  *
  * 每段先被截到 `[dayStartMs, dayStartMs+24h)`，所以跨零点的段不会把时长算爆。
+ *
+ * **重叠段去重**（2026-10-13 补上）。这里原来逐段独立相加，而
+ * `metrics.ts` 与后端 `clip_to_uncovered` 都做了去重 —— 三处口径不一致，
+ * 违反 STATUS §1 第 22 条「三处必须同源」。当时没出事只是因为引擎刚修完、
+ * 数据里没有重叠段；一旦重叠再现，「当日汇总」就会与「时间线指标」对不上。
+ *
+ * 规则与另两处**完全相同**：**先开始的段拥有重叠部分**（first-wins by startAt）。
  */
 export function summarize(segments: Segment[], dayStartMs: number): SummaryRow[] {
   const dayEnd = dayStartMs + DAY_MS;
+  const clipped = segments
+    .map((s) => ({ ...s, startAt: Math.max(s.startAt, dayStartMs), endAt: Math.min(s.endAt, dayEnd) }))
+    .filter((s) => s.endAt > s.startAt)
+    .sort((a, z) => a.startAt - z.startAt);
+
   const totals = new Map<Category, number>();
-  for (const s of segments) {
-    const start = Math.max(s.startAt, dayStartMs);
-    const end = Math.min(s.endAt, dayEnd);
-    const d = end - start;
+  let coveredUntil = Number.NEGATIVE_INFINITY;
+  for (const s of clipped) {
+    const from = Math.max(s.startAt, coveredUntil);
+    const d = s.endAt - from;
     if (d <= 0) continue;
+    coveredUntil = s.endAt;
     totals.set(s.category, (totals.get(s.category) ?? 0) + d);
   }
+
   const total = Array.from(totals.values()).reduce((a, b) => a + b, 0);
   return Array.from(totals.entries())
     .map(([category, durationMs]) => ({

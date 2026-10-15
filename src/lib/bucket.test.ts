@@ -128,3 +128,37 @@ describe("formatDuration", () => {
     expect(formatDuration(0)).toBe("0 分");
   });
 });
+
+describe("summarize 与「三处必须同源」", () => {
+  const DAY_START = new Date(2026, 0, 15, 0, 0, 0, 0).getTime();
+  const seg = (id: string, s: number, e: number, c: Category): Segment => ({
+    id,
+    startAt: DAY_START + s * MIN,
+    endAt: DAY_START + e * MIN,
+    category: c,
+    application: "Code.exe",
+    confidence: 1,
+    classifier: "rule",
+    classifierVersion: "1",
+    evidenceEventIds: [],
+  });
+
+  it("重叠段只算一次 —— 与 Rust 的 clip_to_uncovered 同规则", () => {
+    // work 60 分 + browsing 从 30 分到 90 分（重叠 30 分）
+    const rows = summarize(
+      [seg("a", 0, 60, "work"), seg("b", 30, 90, "browsing")],
+      DAY_START,
+    );
+    const byCat = Object.fromEntries(rows.map((r) => [r.category, r.durationMs]));
+    // 去掉重叠后各 60 分、共 90 分
+    expect(byCat.work).toBe(60 * MIN);
+    expect(byCat.browsing).toBe(30 * MIN);
+    const total = rows.reduce((s, r) => s + r.durationMs, 0);
+    expect(total, "重叠部分只算一次").toBe(90 * MIN);
+  });
+
+  it("首尾相接不算重叠", () => {
+    const rows = summarize([seg("a", 0, 30, "work"), seg("b", 30, 60, "work")], DAY_START);
+    expect(rows[0].durationMs).toBe(60 * MIN);
+  });
+});
