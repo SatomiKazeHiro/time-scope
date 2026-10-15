@@ -11,7 +11,8 @@
 ```
 Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 测试  408 Rust + 367 前端 = 775 条，全绿
-提交  main..phase1-polish 138 个，未合并
+分支  phase1-polish 已 fast-forward 合入 main（2026-10-15），两者同指 538801e
+推送  main 领先 origin/main 141 个提交，**尚未推送**
 ```
 
 ---
