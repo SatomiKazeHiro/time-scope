@@ -42,7 +42,7 @@ Windows 事件/输入 ─▶ collector ─▶ Event ─▶ SQLite(WAL)
 pattern = '客户\d+'
 ```
 
-托盘常驻、开机自启（默认关）、单实例、锁屏/合盖采集、行为参数配置化均已完成。
+托盘常驻、开机自启（默认关）、单实例、锁屏采集、行为参数配置化均已完成。
 
 行为参数在 `%APPDATA%/time-scope/config.toml`（首次启动自动生成；坏了会用默认值，且**不覆盖**你的文件）：
 
@@ -59,7 +59,9 @@ close_behavior = "ask"  # ask = 问一次 / minimize = 最小化到托盘 / quit
 `config.toml` 的）。判据见 `src-tauri/src/lib.rs` 的 `config_field_needs_restart`。
 
 点窗口的 ✕ 第一次会问一次（选什么就记住什么）；此后只隐藏到托盘，**托盘菜单的「退出」是唯一退出入口**。
-锁屏与合盖记成 idle，不再把 8 小时锁屏算成 8 小时活跃。
+锁屏记成 idle，不再把 8 小时锁屏算成 8 小时活跃。合盖能不能记到取决于合盖时
+Windows 是否锁屏（多数机器会，于是跟着记上了），不是所有机器都一样 ——
+细节见 [`STATUS.md` §4.4](docs/superpowers/STATUS.md)。
 主题按钮在**侧边栏下层**：跟随系统 → 浅色 → 深色，选择会被记住（存 localStorage 的 `time-scope.theme`）。
 
 ## 环境要求
