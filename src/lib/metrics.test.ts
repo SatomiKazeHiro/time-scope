@@ -429,3 +429,50 @@ describe("重叠汇报要节流", () => {
     expect(msg).toContain("重放");   // 说清怎么办
   });
 });
+
+// --- 专注度的笼统口径（2026-10-13）---
+//
+// 用户拍板：**不做细分**。「边做边走神」与「看视频」分成不同档是未来的方向，
+// 现在只要**一类事务聚在一起，边界清晰**。
+//
+// 规则只有一条：
+//   这一桶里，**没在动**的时间算不算分母？
+//   - 算 → 全程在动 = 100%，摸鱼与看视频同为满档（笼统，但诚实）
+//   - 不算 → 分母只剩「有输入」的部分
+// 选后者，因为它至少把「人不在」（锁屏、走开、长时间无输入）从满档里摘出去了 ——
+// 而那是最该被摘出去的一种。
+
+describe("专注度的笼统口径", () => {
+  const H = 3_600_000;
+  const mk = (
+    id: string, s: number, e: number, c: Category, activeMs: number | null, app = "Code.exe",
+  ) => ({
+    id, startAt: s, endAt: e, category: c, application: app,
+    confidence: 1, classifier: "rule", classifierVersion: "1",
+    evidenceEventIds: [], activeMs,
+  }) as Segment;
+
+  it("全程在动 → 100%", () => {
+    const [b] = bucketMetrics([mk("a", 0, H, "work", H)], 0, 12 * H);
+    expect(b.focus).toBeCloseTo(1, 5);
+  });
+
+  it("人不在（一段时间完全没动）→ 摘出去，不占分母", () => {
+    // 1 小时的段，其中只有 20 分钟在动
+    const [b] = bucketMetrics([mk("a", 0, H, "work", 20 * 60_000)], 0, 12 * H);
+    expect(b.focus, "有输入的 20 分钟里全是 work → 仍然 100%").toBeCloseTo(1, 5);
+    // 但 inputMs 记下了「只有 20 分钟在动」这件事
+    expect(b.inputMs).toBe(20 * 60_000);
+  });
+
+  it("全程没动 → 0，不画色", () => {
+    const [b] = bucketMetrics([mk("a", 0, H, "work", 0)], 0, 12 * H);
+    expect(b.focus).toBe(0);
+  });
+
+  it("历史数据（无 activeMs）→ 退回旧口径，不假装知道", () => {
+    const [b] = bucketMetrics([mk("old", 0, H, "work", null)], 0, 12 * H);
+    expect(b.inputMs, "没有这个量").toBeNull();
+    expect(b.focus, "用旧口径算，不要显示成 0").toBeCloseTo(1, 5);
+  });
+});

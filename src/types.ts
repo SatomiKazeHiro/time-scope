@@ -37,6 +37,16 @@ export interface ActivitySegment {
   classifier: string;
   classifierVersion: string;
   evidenceEventIds: string[];
+  /**
+   * 这段里**用户确实有输入**的时长（毫秒），2026-10-13 新增。
+   *
+   * 专注度的分母（`focus = 主导类别时长 / 有输入时长`）。这样「人不在」
+   * （锁屏 / 长时间无输入）不会被读成「高度专注」。
+   *
+   * `**null` = 2026-10-13 之前的历史数据，没有这个量**；`0` = 这段确实
+   * 没有输入。两者必须分开 —— 都当 0 会让历史日期看起来像「完全没人用电脑」。
+   */
+  activeMs?: number | null;
 }
 
 export type Category =

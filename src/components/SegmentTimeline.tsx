@@ -344,9 +344,15 @@ export default function SegmentTimeline({
   /** 指标模式下，一个桶就是一个色块。 */
   const bucketCells = buckets.map((b, i) => {
     const rawW = WIDTH / buckets.length;
-    // 专注度模式下全是空闲的桶不涂色：空闲是"没在工作"，不是"不专注"。
-    // 涂成最低档会被读成"在做事但很分心"，那也是假的。
-    const blank = b.segmentCount === 0 || (metric === "focus" && b.activeMs === 0);
+    // 专注度模式下不涂色的两种情况：
+    //   - 桶里没有活动：既不是专注也不是分心，是"没在工作"
+    //   - 桶里**完全没动**（inputMs === 0）：同上，涂最低档会被读成
+    //     "在做事但很分心"，那是假的
+    // 注意 `inputMs === null`（2026-10-13 之前的历史数据）**照常涂色**：
+    // 那时退回旧口径算，数字有意义就不该藏。详见 metrics.ts 的 focus 注释。
+    const blank =
+      b.segmentCount === 0 || (metric === "focus" && b.activeMs === 0) ||
+      (metric === "focus" && b.inputMs === 0);
     const step = metric === "focus" ? focusStep(b.focus) : switchStep(b.switches);
     return {
       metric: b,

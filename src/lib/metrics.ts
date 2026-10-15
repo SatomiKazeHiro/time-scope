@@ -29,18 +29,41 @@ export interface BucketMetric {
    */
   switches: number;
   /**
-   * 桶内的**非空闲**时长。专注度的分母 —— 见下面 focus 的说明。
+   * 桶内的**非空闲**时长（段的时间跨度）。
+   *
+   * **不是专注度的分母了**（2026-10-13）。分母是 `inputMs`。这个留着是因为
+   * 覆盖率、切换、段数还要用。
    */
   activeMs: number;
   /**
-   * 专注度 = 主导类别时长 / **非空闲**时长，0..1。
+   * 桶内**用户确实有输入**的时长（毫秒）。
    *
-   * **分母必须排除 idle。** idle 是一个类别，如果把它算进来，挂机两小时的桶
-   * 主导类别就是 idle、专注度算出来 100% —— "完全没在用电脑"被读成"高度专注"。
-   * 用户第一次看到的就是这个。空闲不是"不专注"，是"没在工作"，两回事。
+   * `null` = 桶里的段都是 2026-10-13 之前的历史数据，没有这个量。
+   * 这种情况**退回旧口径**（见 focus），而不是显示 0% ——
+   * 把「没数据」说成「完全分心」是在编造。
+   */
+  inputMs: number | null;
+  /**
+   * 专注度 = 主导类别时长 / **分母**，0..1。
    *
-   * 桶内全是空闲时 activeMs = 0，focus = 0，且界面上**不涂色** ——
-   * 涂成最低档会被读成"在做事但很分心"，同样是假的。
+   * **口径（2026-10-13，用户拍板：笼统，边界清晰，不做细分）**：
+   *
+   * ```
+   * 分母 = 桶内「用户确实有输入」的时长
+   * 分子 = 主导类别的时长
+   * ```
+   *
+   * 规则只有一条：**没在动的时间不进分母。** 于是
+   * - 人不在（锁屏 / 长时间无输入）→ 那一段被摘出去，不会显示成满档
+   * - 全程在动 → 100%
+   *
+   * **明确不做的细分**：「边做边走神」与「看视频」当前**同分**（都是单一类别、
+   * 都在动）。分档是未来的方向，现在不要为了「更准」把公式搞复杂 ——
+   * 一个说不清口径的复合公式比粗糙的公式更没用（读者无法反推某个格子
+   * 为什么是这个颜色）。
+   *
+   * `inputMs === null`（2026-10-13 之前的历史数据）→ 退回旧口径
+   * （分母用 `activeMs`）。宁可粗，也不要假装知道。
    */
   focus: number;
   /** 主导类别（只统计非空闲段）；桶内无活动时为 null */
@@ -109,6 +132,7 @@ export function bucketMetrics(
     segmentCount: 0,
     switches: 0,
     activeMs: 0,
+    inputMs: null,
     focus: 0,
     dominantCategory: null,
     allIdle: false,
@@ -158,6 +182,9 @@ export function bucketMetrics(
     let coveredUntil = Number.NEGATIVE_INFINITY;
     let hiddenMs = 0;
     let hiddenCount = 0;
+    // `inputMs` 从 null 起：**一个段都没有这个量的桶保持 null**，
+    // 表示「这是 2026-10-13 之前的数据」，而不是「这段时间没人动」。
+    let sawInputField = false;
     for (let i = 0; i < b.segments.length; i++) {
       const s = b.segments[i];
       apps.add(s.application ?? "（未知）");
@@ -174,10 +201,19 @@ export function bucketMetrics(
         b.activeMs += clamped;
         byCategory.set(s.category, (byCategory.get(s.category) ?? 0) + clamped);
       }
+      // 桶内「有输入时长」：按段在桶内占据的比例摊分。
+      // 段跨桶时不能把整段算进某一个桶。
+      if (typeof s.activeMs === "number") {
+        sawInputField = true;
+        const span = Math.max(1, s.endAt - s.startAt);
+        const inside = Math.max(0, Math.min(s.endAt, b.end) - Math.max(s.startAt, b.start));
+        b.inputMs = (b.inputMs ?? 0) + (s.activeMs * inside) / span;
+      }
       if (i > 0 && (b.segments[i - 1].application ?? "（未知）") !== (s.application ?? "（未知）")) {
         b.switches++;
       }
     }
+    if (!sawInputField) b.inputMs = null;
     if (hiddenCount > 0) {
       reportOverlap(hiddenCount, hiddenMs);
     }
@@ -193,8 +229,19 @@ export function bucketMetrics(
       }
     }
     b.dominantCategory = best;
-    // 分母是非空闲时长：挂机两小时的桶是"没在工作"，不是"高度专注"
-    b.focus = b.activeMs > 0 && bestMs > 0 ? Math.min(1, bestMs / b.activeMs) : 0;
+    // 专注度：主导类别占比，**分母是「有输入时长」**。
+    // 边界只有一条：没在动的时间不进分母。人不在（锁屏/长时间无输入）因此
+    // 不会被读成「高度专注」；全程在动就是 100%。
+    // 「边做边走神」与「看视频」当前同分 —— 细分是未来的方向，现在不做
+    // （见 BucketMetric.focus 的注释）。
+    // `inputMs === null`（历史数据）→ 退回旧口径，别假装知道。
+    // `inputMs === 0`（这一桶确实没动）→ focus = 0，**不能退回旧口径**：
+    // 那正是「人不在」被读成「高度专注」的那个坑。
+    const denom =
+      b.inputMs === null
+        ? b.activeMs
+        : b.inputMs;
+    b.focus = denom > 0 && bestMs > 0 ? Math.min(1, bestMs / denom) : 0;
     // 「只有空闲」必须在循环外判定：桶里既有 idle 也有 work 时它不是全空闲
     b.allIdle = b.coveredMs > 0 && b.activeMs === 0;
   }
@@ -232,6 +279,13 @@ export function scaleColor(step: number): string {
   return `var(--color-scale-${s})`;
 }
 
-/** 图例两端的中文描述，给色阶图例和无障碍标签用。 */
+/**
+ * 图例两端的中文描述，给色阶图例和无障碍标签用。
+ *
+ * 「分心/专注」那一侧的措辞是**按主导类别占比**说的（笼统口径，
+ * 2026-10-13 用户拍板不做细分）—— 见 `BucketMetric.focus`。
+ * 「完全分心」现在的意思是「这一桶的主导类别只占很小一部分」，
+ * 而不是「一直在切换程序」。
+ */
 export const FOCUS_LEGEND = ["完全分心", "较碎", "一半一半", "较专注", "高度专注"];
 export const SWITCH_LEGEND = ["没有切换", "1–2 次", "3–5 次", "6–10 次", "10 次以上"];
