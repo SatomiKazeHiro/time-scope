@@ -13,6 +13,16 @@ const CFG = {
   autostart: false,
   closeBehavior: "ask",
   eventsRetentionDays: 365,
+  // 后端给的判定。角标读它，前端自己不再列一份。
+  needsRestart: {
+    idle_threshold_s: true,
+    grace_period_s: true,
+    min_segment_duration_s: true,
+    heartbeat_every_s: true,
+    events_retention_days: false,
+    autostart: true,
+    close_behavior: false,
+  },
 };
 
 function stub(cfg: unknown = CFG, needsRestart = true) {
@@ -38,25 +48,56 @@ describe("ConfigPanel", () => {
     render(<ConfigPanel />);
     await waitFor(() => expect(screen.getByDisplayValue("300")).toBeTruthy());
 
-    // 这四项绑在采集线程与 EngineConfig 上，改完进程内改不了。
+    // 五个：四个绑在采集线程/EngineConfig 上，加一个开机自启 ——
+    // 它的托盘勾选态与系统注册表都是启动时定的，set_config 碰不到。
     // 不标的话用户会以为界面坏了 —— 这是「读数就该长得像读数」的延伸。
-    // 只数 `<dt>` 里的角标：顶部那段说明文字里也有「重启后生效」四个字。
     const marks = Array.from(document.querySelectorAll("dt")).filter((dt) =>
       dt.textContent?.includes("重启后生效"),
     );
-    expect(marks.length).toBe(4);
+    expect(marks.length).toBe(5);
   });
 
   it("热生效的项不标重启 —— 标了就成了假警告", async () => {
     render(<ConfigPanel />);
     await waitFor(() => expect(screen.getByDisplayValue("365")).toBeTruthy());
 
-    // 保留期 / 自启 / 关窗行为是现读现用的，标「重启后生效」是骗人
     const marked = Array.from(document.querySelectorAll("dt"))
       .filter((dt) => dt.textContent?.includes("重启后生效"))
       .map((dt) => dt.textContent ?? "");
+    // 保留期挂在 get_segments 上现读
     expect(marked.some((t) => t.includes("事件保留天数"))).toBe(false);
+    // 关窗行为：关窗拦截现读 config.toml（residency::effective_close_behavior），
+    // 设完下一次点 ✕ 就照新的走 —— 标「重启后生效」就成了假警告
     expect(marked.some((t) => t.includes("关窗"))).toBe(false);
+    // 开机自启相反：Residency 的启动快照，改完不重启不生效
+    expect(marked.some((t) => t.includes("开机自启"))).toBe(true);
+  });
+
+  it("角标读后端给的判定，不读前端自己那份表", async () => {
+    // 2026-10-15 那次界面说谎的机制就是前端硬编码了一份 `restart`，
+    // 与后端**一致地错**。这里反过来改后端的答案，角标必须跟着动 ——
+    // 前端要是还留着自己的副本，这条会红。
+    stub({ ...CFG, needsRestart: { ...CFG.needsRestart, close_behavior: true } });
+    render(<ConfigPanel />);
+    await waitFor(() => expect(screen.getByDisplayValue("365")).toBeTruthy());
+
+    const marked = Array.from(document.querySelectorAll("dt"))
+      .filter((dt) => dt.textContent?.includes("重启后生效"))
+      .map((dt) => dt.textContent ?? "");
+    expect(marked.some((t) => t.includes("关窗"))).toBe(true);
+  });
+
+  it("判定里缺一个键时按「要重启」算，不默默当成已生效", async () => {
+    const { close_behavior: _dropped, ...rest } = CFG.needsRestart;
+    void _dropped;
+    stub({ ...CFG, needsRestart: rest });
+    render(<ConfigPanel />);
+    await waitFor(() => expect(screen.getByDisplayValue("365")).toBeTruthy());
+
+    const marked = Array.from(document.querySelectorAll("dt"))
+      .filter((dt) => dt.textContent?.includes("重启后生效"))
+      .map((dt) => dt.textContent ?? "");
+    expect(marked.some((t) => t.includes("关窗"))).toBe(true);
   });
 
   it("改一个要重启的项后弹提示，而不是静默保存", async () => {

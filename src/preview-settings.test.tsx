@@ -31,6 +31,15 @@ const CFG = {
   eventsRetentionDays: 365,
   autostart: false,
   closeBehavior: "ask",
+  needsRestart: {
+    idle_threshold_s: true,
+    grace_period_s: true,
+    min_segment_duration_s: true,
+    heartbeat_every_s: true,
+    events_retention_days: false,
+    autostart: true,
+    close_behavior: false,
+  },
 };
 
 const invoke = vi.fn();

@@ -13,7 +13,15 @@ use tauri::{AppHandle, Manager, WindowEvent};
 /// 托管状态：托盘回调与关窗回调都要读它。
 pub struct Residency {
     pub config_path: std::path::PathBuf,
+    /// 关窗行为的**启动快照**。关窗时以磁盘为准（见 `effective_close_behavior`），
+    /// 这里只在 config.toml 读不出来时兜底，也是 `remember_answer` 的写入目标。
     pub close_behavior: Mutex<CloseBehavior>,
+    /// 开机自启的**启动快照**。`install()` 时从 `config.toml` 取一次；
+    /// 此后只有托盘菜单回调（`on_menu_event` 成功切过系统注册表之后）会写它，
+    /// 系统级开关失败时不动这里，免得菜单显示一个没生效的状态。
+    /// 设置页的 `set_config` 只 `patch_line` 写磁盘、碰不到这个字段 ——
+    /// 所以 `autostart` 诚实地落在 `needs_restart = true` 那一侧
+    /// （判据见 `lib.rs::config_field_needs_restart`）。
     pub autostart: AtomicBool,
     pub tray_ok: AtomicBool,
     /// 自启勾选项，切换后要同步勾选态
@@ -168,13 +176,34 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     }
 }
 
+/// 读磁盘上的 `close_behavior`。读不出来（文件不存在、被锁、被改坏到
+/// `parse` 也救不回来）返回 `None`，**让调用方回退启动快照** ——
+/// 在这里替用户猜一个，猜错的后果是常驻应用被静默改成退出。
+fn close_behavior_from_disk(path: &std::path::Path) -> Option<CloseBehavior> {
+    let src = std::fs::read_to_string(path).ok()?;
+    Some(crate::config::parse(&src).close_behavior)
+}
+
+/// 生效中的关窗行为：**磁盘上的值优先**，读不出来才用启动快照。
+///
+/// 为什么不能只认快照（2026-10-15）：`set_config` 只 `patch_line` 写文件、
+/// 不回写 `Residency` 的快照。只读快照会造出一个「分歧窗口」——设置页选的值
+/// 没生效，而 `remember_answer` 又把关窗弹框的答案写进同一个键，
+/// 把用户刚选的值静默覆盖掉（同一个键，后写的赢）。
+fn effective_close_behavior(disk: Option<CloseBehavior>, snapshot: CloseBehavior) -> CloseBehavior {
+    disk.unwrap_or(snapshot)
+}
+
 fn install_close_handler(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let handle = app.clone();
         window.on_window_event(move |event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let state = handle.state::<Residency>();
-                let behavior = *state.close_behavior.lock().unwrap();
+                let behavior = effective_close_behavior(
+                    close_behavior_from_disk(&state.config_path),
+                    *state.close_behavior.lock().unwrap(),
+                );
                 let tray_ok = state.tray_ok.load(std::sync::atomic::Ordering::Relaxed);
                 match close_interception_when(behavior, tray_ok) {
                     CloseDecision::HideToTray => {
@@ -320,6 +349,61 @@ mod tests {
         );
         assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON3.0, 0);
         assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON4.0, 0);
+    }
+
+    /// 同一件事的纯形式：设置页写下的值必须压过启动快照。
+    /// 这条优先级是 2026-10-15 那次修复的核心 —— 它曾反过来。
+    #[test]
+    fn a_value_written_after_startup_beats_the_startup_snapshot() {
+        assert_eq!(
+            effective_close_behavior(Some(CloseBehavior::Minimize), CloseBehavior::Ask),
+            CloseBehavior::Minimize,
+            "设置页选了 minimize 就该按 minimize 关，不能还按启动时的 ask 弹框"
+        );
+    }
+
+    /// 读不出磁盘才回退 —— 回退的方向也要钉住，回退成 Quit 会让常驻应用
+    /// 被静默改成「点一下就退出」。
+    #[test]
+    fn an_unreadable_config_falls_back_to_the_startup_snapshot() {
+        assert_eq!(
+            effective_close_behavior(None, CloseBehavior::Minimize),
+            CloseBehavior::Minimize
+        );
+    }
+
+    /// 关窗拦截要认设置页写下的值，而不是只认启动时的快照。
+    ///
+    /// 2026-10-15 之前这里读的是 `Residency` 的快照，于是有个「分歧窗口」：
+    /// 设置页把 `close_behavior` 改成 minimize → 点 ✕ 仍按启动值走 →
+    /// 启动值若是 ask 还会弹框 → 用户答一次，`remember_answer` 把同一个键
+    /// 写进 config.toml，**把用户刚选的值静默覆盖掉**。而 `get_config`
+    /// 每次现读磁盘，于是界面上显示的又不是用户选的那个了。
+    #[test]
+    fn a_close_behavior_written_after_startup_is_honored() {
+        let dir = std::env::temp_dir().join(format!("ts-resid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        // 磁盘上已经是 minimize，而快照那边（测试里传进来的）是 Ask
+        std::fs::write(&path, "close_behavior = \"minimize\"\n").unwrap();
+
+        assert_eq!(close_behavior_from_disk(&path), Some(CloseBehavior::Minimize));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 读不出来就必须回退快照，而不是替用户猜一个 —— 猜错的后果是
+    /// 「常驻应用被静默改成退出」或「每次点 ✕ 都弹框」。
+    #[test]
+    fn an_unreadable_config_yields_none_so_the_caller_can_fall_back() {
+        let missing = std::env::temp_dir()
+            .join(format!("ts-resid-none-{}", std::process::id()))
+            .join("config.toml");
+        assert_eq!(
+            close_behavior_from_disk(&missing),
+            None,
+            "读不出来要返回 None 让调用方回退快照，别在这里替用户做决定"
+        );
     }
 
     /// 防回归：写进 config.toml 的值必须原样到达各层，而不是又回到硬编码默认。

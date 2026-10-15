@@ -29,8 +29,8 @@ Windows 事件/输入 ─▶ collector ─▶ Event ─▶ SQLite(WAL)
 
 **设置页**有两块：**规则覆盖**列出最近 30 天有时间但没落进任何类别的程序，
 点「归类…」选个类别就写回 `rules.toml` 并**立刻生效**；
-**行为参数**是 `config.toml` 的七个字段，其中三项立刻生效、
-四项要重启才生效（界面上标出来了）。
+**行为参数**是 `config.toml` 的七个字段，其中两项立刻生效、
+五项要重启才生效（界面上标出来了）。
 
 `rules.toml` 在 `%APPDATA%/time-scope/`，首次启动自动生成 15 条默认规则，
 可自由编辑。改坏了也不会崩——退回内置默认并保留你的文件。
@@ -54,7 +54,9 @@ close_behavior = "ask"  # ask = 问一次 / minimize = 最小化到托盘 / quit
 
 **改 `config.toml`**：现在可以在设置页改，也可以手改文件。
 四个采集/引擎参数（空闲阈值、宽限窗口、短段合并、心跳窗口）绑在进程构造上，
-**改了要重启**；`autostart`、`close_behavior`、`events_retention_days` 立刻生效。
+`autostart` 也一样（托盘勾选态与系统注册表都是启动时定的）—— **改了要重启**。
+只有 `events_retention_days` 与 `close_behavior` 立刻生效（后者是关窗时现读
+`config.toml` 的）。判据见 `src-tauri/src/lib.rs` 的 `config_field_needs_restart`。
 
 点窗口的 ✕ 第一次会问一次（选什么就记住什么）；此后只隐藏到托盘，**托盘菜单的「退出」是唯一退出入口**。
 锁屏与合盖记成 idle，不再把 8 小时锁屏算成 8 小时活跃。
@@ -83,10 +85,10 @@ pnpm tauri dev
 
 ```bash
 # Rust：必须带 --workspace，否则只跑根包、core/engine/storage/collector 全部被跳过
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 398 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 408 passed
 
 # 前端
-pnpm test                                                       # 361 passed
+pnpm test                                                       # 363 passed
 ```
 
 ## 代码结构
@@ -132,7 +134,7 @@ design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 |---|---|---|
 | 🟡 | 扩内置默认规则 | 15 条只覆盖通用软件，自带工具链（Zed / DBeaver…）会有三成以上时间落进 unknown。设置页的未覆盖列表现在能指出具体是哪几个，但**批量导入清单**还没有 |
 | 🟡 | 改已有规则 / 编辑脱敏规则 | 设置页只能**加**规则。改一条已有规则、或编辑 `[[redact]]` 正则，仍要手工编辑 `rules.toml` |
-| 🟡 | 配置热重载 | 四个采集/引擎参数改了要重启。`EngineConfig` 是构造注入的，热重载要重放当天，spec 提了但**没定义行为** |
+| 🟡 | 配置热重载 | 四个采集/引擎参数改了要重启（`EngineConfig` 是构造注入的，热重载要重放当天，spec 提了但**没定义行为**）。`autostart` 同理，连系统注册表都要重过启动流程 |
 | ⚪ | `segment-updated` 实时推送 | 现用 5 秒轮询整表，功能等价，段多了浪费。优先级最低 |
 
 ## 启动慢（`pnpm tauri dev` 白屏）
@@ -148,7 +150,7 @@ design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 全部是 **Vite 预构建依赖**，且只挂在第一个请求上。主要成本来自 `lucide-react`：
 4242 个图标的 barrel，预构建后单个文件 1420 KB。
 
-**这跟打包后的应用无关。** 生产产物是一个 283 KB 的 JS + 26 KB CSS，没有依赖爬取，
+**这跟打包后的应用无关。** 生产产物是一个 293 KB 的 JS + 26 KB CSS，没有依赖爬取，
 没有这段等待。
 
 已经做的：`index.html` 里内联了一个首屏占位（`#root:empty::after`），
@@ -171,7 +173,7 @@ design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 | 文档 | 回答 | 什么时候读 |
 |---|---|---|
 | **本文** | 怎么跑起来、现在有什么 | 第一次接触这个项目 |
-| [`STATUS.md`](docs/superpowers/STATUS.md) | **别改什么** —— 43 条「看起来像 bug 但是故意的」，加上遗留工作与关键决策 | **动手改代码之前** |
+| [`STATUS.md`](docs/superpowers/STATUS.md) | **别改什么** —— 44 条「看起来像 bug 但是故意的」，加上遗留工作与关键决策 | **动手改代码之前** |
 | [`MASTER.md`](design-system/time-scope/MASTER.md) | **为什么这样设计** —— 色板推导、组件约定、token 理由 | 改 UI 之前 |
 
 `docs/superpowers/specs/` 是**历史快照**，顶部已标注不是现状说明，

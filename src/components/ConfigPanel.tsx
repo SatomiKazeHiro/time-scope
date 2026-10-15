@@ -9,9 +9,12 @@
  * 那条讲的是读数（范围 chip 曾经长得像能点的按钮），
  * 这里讲的是**控件**——一个当下不起作用的滑块就该说自己不起作用。
  *
- * **哪些字段要重启由后端说了算**（`set_config` 返回 `needs_restart`）。
+ * **哪些字段要重启由后端说了算**（`get_config` 返回 `needs_restart`，
+ * 保存时的提示读 `set_config` 的返回值 —— 同一个后端判定）。
  * 前端不复制那张表：复制一份就多一处会跟实现对不上的地方，
  * 而那种对不上表现为「界面说不用重启、实际要重启」，最难查。
+ * （这个纪律曾经只是口头约定：`FIELDS` 里确实硬编码过一份 `restart`，
+ *  2026-10-15 它与后端**一致地错**，界面照旧标着「已保存，立刻生效」。）
  *
  * **不做「点击重启」流程**（2026-10-08 用户定的）：常驻应用正在采集，
  * 重启意味着丢当前段、且要用户确认。提示到位就够了，流程以后再说。
@@ -20,63 +23,64 @@ import { useCallback, useEffect, useState } from "react";
 import { AppConfig, getConfig, setConfig } from "../types";
 import { CircleAlert } from "lucide-react";
 
+type ConfigKey = Exclude<keyof AppConfig, "needsRestart">;
+
 type Editable = {
-  [K in keyof AppConfig]: string;
+  [K in ConfigKey]: string;
 };
 
-/** 每一项：键名、标签、说明、以及它属于「立刻生效」还是「要重启」。 */
+/** 每一项：键名、标签、说明。
+ *
+ * **这里没有「要不要重启」那一栏** —— 它在 `cfg.needsRestart` 里，
+ * 由后端随 `get_config` 一起给。曾经这里有一份硬编码副本，
+ * 它与后端一致地错、界面照旧说谎，那次修复把副本删了。
+ * 角标读不到判定时按「要重启」算（`?? true`）：那是诚实的那一侧。
+ */
 const FIELDS: {
-  key: keyof AppConfig;
+  key: ConfigKey;
   /** `config.toml` 里的键名。**必须显式写出来** ——
-   *  Rust 侧收的是 snake_case，从 camelCase 字段名推导多一层会错的地方。 */
+   *  Rust 侧收的是 snake_case，从 camelCase 字段名推导多一层会错的地方。
+   *  同时也是 `needsRestart` 的连接点。 */
   tomlKey: string;
   label: string;
   hint: string;
-  /** 界面层面的预期；后端返回 needs_restart 才是准的，这里只用于标注 */
-  restart: boolean;
 }[] = [
   {
     key: "idleThresholdS",
     tomlKey: "idle_threshold_s",
     label: "无输入多少秒算空闲",
     hint: "最小 10 秒。调小会让时间线更碎",
-    restart: true,
   },
   {
     key: "gracePeriodS",
     tomlKey: "grace_period_s",
     label: "短暂切换的宽限窗口（秒）",
     hint: "0 = 关掉抖动吸收。改它会明显改变切段的颗粒度",
-    restart: true,
   },
   {
     key: "minSegmentDurationS",
     tomlKey: "min_segment_duration_s",
     label: "短于此的段并入相邻（秒）",
     hint: "0 = 关掉合并",
-    restart: true,
   },
   {
     key: "heartbeatEveryS",
     tomlKey: "heartbeat_every_s",
     label: "心跳聚合窗口（秒）",
     hint: "调小会让段的数量明显变多",
-    restart: true,
   },
   {
     key: "eventsRetentionDays",
     tomlKey: "events_retention_days",
     label: "事件保留天数",
     hint: "只删原始窗口事件（约 5 MB/天），活动时间线不受影响。0 = 永不删",
-    restart: false,
   },
-  { key: "autostart", tomlKey: "autostart", label: "开机自启", hint: "默认关", restart: false },
+  { key: "autostart", tomlKey: "autostart", label: "开机自启", hint: "默认关" },
   {
     key: "closeBehavior",
     tomlKey: "close_behavior",
     label: "点 ✕ 关窗时",
     hint: "ask = 问一次 / minimize = 最小化到托盘 / quit = 退出",
-    restart: false,
   },
 ];
 
@@ -189,7 +193,7 @@ useEffect(() => {
             key={f.key}
             label={f.label}
             hint={f.hint}
-            restart={f.restart}
+            restart={cfg.needsRestart[f.tomlKey] ?? true}
             value={draft[f.key]}
             disabled={busy}
             onChange={(v) => setDraft({ ...draft, [f.key]: v })}

@@ -43,6 +43,7 @@ use engine_runtime::EngineRuntime;
 use exit_flush::flush_for_exit;
 use redact::Redactor;
 use titles::SegmentTitle;
+use std::collections::BTreeMap;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
@@ -282,7 +283,12 @@ fn add_rule(
 
 /// 前端拿到的配置形状。与 `AppConfig` 字段一一对应，但：
 /// - `close_behavior` 用字符串（枚举在 Rust 侧、前端不认）
-/// - 附带每个字段**改完何时生效**，界面靠它标注「重启后生效」
+/// - `needs_restart` 附带**每个 `config.toml` 键改完何时生效**，界面靠它标注
+///   「重启后生效」。键用 toml 里的原名（snake_case），前端那侧的连接点。
+///
+/// 这张表以前只存在于 `set_config` 的返回值里，而角标要的是**加载时**就有 ——
+/// 于是前端照着「哪些字段要重启由后端说了算」的说法自己抄了一份，两份慢慢
+/// 就对不上了。现在两边读同一个值（`config_restart_honesty_tests` 钉着）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigOut {
@@ -293,6 +299,7 @@ pub struct ConfigOut {
     pub autostart: bool,
     pub close_behavior: String,
     pub events_retention_days: u32,
+    pub needs_restart: BTreeMap<&'static str, bool>,
 }
 
 /// 读配置。**每次现读磁盘**而不是返回启动时的快照 ——
@@ -309,6 +316,7 @@ fn get_config(state: tauri::State<'_, AppState>) -> Result<ConfigOut, String> {
         autostart: cfg.autostart,
         close_behavior: cfg.close_behavior.as_str().to_string(),
         events_retention_days: cfg.events_retention_days,
+        needs_restart: needs_restart_map(),
     })
 }
 
@@ -344,9 +352,16 @@ fn set_config(
                 "grace_period_s" => probe.grace_period_s,
                 "min_segment_duration_s" => probe.min_segment_duration_s,
                 "heartbeat_every_s" => probe.heartbeat_every_s,
-                _ => {
+                "events_retention_days" => {
                     new_retention = Some(probe.events_retention_days);
                     probe.events_retention_days
+                }
+                // 具名而不是 `_`：上面那个 arm 加了数字键而这里忘了登记时，
+                // 一条 Err 会把疏漏说清楚。写 `_` 的话新键会被悄悄当成保留期。
+                other => {
+                    return Err(format!(
+                        "`{other}` 是数字键却没在 clamp 分支里登记 —— 外层 match 加了键这里要一起改"
+                    ))
                 }
             };
             clamped.to_string()
@@ -376,16 +391,47 @@ fn set_config(
     Ok(config_field_needs_restart(&key))
 }
 
+/// `config.toml` 里全部可改的键。**加键时这里和 `set_config` 的 `match` 要一起改**。
+/// 漏改 `set_config` 的 `match` → 那条命令直接报「未知配置项」，写不进去。
+/// 漏改这里 → 判定表里没这个键，前端 `?? true` 按「要重启」保守显示：
+/// 热生效的键会多要求一次重启，但不会谎称已生效。角标不会消失。
+const CONFIG_KEYS: &[&str] = &[
+    "idle_threshold_s",
+    "grace_period_s",
+    "min_segment_duration_s",
+    "heartbeat_every_s",
+    "events_retention_days",
+    "autostart",
+    "close_behavior",
+];
+
+/// 每个键 → 改完是否要重启。**界面上那个「重启后生效」角标读的就是这张表。**
+fn needs_restart_map() -> BTreeMap<&'static str, bool> {
+    CONFIG_KEYS
+        .iter()
+        .map(|k| (*k, config_field_needs_restart(k)))
+        .collect()
+}
+
 /// 这个字段改完**必须重启**才生效吗？
 ///
-/// 依据是各参数被绑定到哪里，不是界面偏好：
-/// - `autostart` / `close_behavior` —— 托盘与关窗时每次现读 config，
-///   已经在热生效（`residency.rs` 就在写回这两项）
-/// - `events_retention_days` —— 挂在 `get_segments` 上现读（见上面 IPC）
+/// 依据是各参数被绑到哪里 / 有没有被现读，不是界面偏好：
+/// - `events_retention_days` —— `set_config` 把新值写回 `AppState.retention_days`，
+///   `get_segments` 每次现读它（见上面 IPC），真热生效
+/// - `close_behavior` —— 关窗拦截**现读 `config.toml`**（`residency.rs` 的
+///   `effective_close_behavior`），设置页写完下一次关窗就照新的走
+/// - `autostart` —— **`Residency` 在 `install()` 时把它快照进 `AtomicBool`**
+///   （`residency.rs`），托盘勾选态也按启动值构造，而 `autostart::enable/disable`
+///   只在托盘菜单回调里被调过。`set_config` 一样都碰不到：改了要重启。
+///   （2026-10-15 更正：这里原来把 `autostart` / `close_behavior` 都算成
+///   「已经热生效」——**那是错的**，界面因此标着「已保存，立刻生效」而实际要等
+///   下次启动。`close_behavior` 后来改成现读磁盘才是真热生效，`autostart` 没有。）
 /// - 四个采集/引擎参数 —— 绑进 `spawn_input_poller` 的线程参数与
 ///   `EngineConfig` 的构造注入，进程内改不了（STATUS §4.1「配置热重载」那条）
 fn config_field_needs_restart(key: &str) -> bool {
-    !matches!(key, "autostart" | "close_behavior" | "events_retention_days")
+    // **未知键一律当作要重启**（`!matches!` 的默认分支）。没登记过的键
+    // 宁可多提醒一次重启，也不要悄悄标成「已生效」。
+    !matches!(key, "events_retention_days" | "close_behavior")
 }
 
 pub fn run() {
@@ -539,3 +585,77 @@ pub fn run() {
     });
 }
 
+#[cfg(test)]
+mod config_restart_honesty_tests {
+    use super::{config_field_needs_restart, needs_restart_map, CONFIG_KEYS};
+
+    /// 界面标「已保存，立刻生效」的字段**必须真的会热生效**。
+    ///
+    /// 2026-10-15 之前这里把 `autostart` / `close_behavior` 都算成热生效，
+    /// 但 `Residency` 是在 `install()` 时**快照**了这两个值，`set_config` 只
+    /// `patch_line` 写文件、不回写那份快照 —— 界面说「已保存」而行为要等
+    /// 下次启动。界面说谎比多要求一次重启更糟：用户会以为设置没生效。
+    ///
+    /// 两个键后来走了**不同的路**：`close_behavior` 改成关窗时现读磁盘，
+    /// 成了真热生效；`autostart` 只能诚实地要求重启 —— 托盘勾选态与
+    /// 系统注册表都要重过启动流程，`set_config` 一个都碰不到。
+    #[test]
+    fn close_behavior_claims_to_be_live_because_the_close_handler_re_reads_the_file() {
+        assert!(
+            !config_field_needs_restart("close_behavior"),
+            "关窗拦截现读 config.toml（residency::effective_close_behavior），真热生效"
+        );
+    }
+
+    #[test]
+    fn autostart_does_not_claim_to_be_live() {
+        assert!(
+            config_field_needs_restart("autostart"),
+            "Residency 是启动快照，托盘勾选态与系统注册表 set_config 都碰不到 —— 必须说要重启"
+        );
+    }
+
+    /// 保留期仍然热生效（`set_config` 回写 `AppState.retention_days`）。
+    #[test]
+    fn the_genuinely_live_fields_stay_live() {
+        assert!(!config_field_needs_restart("events_retention_days"));
+    }
+
+    /// 四个绑在采集线程/引擎构造上的参数仍然要重启。
+    #[test]
+    fn engine_and_collector_params_still_need_restart() {
+        for key in [
+            "idle_threshold_s",
+            "grace_period_s",
+            "min_segment_duration_s",
+            "heartbeat_every_s",
+        ] {
+            assert!(config_field_needs_restart(key), "{key} 绑在构造注入上");
+        }
+    }
+
+    /// 未知键不能被静默当成「立刻生效」。
+    #[test]
+    fn an_unknown_key_is_treated_as_needing_restart() {
+        assert!(
+            config_field_needs_restart("some_key_we_never_saw"),
+            "没登记过的键宁可说要多重启，别让它悄悄标成已生效"
+        );
+    }
+
+    /// `CONFIG_KEYS` 是「界面画不画角标」和「`set_config` 收不收这个键」的
+    /// 共同依据。加了键却忘了往这里加，那个控件的角标会保守地按「要重启」显示，
+    /// 也改不进去。数字写死是故意的 —— 加键应当是个显眼的动作。
+    ///
+    /// 表里带的判定就是界面渲染的东西。曾经前端另抄了一份 `FIELDS[].restart`，
+    /// 两边**一致地错** —— 那次界面说谎的机制。
+    #[test]
+    fn every_configurable_key_has_a_verdict() {
+        assert_eq!(CONFIG_KEYS.len(), 7, "config.toml 的可改键变了就同步这里");
+        let map = needs_restart_map();
+        assert_eq!(map.len(), CONFIG_KEYS.len());
+        assert_eq!(map.get("close_behavior"), Some(&false));
+        assert_eq!(map.get("events_retention_days"), Some(&false));
+        assert_eq!(map.get("autostart"), Some(&true));
+    }
+}

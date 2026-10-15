@@ -222,6 +222,14 @@ export interface AppConfig {
   autostart: boolean;
   closeBehavior: string;
   eventsRetentionDays: number;
+  /**
+   * 每个 `config.toml` 键改完**是否要重启**，键用 toml 里的原名。
+   *
+   * 后端给（`get_config` 一并返回），前端不自己列 —— 复制一份表就多一处
+   * 会跟实现对不上的地方，而那种对不上表现为「界面说不用重启、实际要重启」。
+   * 2026-10-13 那次界面说谎就是两份表一致地错造成的。
+   */
+  needsRestart: Record<string, boolean>;
 }
 
 export async function getConfig(): Promise<AppConfig> {

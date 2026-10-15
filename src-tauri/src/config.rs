@@ -202,7 +202,8 @@ pub fn load_or_create(path: &Path) -> AppConfig {
 ///
 /// `rendered_value` 是已经渲染好的 TOML 值，例如 `true`、`"minimize"`。
 /// - 文件不存在：写默认模板 + 追加这一行
-/// - 文件存在但 TOML 语法错：**不写**，返回 Err（调用方提示“本次选择只在本进程内生效”）
+/// - 文件存在但 TOML 语法错：**不写**，返回 Err。错误信息只说「未写回」——
+///   「本次选择还有没有生效」各调用方不一样，由调用方自己补，不要在这里替它们断言
 /// - 键不存在：追加到末尾
 pub fn patch_line(path: &Path, key: &str, rendered_value: &str) -> std::io::Result<()> {
     let existing = match std::fs::read_to_string(path) {
@@ -216,7 +217,7 @@ pub fn patch_line(path: &Path, key: &str, rendered_value: &str) -> std::io::Resu
             if t.parse::<toml::Table>().is_err() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("{key} 未写回：config.toml 已是无效 TOML，请手工修好（本次选择只在本进程内生效）"),
+                    format!("{key} 未写回：config.toml 已是无效 TOML，请手工修好"),
                 ));
             }
             t
@@ -265,7 +266,8 @@ pub fn patch_line(path: &Path, key: &str, rendered_value: &str) -> std::io::Resu
 
 pub const DEFAULT_CONFIG_TOML: &str = r#"# Time Scope 行为参数
 #
-# 改完重启生效（暂不支持热重载）。
+# 多数项改完要重启（暂不支持热重载）；events_retention_days 与
+# close_behavior 是热生效的，不用重启。
 # 任何一项写错或缺失都会回退到默认值，不会导致应用起不来。
 
 # 无输入多少秒判定为空闲。最小 10。
@@ -284,6 +286,7 @@ heartbeat_every_s = 10
 autostart = false
 
 # 点窗口的 ✕ 时：ask = 问一次 / minimize = 最小化到托盘 / quit = 退出
+# 改完不用重启 —— 下一次点 ✕ 就照新的走（关窗拦截现读这个文件）。
 close_behavior = "ask"
 
 # 保留多少天的**原始窗口事件**。0 = 永不删。
@@ -294,6 +297,9 @@ close_behavior = "ask"
 #
 # 365 天够覆盖热力图默认的那面墙（53 周 ≈ 371 天）。想留更久就调大，
 # 想彻底不删就填 0（代价是磁盘一直涨）。
+#
+# 改完不用重启。清理本身有 24 小时节流，所以调小不会立刻删 ——
+# 要等上次清理满 24 小时后的下一次读取才会按新值动手。
 events_retention_days = 365
 "#;
 

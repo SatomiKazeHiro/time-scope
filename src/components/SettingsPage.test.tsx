@@ -31,6 +31,15 @@ const CFG = {
   autostart: false,
   closeBehavior: "ask",
   eventsRetentionDays: 365,
+  needsRestart: {
+    idle_threshold_s: true,
+    grace_period_s: true,
+    min_segment_duration_s: true,
+    heartbeat_every_s: true,
+    events_retention_days: false,
+    autostart: true,
+    close_behavior: false,
+  },
 };
 
 function stub() {
