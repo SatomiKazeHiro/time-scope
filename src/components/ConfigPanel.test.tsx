@@ -166,4 +166,36 @@ describe("ConfigPanel", () => {
     expect(screen.getByLabelText(/事件保留天数/)).toBeTruthy();
     expect(screen.getByLabelText(/关窗时/)).toBeTruthy();
   });
+
+  it("下拉框给中文，写回 config.toml 的仍是原值", async () => {
+    render(<ConfigPanel />);
+    await waitFor(() => expect(screen.getByDisplayValue("365")).toBeTruthy());
+
+    // 界面上是给用户读的中文，磁盘上仍是 ask/minimize/quit —— 改回英文
+    // 界面也「能用」，所以得钉住
+    const select = screen.getByLabelText(/关窗时/) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+      "每次都问",
+      "最小化到托盘",
+      "退出",
+    ]);
+    expect(Array.from(select.options).map((o) => o.value)).toEqual([
+      "ask",
+      "minimize",
+      "quit",
+    ]);
+  });
+
+  it("选中中文选项，写回的是 toml 里的键值", async () => {
+    render(<ConfigPanel />);
+    await waitFor(() => expect(screen.getByDisplayValue("365")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText(/关窗时/), { target: { value: "minimize" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      const call = invoke.mock.calls.find((c) => c[1]?.key === "close_behavior");
+      expect(call?.[1]).toEqual({ key: "close_behavior", value: "minimize" });
+    });
+  });
 });

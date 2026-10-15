@@ -80,11 +80,18 @@ const FIELDS: {
     key: "closeBehavior",
     tomlKey: "close_behavior",
     label: "点 ✕ 关窗时",
-    hint: "ask = 每次都问 / minimize = 每次都最小化到托盘 / quit = 每次都退出",
+    // 「每次」由字段名「点 ✕ 关窗时」带着，选项里不必重复；也短得多，
+    // 塞得进那个 128px 的下拉框
+    hint: "关窗时按这里说的做。改了不用重启",
   },
 ];
 
-const CLOSE_BEHAVIORS = ["ask", "minimize", "quit"] as const;
+/** 下拉框显示中文，`value` 才是写进 `config.toml` 的值。 */
+const CLOSE_BEHAVIOR_OPTIONS = [
+  { value: "ask", label: "每次都问" },
+  { value: "minimize", label: "最小化到托盘" },
+  { value: "quit", label: "退出" },
+] as const;
 
 export default function ConfigPanel() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
@@ -229,7 +236,7 @@ function Field({
   onChange: (v: string) => void;
 }) {
   const isBool = value === "true" || value === "false";
-  const isChoice = CLOSE_BEHAVIORS.includes(value as (typeof CLOSE_BEHAVIORS)[number]);
+  const isChoice = CLOSE_BEHAVIOR_OPTIONS.some((o) => o.value === value);
 
   return (
     <div className="grid grid-cols-1 items-baseline gap-x-4 gap-y-0.5 sm:grid-cols-[minmax(0,14rem)_auto_minmax(0,1fr)] sm:items-center">
@@ -261,9 +268,9 @@ function Field({
             onChange={(e) => onChange(e.target.value)}
             className="w-32 rounded-sm border border-line bg-surface-1 px-2 py-1 text-label text-ink"
           >
-            {CLOSE_BEHAVIORS.map((b) => (
-              <option key={b} value={b}>
-                {b}
+            {CLOSE_BEHAVIOR_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
               </option>
             ))}
           </select>

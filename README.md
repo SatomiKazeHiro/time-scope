@@ -49,7 +49,7 @@ pattern = '客户\d+'
 ```toml
 idle_threshold_s = 300   # 无输入多少秒算空闲（最小 10）
 heartbeat_every_s = 10   # 心跳聚合窗口
-close_behavior = "ask"  # ask = 问一次 / minimize = 最小化到托盘 / quit = 退出
+close_behavior = "ask"  # ask = 每次都问 / minimize = 最小化到托盘 / quit = 退出
 ```
 
 **改 `config.toml`**：现在可以在设置页改，也可以手改文件。
@@ -58,7 +58,10 @@ close_behavior = "ask"  # ask = 问一次 / minimize = 最小化到托盘 / quit
 只有 `events_retention_days` 与 `close_behavior` 立刻生效（后者是关窗时现读
 `config.toml` 的）。判据见 `src-tauri/src/lib.rs` 的 `config_field_needs_restart`。
 
-点窗口的 ✕ 第一次会问一次（选什么就记住什么）；此后只隐藏到托盘，**托盘菜单的「退出」是唯一退出入口**。
+点窗口的 ✕ 按 `close_behavior` 走：`ask` 每次都问、`minimize` 直接藏到托盘、
+`quit` 直接退出。`ask` 时弹框里的选择**只管这一次**，想固定下来到设置页改 ——
+设置页是唯一的持久化入口，保存了什么重新打开就是什么。
+**托盘菜单的「退出」是唯一退出入口**。
 锁屏记成 idle，不再把 8 小时锁屏算成 8 小时活跃。合盖能不能记到取决于合盖时
 Windows 是否锁屏（多数机器会，于是跟着记上了），不是所有机器都一样 ——
 细节见 [`STATUS.md` §4.4](docs/superpowers/STATUS.md)。
@@ -90,7 +93,7 @@ pnpm tauri dev
 cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 408 passed
 
 # 前端
-pnpm test                                                       # 363 passed
+pnpm test                                                       # 365 passed
 ```
 
 ## 代码结构
