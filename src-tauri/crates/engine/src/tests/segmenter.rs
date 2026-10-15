@@ -18,9 +18,18 @@ fn focus(ts: i64, app: &str) -> Event {
     )
 }
 
+/// 一个心跳。`window_ms` 是这个窗口有多长（默认 10 秒，与
+/// `heartbeat_every_s` 一致）—— 窗口起点由它与 `ts` 推出来。
 fn heartbeat(ts: i64, secs: u8) -> Event {
+    heartbeat_at(ts, secs, 10_000)
+}
+
+fn heartbeat_at(ts: i64, secs: u8, window_ms: i64) -> Event {
     Event::new(
-        EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: secs }),
+        EventType::InputHeartbeat(InputHeartbeatPayload {
+            active_seconds: secs,
+            window_start_ms: ts - window_ms,
+        }),
         ts,
     )
 }
@@ -1158,7 +1167,7 @@ fn segments_of_a_whole_day_never_overlap() {
             }
             2 => {
                 Event::new(
-                    EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 10 }),
+                    EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 10, window_start_ms: 0 }),
                     ts,
                 )
             }
@@ -1266,10 +1275,10 @@ fn a_segment_accumulates_the_time_the_user_actually_had_input() {
     // Code 段：40 秒里两次心跳各报 10 秒有输入
     let events = vec![
         focus(base, "Code.exe"),
-        heartbeat(base + 10_000, 10),
-        heartbeat(base + 20_000, 10),
-        heartbeat(base + 30_000, 0), // 这一窗没动
-        heartbeat(base + 40_000, 10),
+        heartbeat_at(base + 10_000, 10, 10_000),
+        heartbeat_at(base + 20_000, 10, 10_000),
+        heartbeat_at(base + 30_000, 0, 10_000), // 这一窗没动
+        heartbeat_at(base + 40_000, 10, 10_000),
         focus(base + 45_000, "msedge.exe"), // 切走，收尾
     ];
     let segs = all_segments(&events, &rules(), &cfg);
@@ -1324,6 +1333,63 @@ fn active_ms_never_exceeds_the_segments_own_duration() {
             s.application,
             s.active_ms,
             s.duration_ms()
+        );
+    }
+}
+
+
+/// 段外的那几秒不该算到段头上。
+///
+/// 2026-10-13 定的口径：心跳报的是「过去 10 秒里有几秒在动」，
+/// 而段只覆盖其中一部分 —— 段外的那几秒不算到它头上。
+/// 这就是心跳必须带窗口起点（`window_start_ms`）的原因。
+#[test]
+fn input_time_is_counted_only_within_the_segment() {
+    let cfg = EngineConfig::default().with_min_segment_duration_s(0).with_grace_period_s(0);
+    let base = 1_700_000_000_000i64;
+    // 段 [0, 20s]。三个心跳的窗口分别是 [0,10s] / [5s,15s] / [10s,20s]，
+    // **全都落在段内**，各报 8 秒。
+    // 合计 24 秒 > 段墙钟 20 秒 —— 所以结果就是 20 秒（被总量夹住）。
+    let events = vec![
+        focus(base, "Code.exe"),
+        heartbeat_at(base + 10_000, 8, 10_000),
+        heartbeat_at(base + 15_000, 8, 10_000),
+        heartbeat_at(base + 20_000, 8, 10_000),
+        focus(base + 20_000, "msedge.exe"),
+    ];
+    let segs = all_segments(&events, &rules(), &cfg);
+    let code = segs.iter().find(|s| s.application.as_deref() == Some("Code.exe")).unwrap();
+    assert_eq!(
+        code.active_ms, 20_000,
+        "三个窗口全在段内，累到段自身的墙钟时长为止（24 秒装不进 20 秒的段）"
+    );
+}
+
+/// 「有输入时长」不可能超过段的墙钟时长。
+///
+/// 三个窗口各报 8 秒 = 24 秒，但段只开了 20 秒 —— 装不下。
+/// 这是「没有证据就没有时间」那条原则在**总量**上的体现：
+/// 分母不能大于它衡量的那个东西。
+#[test]
+fn input_time_never_exceeds_the_segments_own_duration() {
+    let cfg = EngineConfig::default().with_min_segment_duration_s(0).with_grace_period_s(0);
+    let base = 1_700_000_000_000i64;
+    let events = vec![
+        focus(base, "Code.exe"),
+        heartbeat_at(base + 5_000, 10, 10_000), // 窗口 [-5s, 5s]  → 段内 5s
+        heartbeat_at(base + 10_000, 10, 10_000), // 窗口 [0, 10s]  → 段内 10s
+        heartbeat_at(base + 15_000, 10, 10_000), // 窗口 [5s, 15s] → 段内 10s
+        heartbeat_at(base + 20_000, 10, 10_000), // 窗口 [10s, 20s] → 段内 10s
+        focus(base + 20_000, "msedge.exe"), // 切走
+    ];
+    let segs = all_segments(&events, &rules(), &cfg);
+    for s in &segs {
+        assert!(
+            s.active_ms <= s.end_at - s.start_at,
+            "{:?} 的 active_ms={} 超过自身墙钟 {}",
+            s.application,
+            s.active_ms,
+            s.end_at - s.start_at
         );
     }
 }

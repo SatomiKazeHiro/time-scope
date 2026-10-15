@@ -72,7 +72,7 @@ fn unit_events_roundtrip() {
 #[test]
 fn input_heartbeat_roundtrips() {
     let e = Event::new(
-        EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 7 }),
+        EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 7, window_start_ms: 0 }),
         1_700_000_003_000,
     );
     let s = serde_json::to_string(&e).unwrap();

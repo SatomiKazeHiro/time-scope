@@ -113,7 +113,7 @@ fn distinct_event_types_all_get_distinct_type_column() {
         Event::new(EventType::SessionLock, 3000),
         Event::new(EventType::SessionUnlock, 4000),
         Event::new(
-            EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 3 }),
+            EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 3, window_start_ms: 0 }),
             5000,
         ),
         Event::new(

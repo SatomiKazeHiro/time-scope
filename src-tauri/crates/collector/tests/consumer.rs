@@ -23,7 +23,7 @@ fn input_active_signal_becomes_system_resume_event() {
 #[test]
 fn heartbeat_signal_preserves_active_seconds() {
     for secs in [0u8, 1, 7, 10] {
-        let e = signal_to_event(RawSignal::Heartbeat(secs), 1_700_000_000_000).unwrap();
+        let e = signal_to_event(RawSignal::Heartbeat(secs, 1_700_000_000_000 - i64::from(secs) * 1000), 1_700_000_000_000).unwrap();
         match e.event_type {
             EventType::InputHeartbeat(ref p) => {
                 assert_eq!(p.active_seconds, secs);
@@ -35,7 +35,7 @@ fn heartbeat_signal_preserves_active_seconds() {
 
 #[test]
 fn every_signal_preserves_the_supplied_timestamp() {
-    for sig in [RawSignal::IdleStart, RawSignal::InputActive, RawSignal::Heartbeat(3)] {
+    for sig in [RawSignal::IdleStart, RawSignal::InputActive, RawSignal::Heartbeat(3, 1_700_000_000_000)] {
         let e = signal_to_event(sig, 1_234_567_890_123).unwrap();
         assert_eq!(e.timestamp, 1_234_567_890_123);
     }

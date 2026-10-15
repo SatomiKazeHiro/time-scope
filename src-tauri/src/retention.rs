@@ -108,7 +108,7 @@ mod tests {
 
     fn ev(ts: i64) -> Event {
         Event::new(
-            EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 1 }),
+            EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: 1, window_start_ms: 0 }),
             ts,
         )
     }

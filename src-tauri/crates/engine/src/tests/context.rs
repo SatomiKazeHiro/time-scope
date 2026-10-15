@@ -25,7 +25,7 @@ fn title(app: &str, title: &str) -> Event {
 
 fn heartbeat(secs: u8) -> Event {
     Event::new(
-        EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: secs }),
+        EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds: secs, window_start_ms: 0 }),
         3000,
     )
 }

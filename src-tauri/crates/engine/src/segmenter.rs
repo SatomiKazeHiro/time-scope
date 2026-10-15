@@ -76,11 +76,35 @@ pub fn reduce(
     if let EventType::InputHeartbeat(p) = &event.event_type {
         if p.active_seconds > 0 {
             if let Some(cur) = st.current_segment.as_mut() {
-                // 上限是「从段起点到**这个心跳所在时刻**」，不是段到当前
-                // `end_at` 的距离 —— 心跳到来时 `extend` 还没跑，`end_at` 仍等于
-                // `start_at`，拿它当上限会把这一笔整个丢掉。
-                let room = (ts - cur.start_at).max(0);
-                cur.active_ms = (cur.active_ms + i64::from(p.active_seconds) * 1000).min(room);
+                // **按窗口与段的重叠算**（2026-10-13 修）。
+                // `active_seconds` 说的是「心跳之前那个窗口里有几秒在动」，
+                // 窗口起点由 `window_start_ms` 给出。只拿 `ts - start_at` 当上限
+                // 会在段刚开时丢掉窗口前半段（落在段外）—— 实测心跳共报 16 秒、
+                // 两个段总共只收到 9 秒，另一个拿到 0。
+                //
+                // 有输入的秒可以看成落在窗口里的任意位置，**保守取交集上界**：
+                // 窗口 `[w0, ts]` 与段 `[start_at, …]` 重叠多少，
+                // 报告的 `active_seconds` 最多也超不过这个重叠。
+                //
+                // **不要再拿 `end_at` 当上限**（2026-10-13 踩过两次）：
+                // 心跳到来时 `extend` 还没跑，`end_at` 仍等于 `start_at`，
+                // 用它一夹就把这一笔全丢了。段本来就会延长到 `ts`，
+                // 算进去是对的。
+                let w0 = if p.window_start_ms > 0 {
+                    p.window_start_ms
+                } else {
+                    // 旧数据（2026-10-13 之前）没有窗口起点：
+                    // 退化成「整段都算有输入」，宁可高估也别把已有数据说成没有。
+                    ts - i64::from(p.active_seconds) * 1000
+                };
+                let overlap = (ts - w0.max(cur.start_at)).max(0);
+                let claimed = i64::from(p.active_seconds) * 1000;
+                cur.active_ms += claimed.min(overlap);
+                // **总量不许超过段自身的墙钟时长**。每笔都夹了还不够：
+                // 窗口之间可以重叠（两个心跳报的是同一段时间），
+                // 累加起来会超过段有多长 —— 分母比它衡量的东西还大是荒谬的。
+                // 2026-10-13 实测：四个各 10 秒的窗口累出 35 秒，而段只有 20 秒。
+                cur.active_ms = cur.active_ms.min((ts - cur.start_at).max(0));
             }
         }
     }

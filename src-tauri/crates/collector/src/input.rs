@@ -62,6 +62,15 @@ fn now_tick() -> u32 {
     unsafe { windows::Win32::System::SystemInformation::GetTickCount() }
 }
 
+/// 墙钟毫秒。心跳窗口的起点要落进 events 的时间轴上，而
+/// `GetTickCount` 是 32 位、会环绕，没法直接用。
+fn wall_clock_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// 启动输入轮询线程。
 /// * `idle_threshold_s` — 无输入多少秒后判定空闲（spec 默认 300）
 /// * `heartbeat_every_s` — 心跳聚合窗口（spec 默认 10）
@@ -79,6 +88,8 @@ pub fn spawn_input_poller(sender: Sender<RawSignal>, idle_threshold_s: u32, hear
             let mut active_in_window: u32 = 0;
             let mut last_tick = last_input_tick();
             let mut window_start_tick = now_tick();
+            // tick 是 GetTickCount 的低 32 位、且会环绕，没法直接当时间戳用。
+            // 窗口起点靠「这一刻的墙钟 − 窗口已走的时长」推算。
             let heartbeat_ms = heartbeat_every_s.saturating_mul(1000);
 
             while RUNNING.load(Ordering::SeqCst) {
@@ -104,10 +115,15 @@ pub fn spawn_input_poller(sender: Sender<RawSignal>, idle_threshold_s: u32, hear
 
                 // 心跳窗口到了就发一条，idle 期间 active_seconds 为 0
                 if now.wrapping_sub(window_start_tick) >= heartbeat_ms {
-                    let _ = sender.send(RawSignal::Heartbeat(heartbeat_bucket(
-                        active_in_window,
-                        heartbeat_every_s,
-                    )));
+                    // 窗口起点 = 这一刻的墙钟 − 这个窗口已走的时长。
+                    // 引擎靠它判断「这个窗口与段重叠多少」，少了它就算不出
+                    // 段内的有输入时长（见 InputHeartbeatPayload::window_start_ms）。
+                    let elapsed = now.wrapping_sub(window_start_tick) as i64;
+                    let window_start_ms = wall_clock_ms() - elapsed;
+                    let _ = sender.send(RawSignal::Heartbeat(
+                        heartbeat_bucket(active_in_window, heartbeat_every_s),
+                        window_start_ms,
+                    ));
                     active_in_window = 0;
                     window_start_tick = now;
                 }
@@ -141,9 +157,12 @@ pub fn make_resume_event(ts: i64) -> Event {
     Event::new(EventType::SystemResume, ts)
 }
 
-pub fn make_heartbeat_event(active_seconds: u8, ts: i64) -> Event {
+pub fn make_heartbeat_event(active_seconds: u8, ts: i64, window_start_ms: i64) -> Event {
     Event::new(
-        EventType::InputHeartbeat(InputHeartbeatPayload { active_seconds }),
+        EventType::InputHeartbeat(InputHeartbeatPayload {
+            active_seconds,
+            window_start_ms,
+        }),
         ts,
     )
 }

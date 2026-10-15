@@ -19,7 +19,11 @@ pub enum RawSignal {
     /// 从 idle 恢复到有输入
     InputActive,
     /// 一个 heartbeat 窗口内的活跃秒数（0..=heartbeat_every_s）
-    Heartbeat(u8),
+    ///
+    /// 第二个值是这个窗口的**起点**（Unix 毫秒）。`active_seconds` 只说
+    /// 「过去 N 秒里有几秒在动」，不说那几秒在哪 —— 而段是从某个时刻
+    /// 开始的，窗口可能只与段重叠一部分。见 `InputHeartbeatPayload::window_start_ms`。
+    Heartbeat(u8, i64),
     /// 会话锁屏（含合盖休眠）——与"无输入"等价
     SessionLock,
     /// 会话解锁/唤醒
