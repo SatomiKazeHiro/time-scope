@@ -27,15 +27,9 @@ pub fn decide(current: CloseBehavior, ask_supported: bool) -> CloseDecision {
     }
 }
 
-/// 用户在确认框里的选择，用来覆写 config。
-/// `Ask` 一旦被回答就变成 `Minimize` —— 默认选项是"最小化"，因为托盘常驻
-/// 是这个应用的主要形态，而误退出反而会让人以为数据丢了。
-pub fn remember(answered: CloseBehavior) -> CloseBehavior {
-    match answered {
-        CloseBehavior::Ask => CloseBehavior::Minimize,
-        other => other,
-    }
-}
+// 这里曾经有一个 `remember(answered)`：把用户的选择规范化后交回去写 config。
+// 2026-10-15 连同它的写回一起删了 —— 设置页刚选的值会被弹框静默改掉。
+// 答案怎么执行归 residency.rs 的 `apply_answer`，且**只管这一次**。
 
 #[cfg(test)]
 mod tests {
@@ -64,13 +58,5 @@ mod tests {
     fn when_the_platform_cannot_ask_fall_back_to_quit() {
         // 问不了就必须给用户一条出路，否则窗口关不掉
         assert_eq!(decide(CloseBehavior::Ask, false), CloseDecision::Quit);
-    }
-
-    #[test]
-    fn remembering_an_answer_never_leaves_ask() {
-        // Review Focus #2：写回失败也不能让"每次都问"
-        assert_eq!(remember(CloseBehavior::Ask), CloseBehavior::Minimize);
-        assert_eq!(remember(CloseBehavior::Minimize), CloseBehavior::Minimize);
-        assert_eq!(remember(CloseBehavior::Quit), CloseBehavior::Quit);
     }
 }

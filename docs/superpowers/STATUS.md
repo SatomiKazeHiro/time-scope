@@ -11,7 +11,7 @@
 ```
 Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 测试  408 Rust + 363 前端 = 771 条，全绿
-提交  main..phase1-polish 135 个，未合并
+提交  main..phase1-polish 136 个，未合并
 ```
 
 ---
@@ -107,7 +107,7 @@ node design-system/time-scope/verify-palette.mjs                # 色板校验�
 
 ### 未验证
 
-[`plans/manual-verification.md`](plans/manual-verification.md) 的清单**一项未勾**（98 项）。
+[`plans/manual-verification.md`](plans/manual-verification.md) 的清单**一项未勾**（101 项）。
 它是 2026-10-08 把原三份（92 项）合并、再加上设置页 20 项之后的版本 ——
 托盘 / 自启 / 锁屏 / 配置容错 / 跨重启这些系统行为一条没删，
 另补了两页 UI、指标三态、汇总页、设置页这些后来加的东西。
@@ -169,7 +169,7 @@ src-tauri/
 docs/superpowers/
   specs/    三份设计快照（已实施，顶部有历史说明）
   audits/   2026-10-06 隐藏问题审计（16 条 finding 的完整证据）
-  plans/    人工验证清单（98 项，未勾）
+  plans/    人工验证清单（101 项，未勾）
 ```
 
 ---
@@ -299,7 +299,7 @@ day          重叠(旧→新)   总时长(旧→新)
 | **`daily_calendar`（热力图每格）未去重** | 与其余聚合处形状不同（逐日递归 CTE 的 `SUM`）。有意留口：影响是每格最多多算几十秒（全库 95 分钟摊到 12 天）。将来要改一并处理 |
 | **段的时间边界仍有三处直接写** | 都在 `fold_short_segments` 内部，且都是**合并**语义（open 分支、`merge_into`）—— 合并本就该扩大跨度，要防的是「扩大后越过邻居」，由相邻检查把关。往后推边界的路径已全部走 `advance_end` |
 | **`session_lock` 事件全库 0 条** | 锁屏监听模块（`collector::session`）已实现但没产出任何事件，所以「锁屏」目前只能靠 heartbeat 的连续 0 推断。独立的采集侧缺口 |
-| 98 项验证清单未勾 | §2 |
+| 101 项验证清单未勾 | §2 |
 | CI 只跑过基线配置 | 长期没变过依赖，改依赖时要盯一眼 |
 | `docs/superpowers/specs/` 三份里引用的 `ThemeToggle.tsx` 已不存在 | 2026-10-08 删掉了这个死组件（无任何引用，Sidebar 内联了同一个按钮）。spec 是冻结快照，**不动** —— 见 §6 |
 

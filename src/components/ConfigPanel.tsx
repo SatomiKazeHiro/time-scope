@@ -80,7 +80,7 @@ const FIELDS: {
     key: "closeBehavior",
     tomlKey: "close_behavior",
     label: "点 ✕ 关窗时",
-    hint: "ask = 问一次 / minimize = 最小化到托盘 / quit = 退出",
+    hint: "ask = 每次都问 / minimize = 每次都最小化到托盘 / quit = 每次都退出",
   },
 ];
 

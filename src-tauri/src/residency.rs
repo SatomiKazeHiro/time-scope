@@ -13,9 +13,13 @@ use tauri::{AppHandle, Manager, WindowEvent};
 /// 托管状态：托盘回调与关窗回调都要读它。
 pub struct Residency {
     pub config_path: std::path::PathBuf,
-    /// 关窗行为的**启动快照**。关窗时以磁盘为准（见 `effective_close_behavior`），
-    /// 这里只在 config.toml 读不出来时兜底，也是 `remember_answer` 的写入目标。
-    pub close_behavior: Mutex<CloseBehavior>,
+    /// 关窗行为的**启动快照**，**不可变**。
+    ///
+    /// 关窗时以磁盘为准（见 `effective_close_behavior`），这里只在
+    /// config.toml 读不出来时兜底。做成不可变是刻意的：它是快照，不是缓存。
+    /// 一旦它可写，「谁是这个值的权威」就有三个候选（设置页、弹框、这份快照），
+    /// 而 2026-10-15 用户实机撞到的正是弹框把设置页刚存的值改掉了。
+    pub close_behavior_fallback: CloseBehavior,
     /// 开机自启的**启动快照**。`install()` 时从 `config.toml` 取一次；
     /// 此后只有托盘菜单回调（`on_menu_event` 成功切过系统注册表之后）会写它，
     /// 系统级开关失败时不动这里，免得菜单显示一个没生效的状态。
@@ -45,7 +49,7 @@ pub fn install(app: &mut tauri::App, cfg: crate::config::AppConfig) -> bool {
 
     let state = Residency {
         config_path: crate::config::config_path(),
-        close_behavior: Mutex::new(cfg.close_behavior),
+        close_behavior_fallback: cfg.close_behavior,
         autostart: AtomicBool::new(cfg.autostart),
         tray_ok: AtomicBool::new(false),
         autostart_item: Mutex::new(None),
@@ -202,7 +206,7 @@ fn install_close_handler(app: &AppHandle) {
                 let state = handle.state::<Residency>();
                 let behavior = effective_close_behavior(
                     close_behavior_from_disk(&state.config_path),
-                    *state.close_behavior.lock().unwrap(),
+                    state.close_behavior_fallback,
                 );
                 let tray_ok = state.tray_ok.load(std::sync::atomic::Ordering::Relaxed);
                 match close_interception_when(behavior, tray_ok) {
@@ -213,12 +217,12 @@ fn install_close_handler(app: &AppHandle) {
                         }
                     }
                     CloseDecision::Ask => {
-                        // 问一次：答案覆写 config，之后不再问（spec §4.2）
+                        // 答案**只管这一次**（2026-10-15 改，见 `apply_answer`）
                         match ask_close_behavior(&handle) {
                             Some(CloseBehavior::Quit) => { /* 放行默认关闭 */ }
                             Some(other) => {
                                 api.prevent_close();
-                                remember_answer(&handle, other);
+                                apply_answer(&handle, other);
                             }
                             None => { /* 用户取消：什么都不做 */ }
                         }
@@ -230,23 +234,26 @@ fn install_close_handler(app: &AppHandle) {
     }
 }
 
-/// 记下用户的答案并写回 config。**写回失败不影响本次行为**（Review Focus #2）。
-fn remember_answer(app: &AppHandle, answered: CloseBehavior) {
-    let state = app.state::<Residency>();
-    let next = crate::close_behavior::remember(answered);
-    *state.close_behavior.lock().unwrap() = next;
-    if next == CloseBehavior::Minimize {
+/// 执行用户在关窗确认框里的选择 —— **只管这一次，不写回任何地方**。
+///
+/// 2026-10-15 改。原来这里会 `patch_line` 把答案存进 config.toml
+/// （spec §4.2「问一次，答案覆写 config，之后不再问」），于是：
+/// 用户在设置页选了 `ask` → 点 ✕ 答「是」→ `config.toml` 被改成 `minimize`
+/// → 再打开设置页看到的是 `minimize` 而不是他刚保存的 `ask`。
+/// `get_config` 每次现读磁盘，所以界面显示的也不是用户选的那个。
+///
+/// **设置页是唯一的持久化入口。** 想固定行为就去设置页选 `minimize` / `quit`；
+/// 想每次都问就选 `ask`。这样那个下拉框里三个值才都是名实相符的，
+/// 也才谈得上「保存了什么，重新打开就是什么」。
+///
+/// 代价（知情选择）：答完一次之后下次点 ✕ 还会问。首装那天会多答几次，
+/// 设一次就永久生效。另一个选择是把答案记到别处 —— 但那等于换个地方
+/// 制造第三个真相来源，2026-10-15 刚把前两个合并掉。
+fn apply_answer(app: &AppHandle, answered: CloseBehavior) {
+    if answered == CloseBehavior::Minimize {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.hide();
         }
-    }
-    // 写回只动一行；失败不阻止本次行为（Review Focus #2）
-    if let Err(e) = crate::config::patch_line(
-        &state.config_path,
-        "close_behavior",
-        &format!("\"{}\"", next.as_str()),
-    ) {
-        eprintln!("[time-scope] {e}");
     }
 }
 
@@ -269,7 +276,7 @@ fn ask_close_behavior(_app: &AppHandle) -> Option<CloseBehavior> {
     let r = unsafe {
         MessageBoxW(
             None,
-            w!("关闭窗口后 Time Scope 会继续在后台记录。\n\n要最小化到托盘吗？\n选择「否」将退出程序。"),
+            w!("关闭窗口后 Time Scope 会继续在后台记录。\n\n要最小化到托盘吗？\n选择「否」将退出程序。\n\n（这次的选择只管这一次。想固定下来请到设置页选「点 ✕ 关窗时」。）"),
             w!("Time Scope"),
             CLOSE_PROMPT_STYLE,
         )
@@ -349,6 +356,32 @@ mod tests {
         );
         assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON3.0, 0);
         assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON4.0, 0);
+    }
+
+    /// 关窗弹框**不得写 `config.toml`**。
+    ///
+    /// 2026-10-15 用户实机撞到：设置页选了 `ask`、点 ✕ 答「是」，再打开设置页
+    /// 看到的是 `minimize` —— 弹框把用户刚保存的值静默改掉了。`get_config`
+    /// 每次现读磁盘，所以界面显示的也不是用户选的那个。
+    ///
+    /// 用源码扫描守着：`Residency` 里的快照已经是**不可变**的（内存里改不了），
+    /// 剩下唯一能持久化 `close_behavior` 的路就是 `patch_line`。扫描比注释可靠 ——
+    /// 注释会跟着代码改着改着就过期，这条不会。
+    #[test]
+    fn the_close_prompt_never_writes_config() {
+        let src = include_str!("residency.rs");
+        let body = src
+            .split("fn apply_answer")
+            .nth(1)
+            .expect("找不到 apply_answer")
+            .split("\n}")
+            .next()
+            .expect("取不到 apply_answer 的函数体");
+        assert!(
+            !body.contains("patch_line"),
+            "关窗弹框的答案只管这一次。写回 config 会让设置页选的值被静默改掉，\
+             而 get_config 现读磁盘 —— 再打开看到的就是不是用户保存的那个了"
+        );
     }
 
     /// 同一件事的纯形式：设置页写下的值必须压过启动快照。
