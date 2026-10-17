@@ -16,7 +16,25 @@ interface Props {
  */
 export default function DaySummary({ segments, dayStartMs }: Props) {
   const rows = summarize(segments, dayStartMs);
-  if (rows.length === 0) return null;
+
+  // **没有段时仍然渲染这个面板**（2026-10-17 用户报的 bug）。
+  //
+  // 这里原来 `return null`，后果不是「少一块内容」而是**布局塌一格**：
+  // 下方那行是两列网格，左边这一格没了，`SegmentDetail` 就被排到左格、
+  // 右边空出一大片 —— 看起来像界面坏了。面板在，格子就在；内容换成一句空状态。
+  //
+  // 空状态不说「这一天没有活动」：没有段 ≠ 有记录但全是空闲，
+  // 它是「这一天压根还没有数据」（明天、或者应用没跑过的日子）。
+  if (rows.length === 0) {
+    return (
+      <section aria-label="当日汇总" className="panel p-4">
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="panel-title">当日汇总</h2>
+        </div>
+        <p className="m-0 text-sm text-ink-faint">这一天还没有数据。</p>
+      </section>
+    );
+  }
 
   // spec §10：「各 category 时长条形 + 活跃/空闲比」。
   // 活跃 = 非 idle 的时长。`unknown` 算活跃 —— 它是"没分类出是什么"，

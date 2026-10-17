@@ -208,6 +208,20 @@ describe("App integration (segments)", () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
+  it("没有数据的日子（明天）仍然显示「当日汇总」面板", async () => {
+    // 2026-10-17 用户报的：切到明天，监控采集页只剩「点击时间线上的色块查看详情」，
+    // 而且它被排到了左边、右边空一块 —— 因为汇总面板在没有段时返回了 null，
+    // 下方两列网格少了一个子元素。面板必须在。
+    invoke.mockResolvedValue([]);
+    render(<App />);
+    await waitFor(() => expect(invoke).toHaveBeenCalled());
+
+    expect(screen.getByLabelText("当日汇总")).toBeTruthy();
+    expect(screen.getByText("这一天还没有数据。")).toBeTruthy();
+    // 详情面板的占位也还在 —— 两个面板都要在，网格才是两列
+    expect(screen.getByText("点击时间线上的色块查看详情")).toBeTruthy();
+  });
+
   it("renders the day summary with per-category totals", async () => {
     invoke.mockResolvedValue([
       seg("s1", 0, 2, "work"),

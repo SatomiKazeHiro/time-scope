@@ -37,9 +37,16 @@ describe("DaySummary", () => {
     expect(screen.getByTitle("work")).toBeTruthy();
   });
 
-  it("renders nothing when there is no activity", () => {
-    const { container } = render(<DaySummary segments={[]} dayStartMs={0} />);
-    expect(container.querySelector("section")).toBeNull();
+  it("没有数据时也渲染面板 —— 否则下方两列网格会塌一格", () => {
+    // 2026-10-17 用户报的：切到明天，只看到详情面板（被排到左格），右边空一块。
+    // 根因就是这里 `return null`：面板没了，网格只剩一个子元素。
+    render(<DaySummary segments={[]} dayStartMs={0} />);
+    const panel = screen.getByLabelText("当日汇总");
+    expect(panel).toBeTruthy();
+    expect(within(panel).getByText("这一天还没有数据。")).toBeTruthy();
+    // 空状态下不报「0 个类别」、也不画活跃/空闲比 —— 那两块都是读数，没数据就没读数
+    expect(within(panel).queryByText(/0 个类别/)).toBeNull();
+    expect(within(panel).queryByLabelText("活跃与空闲占比")).toBeNull();
   });
 
   it("labels the section for screen readers", () => {
