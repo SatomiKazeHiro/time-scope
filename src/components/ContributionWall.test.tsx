@@ -346,7 +346,7 @@ describe("ContributionWall", () => {
     }
   });
 
-  it("空档按 data-tone 分「还没装」和「装了但没活动」", () => {
+  it("空档按 data-tone 分「首次有记录之前」和「有记录但没活动」", () => {
     const mixed: DayCell[] = [
       { date: "2026-10-01", totalMs: 0 },          // 早于首次采集 -> 幽灵格子
       { date: "2026-10-02", totalMs: 7_200_000 },  // 有活动 -> 不描边
@@ -420,11 +420,11 @@ describe("ContributionWall 日格的可访问名", () => {
     expect(withData.getAttribute("aria-label")).toMatch(/\d/);
   });
 
-  it("装之前的日子说清是「还没装」，不假装是「当天没活动」", () => {
-    // 这两种"空"在界面上是分开画的（STATUS 第 20、21 条），
+  it("首次有记录之前的日子说清是「首次有记录之前」，不假装是「当天没活动」", () => {
+    // 这两种"空"在界面上是分开画的（STATUS 第 17 条），
     // 可访问名也必须分开 —— 读屏用户看不到描边强弱。
     //
-    // 要造出"未安装期"得让 `days` 里有早于 `trackedFrom` 的日子：
+    // 要造出这一档，得让 `days` 里有早于 `trackedFrom` 的日子：
     // `buildWall` 的 `tracked = present && cursor >= trackedFrom`。
     // （缺省不传 `trackedFrom` 时它等于 `days[0]`，于是永远没有 uninstalled 格。）
     const withPreInstallDays: DayCell[] = [
@@ -446,6 +446,6 @@ describe("ContributionWall 日格的可访问名", () => {
       (c) => c.getAttribute("data-tone") === "uninstalled",
     );
     expect(untracked).toBeDefined();
-    expect(untracked!.getAttribute("aria-label")).toContain("还没装");
+    expect(untracked!.getAttribute("aria-label")).toContain("首次有记录之前");
   });
 });

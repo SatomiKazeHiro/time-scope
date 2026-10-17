@@ -247,10 +247,10 @@ describe("buildWall 的固定跨度", () => {
   });
 });
 
-describe("未安装期", () => {
+describe("首次有记录之前", () => {
   // GitHub 的空格有意义是因为 GitHub 一直存在。时迹三个月前还不存在，
-  // 那段日子的空格读作「我一整年几乎没用过」——而事实是「我 5 天前才装上」。
-  // 两种「空」必须分开：还没装 vs 装了没活动。
+  // 那段日子的空格读作「我一整年几乎没用过」——而事实是「我 5 天前才开始有记录」。
+  // 两种「空」必须分开：首次有记录之前 vs 有记录但没活动。
   const w = wallWindow("2026-10-05");
   // 10-03 特意给 0：装了但那天完全没活动
   const five = days([
@@ -261,7 +261,7 @@ describe("未安装期", () => {
   const layout = buildWall(filled, "2026-10-01");
   const byDate = Object.fromEntries(layout.cells.map((c) => [c.date, c]));
 
-  it("首次采集之前的日期标为未安装", () => {
+  it("首次采集之前的日期标为未跟踪", () => {
     expect(byDate["2026-05-15"].tracked).toBe(false);
     expect(byDate["2026-09-30"].tracked).toBe(false);
   });
@@ -269,13 +269,13 @@ describe("未安装期", () => {
     expect(byDate["2026-10-01"].tracked).toBe(true);
     expect(byDate["2026-10-05"].tracked).toBe(true);
   });
-  it("未安装不参与色阶：再大的 max 也不改变它的样子", () => {
+  it("未跟踪不参与色阶：再大的 max 也不改变它的样子", () => {
     expect(byDate["2026-05-15"].step).toBe(0);
   });
   it("两种空的内描边分两级：都能看见，但强弱不同", () => {
-    // 上一版把未安装做成面板色 = 和空白没区别 -> 白茫茫一片。
+    // 上一版把这一档做成面板色 = 和空白没区别 -> 白茫茫一片。
     // 两者共用轨道色底，用描边强弱区分：强的读作「有个空方块」，
-    // 弱的读作「还没装的幽灵格子」。具体色值在 theme.css 的
+    // 弱的读作「首次有记录之前的幽灵格子」。具体色值在 theme.css 的
     // .wall-cell[data-tone=…] 里，这里断言的是**档名分开了**。
     const noActivity = Object.entries(byDate).find(
       ([, c]) => c.tracked && c.totalMs === 0,
@@ -294,7 +294,7 @@ describe("未安装期", () => {
     // 有颜色的格子自带边界，再描一圈会让相邻档看起来更接近
     const filled = Object.values(byDate).find((c) => c.step > 0)!;
     expect(toneOf(filled)).toBeUndefined();
-    // 补齐位在屏幕外，不该因为 tracked=false 就被当成「还没装」
+    // 补齐位在屏幕外，不该因为 tracked=false 就被当成「首次有记录之前」
     const pad = buildWall(
       days([["2026-10-01", 1]]),
     ).cells.find((c) => !c.present)!;

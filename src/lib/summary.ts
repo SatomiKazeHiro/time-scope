@@ -111,17 +111,22 @@ export function scaleColor(step: number): string {
 }
 
 /**
- * 还没装时迹的那段日子怎么画。
+ * 「首次有记录之前」的那段日子怎么画。
  *
- * **它和「装了但当天没活动」是两件事，必须分开。** GitHub 的空格有意义是因为
+ * **它和「有记录但当天没活动」是两件事，必须分开。** GitHub 的空格有意义是因为
  * GitHub 一直存在；时迹三个月前还不存在，那段日子的空格读作「我一整年
  * 几乎没用过」——而事实是「我 5 天前才装上」。
  *
+ * **口径的边界**：后端只有 `DailyCalendar.first`（首个有记录的日子），**没有
+ * 安装日**这个维度。所以这一档说的是「首次有记录之前」，不是严格的「还没装」
+ * —— 「装了但从没产生记录」与「还没装」在这里是同一档。函数名 `uninstalled`
+ * 是旧称，沿用不改是因为它同时是 CSS 的 `data-tone` 取值。
+ *
  * 两者**底色相同**（轨道色），只差描边强弱：
- * - 未安装：弱描边 `--color-line`，读作「还没装的幽灵格子」
+ * - 首次有记录之前：弱描边 `--color-line`，读作「幽灵格子」
  * - 没活动：强描边 `--color-line-strong`，读作「有个确切的空方块」
  *
- * 曾经把未安装做成面板色（等于背景），结果整片白茫茫 —— 看不见就不是区分。
+ * 曾经把这一档做成面板色（等于背景），结果整片白茫茫 —— 看不见就不是区分。
  * 不新增 token。
  */
 export function uninstalledColor(): string {
@@ -142,8 +147,8 @@ export interface WallCell {
   /** false = 补齐位（窗口之外），不渲染但占位，保证不整列错位 */
   present: boolean;
   /**
-   * 这天是否在时迹的运行期内。
-   * false = 还没装（`uninstalledColor()`），true = 装了但可能没活动（0 档）。
+   * 这天是否在「有记录的时间范围」内。
+   * false = 首次有记录之前（`uninstalledColor()`），true = 有记录，但当天可能没活动（0 档）。
    */
   tracked: boolean;
   step: number;
@@ -163,8 +168,11 @@ export interface WallLayout {
  *
  * 空档必须分两级 —— 两者**底色相同**（都是轨道色 `--color-surface-2`，
  * 浅色主题下压在白色面板上几乎看不见），只靠 1px 内描边的强弱区分：
- * - `uninstalled`：还没装时迹的那段日子，弱描边 `--color-line`
- * - `empty`：装了但当天没活动，强描边 `--color-line-strong`
+ * - `uninstalled`：首次有记录之前的那段日子（弱描边 `--color-line`）
+ * - `empty`：有记录但当天没活动（强描边 `--color-line-strong`）
+ *
+ * 取值名沿用 `uninstalled`：它同时是 CSS 的 `data-tone`，改名要连
+ * `theme.css` 一起动，而语义在注释与可访问名里已经说清了。
  *
  * 不描边两者都看不见，都描强又分不开。**不新增 token**（MASTER §2.4）。
  */

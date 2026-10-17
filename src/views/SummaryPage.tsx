@@ -47,6 +47,19 @@ export default function SummaryPage() {
    * 空库时没有任何请求在飞，那张卡就永远转不出来 —— 新装用户的第一屏。
    */
   const [loaded, setLoaded] = useState(false);
+  /**
+   * 首个有记录的日子 —— 热力图用它区分「首次有记录之前」与「有记录但没活动」。
+   *
+   * **不能拿 `all.from` 顶替**。`all.from` 是墙的窗口起点（53 周前），拿它当
+   * 「装了没装」的分界会让 `tracked` 恒为真，那一档永不渲染 —— 2026-10-17 的
+   * 回归正是这么来的：`ede68cb` 把范围从 `cal.first` 改成窗口起点，传下去的
+   * `trackedFrom` 跟着变成窗口起点，而 `ContributionWall.test` 只覆盖了
+   * 「不传」的情形，于是没人发现。
+   *
+   * 语义边界：`first` 是「首个有记录的日子」，不是安装日（后端没有那个维度）。
+   * 所以文案说「首次有记录之前」，不说「还没装」。
+   */
+  const [trackedFrom, setTrackedFrom] = useState<string | null>(null);
   const [titles, setTitles] = useState<MergedTitle[]>([]);
   const [titleBusy, setTitleBusy] = useState(false);
 
@@ -65,6 +78,7 @@ export default function SummaryPage() {
         // 窗口后**数字一个都不变**，只是说法对上了。
         const w = wallWindow(todayString());
         setAll({ kind: "all", from: w.start, to: w.end, label: "近一年" });
+        setTrackedFrom(cal.first);
         setDays(
           fillDays(w.start, w.end, new Map(cal.days.map((d) => [d.date, d.totalMs]))),
         );
@@ -200,7 +214,7 @@ export default function SummaryPage() {
         </div>
         <ContributionWall
           days={days}
-          trackedFrom={all?.from}
+          trackedFrom={trackedFrom ?? undefined}
           selection={kind === "all" ? null : range}
           onSelectDay={select("day")}
           onSelectWeek={select("week")}
@@ -225,10 +239,11 @@ export default function SummaryPage() {
  * 字符渲染出来是单色，跟墙上实际用的紫阶对不上，读者没法拿图例反推深浅。
  * 0 档（轨道色）不在图例里：它是「当天没有活动」，不是一档强度。
  *
- * 「还没装」也不在图例里。图例是**解码颜色的钥匙**，「还没装」是关于这个
- * 应用安装日期的事实 —— 把它画成色块，读者会当成一种活动数据去读。
- * 它是热力图下方提示行里的一句话（`ContributionWall`），那里才是它该待的地方。
- * 两种"空"的视觉区分照旧保留：合并成一种就是谎报装之前那些天也没活动。
+ * 「首次有记录之前」也不在图例里。图例是**解码颜色的钥匙**，那一档是关于
+ * 「这个应用什么时候开始有记录」的事实 —— 把它画成色块，读者会当成一种活动
+ * 数据去读。它靠两处表达：格子的弱描边，以及热力图下方提示行里的一句话
+ * （`ContributionWall`）。
+ * 两种"空"的视觉区分照旧保留：合并成一种就是谎报「首次有记录之前那些天也没活动」。
  */
 function ScaleLegendSteps() {
   return (

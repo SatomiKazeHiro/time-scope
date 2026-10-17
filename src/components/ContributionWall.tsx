@@ -36,7 +36,7 @@ const PAD_STYLE: React.CSSProperties = { background: "transparent" };
  * 而读屏用户看不到描边 —— 名字就是他们唯一的区分通道。
  */
 function dayLabel(c: { date: string; totalMs: number; tracked: boolean }): string {
-  if (!c.tracked) return `${c.date} · 还没装时迹`;
+  if (!c.tracked) return `${c.date} · 首次有记录之前`;
   const hours = Math.round((c.totalMs / 3_600_000) * 10) / 10;
   return `${c.date} · ${hours}h`;
 }
@@ -45,8 +45,10 @@ interface ContributionWallProps {
   /** **连续升序**的日期序列（`lib/summary.ts` 的 `fillDays` 产出） */
   days: DayCell[];
   /**
-   * 首个有记录的日子。这之前的格子画成「还没装」——
-   * 和「装了但当天没活动」是两回事（见 `uninstalledColor`）。
+   * **首个有记录的日子**（不是安装日 —— 那个维度后端没有）。这之前的格子画成
+   * 弱描边，与「有记录但当天没活动」是两回事（见 `uninstalledColor`）。
+   *
+   * 不传时退化为「从窗口第一天起就有记录」，于是没有这一档 —— 生产代码必须传。
    */
   trackedFrom?: string;
   /** `null` = 当前是「全部」，不框 */
@@ -212,7 +214,7 @@ export default function ContributionWall({
 
       <p className="mt-1 text-[10px] text-ink-faint">
         一列一周，上到下是周一到周日。点格子选一天，点下方细条选一周，点月份选整月。
-        装之前的日子画成浅格，不计入统计。
+        首次有记录之前的日子画成浅格，不计入统计。
       </p>
       </div>
 

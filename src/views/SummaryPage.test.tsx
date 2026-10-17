@@ -122,6 +122,25 @@ describe("SummaryPage", () => {
     expect(container.querySelectorAll("[data-in-range]").length).toBeGreaterThan(0);
   });
 
+  it("热力图拿到的是「首个有记录日」，不是窗口起点", async () => {
+    // 2026-10-17 的回归：`ede68cb` 把默认范围换成 53 周窗口之后，
+    // `trackedFrom` 跟着变成了 `all.from`（= 窗口起点 = `days[0].date`），
+    // 于是「首次有记录之前」那一档永不渲染 —— 而提示行还写着「画成浅格」。
+    // `ContributionWall.test` 只覆盖了「不传 trackedFrom」的情形，所以没人发现；
+    // 这条钉的是**生产接线**：传进来的必须是 `cal.first`。
+    const { container } = render(<SummaryPage />);
+    await waitFor(() => expect(callsTo("get_daily_calendar")).toBe(1));
+    await waitFor(() =>
+      expect(container.querySelector("[data-tone='uninstalled']")).not.toBeNull(),
+    );
+
+    const dates = Array.from(
+      container.querySelectorAll("[data-tone='uninstalled']"),
+    ).map((c) => c.getAttribute("data-date") ?? "");
+    expect(dates.length).toBeGreaterThan(0);
+    expect(dates.every((d) => d < CAL.first), "这一档只该出现在首个有记录日之前").toBe(true);
+  });
+
   it("点格子后 get_summary 收到那一天", async () => {
     render(<SummaryPage />);
     await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
