@@ -158,6 +158,62 @@ fn default_rules_toml_is_valid() {
 }
 
 #[test]
+fn default_rules_never_list_the_same_process_twice() {
+    // 同一个进程写进两条规则时**只有先命中的那条生效**，后一条永远够不到 ——
+    // 设置页的 `append_rule` 会明确拒绝这种写法（STATUS §1 第 27 条），
+    // 内置默认也该守同一条线。
+    //
+    // 曾把 `Teams.exe` 同时放在 `chat` 和 `meet` 里：两条都是 communication，
+    // 所以结果没差，但「改 meet 的类别对 Teams 无效」这件事看不出来 ——
+    // 静默失效正是 `append_rule` 宁可报错也不追加的理由。
+    #[derive(serde::Deserialize)]
+    struct Doc {
+        #[serde(default)]
+        rule: Vec<Raw>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Raw {
+        id: String,
+        #[serde(default)]
+        process: Vec<String>,
+    }
+
+    let doc: Doc = toml::from_str(crate::DEFAULT_RULES_TOML).expect("内置默认规则必须能解析");
+    let mut owner: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut clashes = Vec::new();
+    for rule in &doc.rule {
+        for raw in &rule.process {
+            // 与 `RuleSet::from_toml` 同口径：只看文件名、大小写不敏感
+            let key = raw
+                .trim()
+                .rsplit(['\\', '/'])
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if key.is_empty() {
+                continue;
+            }
+            if let Some(prev) = owner.insert(key.clone(), rule.id.clone()) {
+                clashes.push(format!("{key} 在 {prev} 和 {} 里各写了一次", rule.id));
+            }
+        }
+    }
+    assert!(clashes.is_empty(), "{clashes:?}");
+}
+
+#[test]
+fn teams_resolves_to_exactly_one_rule() {
+    // 上面那条守的是「不重复」，这条守的是「重复修掉之后口径没变」：
+    // Teams 归 chat（先命中），而不是被 meet 抢走。
+    let rs = RuleSet::from_toml(crate::DEFAULT_RULES_TOML).unwrap();
+    assert_eq!(
+        rs.classify(Some("Teams.exe")).rule_id.as_deref(),
+        Some("chat"),
+        "Teams 是聊天工具，chat 那条排在 meet 前面"
+    );
+}
+
+#[test]
 fn classification_defaults_to_unknown() {
     let c = Classification::unknown();
     assert_eq!(c.category.as_str(), "unknown");

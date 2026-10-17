@@ -315,7 +315,7 @@ confidence = 0.8
 
 [[rule]]
 id = "meet"
-process = ["Zoom.exe", "Teams.exe", "TencentMeeting.exe"]
+process = ["Zoom.exe", "TencentMeeting.exe"]
 category = "communication"
 confidence = 0.8
 
@@ -336,6 +336,15 @@ id = "video"
 process = ["vlc.exe", "PotPlayerMini64.exe", "PotPlayerMini.exe", "mpv.exe"]
 category = "entertainment"
 confidence = 0.75
+
+[[rule]]
+# 资源管理器与桌面。前台是 explorer.exe 且标题为空时，多半是桌面、任务栏或
+# 「另存为」对话框——归 work 会把「在系统里翻找」记成产出，所以给 life 并压低置信度。
+# 它长期是未覆盖榜第一名（本机 15 天里 50.6 小时，占全部 unknown 的 88%）。
+id = "explorer"
+process = ["explorer.exe"]
+category = "life"
+confidence = 0.5
 
 [[rule]]
 id = "netdisk"
