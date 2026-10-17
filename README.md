@@ -103,6 +103,14 @@ pnpm tauri dev
 - **前提**：exe 所在目录必须可写。默认的 NSIS 安装是「当前用户」安装，
   落在用户目录下，可写；**装进 `C:\Program Files` 就写不进去了**（那是 Windows 的权限规则，
   不是产品选择）—— 那种情况启动会直接报错并说明，不会悄悄把数据换个地方
+- **与操作系统无关**：这条规则只用 `current_exe()`，没有 `%APPDATA%`、注册表或平台库 ——
+  Linux / macOS 上同样成立，只要程序本身待在一个可写的目录里。「程序」在三个平台上长得不同：
+  Windows 是 exe，macOS 是 **`.app` 文件夹**（数据放在它**旁边**，不写进 bundle ——
+  那会破坏签名、更新时被替换），Linux 的 AppImage 是那个 **`.AppImage` 文件**本身
+  （数据放在它旁边，不写进 `/tmp/.mount_*` 那个只读临时挂载点）
+- **装到系统目录就写不进去** —— 这不是本项目的选择，是各系统的规则：
+  Windows 的 `C:\Program Files`、Linux 的 `/usr/bin` 与 Flatpak/Snap 沙箱、
+  macOS 的 `/Applications`（对普通用户只读）。那时用 `TIME_SCOPE_DATA` 指到别处
 - 想放到别的盘 / 别处：设环境变量 `TIME_SCOPE_DATA=<绝对路径>`。
   开发时也建议这么用（`pnpm tauri dev` 的 exe 在 `src-tauri\target\debug\`，
   数据会跟着落进去，`cargo clean` 会一并删掉）
@@ -111,7 +119,7 @@ pnpm tauri dev
 
 ```bash
 # Rust：必须带 --workspace，否则只跑根包、core/engine/storage/collector 全部被跳过
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 418 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 427 passed
 
 # 前端
 pnpm test                                                       # 374 passed

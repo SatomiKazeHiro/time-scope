@@ -10,7 +10,7 @@
 
 ```
 Rust  38 文件    TS/TSX  24 文件      （均不含测试）
-测试  418 Rust + 374 前端 = 792 条，全绿
+测试  427 Rust + 374 前端 = 801 条，全绿
 分支  phase1-polish 已 fast-forward 合入 main（2026-10-15）
 推送  main 已与 origin/main 同步（2026-10-15）；phase1-polish 本地与远端都还在
 ```
@@ -74,7 +74,7 @@ Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 | 43 | 专注度「换成分母 = 有输入时长」就解决了「显示 100%」 | **只解决了一半。** 分母变小**不会**让占比变小，夹到 1 之后仍是 100% —— 「一件事做 60 分、走神 40 分」和「看视频 60 分、间歇动手 20 分」算出来**完全一样** | 2026-10-13 用户拍板：**接受这一点，就要笼统的**（「既然干不了为什么不后退？细分是未来的方向，现在要明确的笼统」）。于是口径定成「没在动的时间不进分母」，细分**有意不做**。全过程见 [`plans/2026-10-13-focus-metric.md`](plans/2026-10-13-focus-metric.md) |
 | 44 | 设置页改了「点 ✕ 关窗时」，点 ✕ 还是老行为；或者刚选的值被关窗弹框改掉了 | **曾经是真 bug，而且界面在撒谎。** `Residency` 在 `install()` 时把 `close_behavior` 快照进 `Mutex`、`autostart` 快照进 `AtomicBool`，而 `set_config` 只 `patch_line` 写文件、**不回写那份快照**。于是设置页选了 minimize、点 ✕ 仍按启动值走；启动值若是 `ask` 还会弹框，而用户答一次就把**刚存的那一项**覆写进 config.toml（同一个键，后写的赢），`get_config` 又现读磁盘 —— 界面显示的还不是用户选的那个 | 2026-10-15 已修，两个键走了**不同的路**：`close_behavior` 改成关窗时**现读 config.toml**（`residency.rs` 的 `effective_close_behavior`，磁盘优先、读不出才回退快照），于是它**真的**热生效、角标去掉了；`autostart` 改不了（托盘勾选态与系统注册表都要重过启动流程），诚实地标着「重启后生效」。**别为了让 `autostart` 也立刻生效就去改 `set_config` 回写 `Residency`** —— 要给 async 命令加 managed state、重新定跨命令的加锁顺序，是独立的、可评估的产品决定 |
 | 45 | 「我就切了 3 秒微信，那 3 秒怎么算进 Code 了？」或者「为什么这个程序今天只有 2 秒的记录，时间线上一根刺」 | **故意的，这就是归一化**（2026-10-17）。短于 `min_segment_duration_s`（默认 30s）的段**并进紧邻的前驱**；没有前驱才并进后继；两侧都不相接（中间有空档）就自己留着。规则与理由全在 `crates/engine/src/normalize.rs` 的头注释 | 别为了「让那 3 秒归它自己」把短段单独放行 —— 那就是回到「一天 123 个 sliver、时间线上 2px 的刺」。代价是分类时长会挪动（真实数据上日内 ~1%，单日最大 10 分钟量级，§4.6 有实测）。**idle 与非 idle 不许互并**（把空闲算成工作就是说谎），这条边界永远要在 |
-| 46 | 数据不在 `%APPDATA%`，而在 exe 旁边 | **故意的**（2026-10-17 用户拍板）。一条规则：程序在哪，账本就在哪 —— 不分「安装版 / 便携版」，它们是同一个软件。拷一份 exe 就是一份独立账本，删目录就是连数据一起删。目录名带前缀 `time-scope-data`，不会和已有的 `data\` 撞 | **前提是 exe 目录可写**：默认的 NSIS 是当前用户安装（`installMode: currentUser`），可写；装进 `C:\Program Files` 就写不进去，启动会报错并说明，**不会**悄悄换地方。想放别的盘就设 `TIME_SCOPE_DATA`。别再改回 `%APPDATA%`（那是 Roaming，大库会被同步）；也**别**加「装到 Program Files 就自动退到 AppData」这种分支 —— 用户会找不到自己的账本 |
+| 46 | 数据不在 `%APPDATA%`，而在 exe 旁边 | **故意的**（2026-10-17 用户拍板）。一条规则：程序在哪，账本就在哪 —— 不分「安装版 / 便携版」，它们是同一个软件。拷一份 exe 就是一份独立账本，删目录就是连数据一起删。目录名带前缀 `time-scope-data`，不会和已有的 `data\` 撞 | **前提是 exe 目录可写**：默认的 NSIS 是当前用户安装（`installMode: currentUser`），可写；装进 `C:\Program Files` 就写不进去，启动会报错并说明，**不会**悄悄换地方。想放别的盘就设 `TIME_SCOPE_DATA`。别再改回 `%APPDATA%`（那是 Roaming，大库会被同步）；也**别**加「装到 Program Files 就自动退到 AppData」这种分支 —— 用户会找不到自己的账本。**这条规则与 OS 无关**：只用 `current_exe()`，Linux/macOS 一样成立；「程序」在 macOS 上是 `.app` 文件夹（数据放它旁边，不写进 bundle —— 会破坏签名、更新时被替换），Linux 的 AppImage 用 `$APPIMAGE` 定位那个文件。三个容器规则都在 `config::resolve_data_dir` 里，测试在 Windows 上就能跑（喂平台形状的路径）。移植时**还有一块没解决的**：采集器 / 托盘 / 单实例 / 弹窗都是平台专属 —— 见 §4.7 |
 
 ---
 
@@ -83,7 +83,7 @@ Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 ### 自动化（可随时重跑，全绿）
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 418 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 427 passed
 cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets   # 0 warning
 pnpm test                                                       # 374 passed
 pnpm build                                                      # 无 tsc 报错
@@ -349,6 +349,24 @@ day          重叠(旧→新)   总时长(旧→新)
 设置页少一个控件，`EngineConfig` 少一个字段。要理解历史讨论，看
 `plans/2026-10-13-segment-boundaries.md`（它是当时的过程记录，别当成现状）。
 动手前仍建议先读 §4.2 —— 那一轮踩了五轮才定位。
+
+### 4.7 移植到别的系统时的边界（2026-10-17 记一笔）
+
+用户问过「其他常见系统也该支持这个逻辑」。**数据那条规则已经是跨平台的**，
+整机还不是 —— 差的是这些平台专属件：
+
+| 块 | 现状 | 移植要做什么 |
+|---|---|---|
+| 数据目录 | ✅ 已跨平台（`config::resolve_data_dir`：exe / `.app` / `$APPIMAGE` 三种容器） | 无 |
+| 采集 | `crates/collector` 全是 Win32：`SetWinEventHook`（窗口）、`GetLastInputInfo`（输入 idle）、`WTSRegisterSessionNotification`（锁屏）、`PowerRegisterSuspendResumeNotification`（睡眠） | 各平台换一套采集实现，`RawSignal` 这层不用动 |
+| 托盘 / 关窗 / 自启 | `residency.rs` + `tray.rs` + `autostart.rs`；Tauri 托盘跨平台，自启要走各平台机制 | 自启换实现，其余基本可留 |
+| 单实例 | 插件本身跨平台 | 无 |
+| 打不开库的弹窗 | `db_open.rs` 的 `MessageBox`（`cfg(windows)`） | 换原生对话框或纯日志 |
+| 打包 | 只出 NSIS（`installMode: currentUser`） | 各平台各自的包；`.app` 与 AppImage 的容器规则已就位 |
+
+**能复用的**：core / engine / storage（纯 Rust、零 IO）与整个前端 ——
+「采集进来之后的一切」都不用重写。
+
 
 ---
 

@@ -302,38 +302,87 @@ pub fn parse(src: &str) -> AppConfig {
 /// 也不会和别人的 `data\` 撞（2026-10-17 用户要求）。
 pub const DATA_DIR_NAME: &str = "time-scope-data";
 
-/// 库 / `config.toml` / `rules.toml` 住哪 —— **exe 所在目录下的 `time-scope-data\`**。
+/// 库 / `config.toml` / `rules.toml` 住哪 —— **「程序」所在目录下的 `time-scope-data\`**。
 ///
 /// 一条规则：**程序在哪，账本就在哪**。不区分「安装版 / 便携版」——
 /// 它们是同一个软件，凭什么走两条路。拷贝一份 exe 到 U 盘，账本跟着走；
 /// 删掉目录 = 连数据一起删，这才是「便携」该有的样子。
 ///
+/// **与操作系统无关**：这里只用 `current_exe()` 与路径拼接 —— 没有
+/// `%APPDATA%`、没有注册表、没有 `dirs` 之类的平台库。同一份规则在 Linux /
+/// macOS 上一样成立，只要程序本身待在一个**可写**的目录里。
+///
+/// 但「程序」在三个平台上长的不一样，于是有两条容器规则（见 `app_container`）：
+/// - **macOS 的 `.app`**：exe 在 `Foo.app/Contents/MacOS/foo` 里。往那里写会
+///   破坏代码签名、用户也看不见，而且更新会整个替换掉 bundle —— 所以认
+///   那个 `.app` **文件夹**为「程序」，数据放在它**旁边**。
+/// - **Linux 的 `.AppImage`**：exe 在一个只读且临时的 squashfs 挂载点里
+///   （`/tmp/.mount_*`）。运行时 `$APPIMAGE` 指向那个 `.AppImage` 文件本身 ——
+///   数据就放在它旁边。
+///
 /// 唯一例外是 `TIME_SCOPE_DATA` 显式覆盖：开发时把库指到别处（别让 dev
 /// 写真实账本）、或者你想把账本放在另一块盘上。它是一个开关，不是一条分支。
 ///
-/// **前提**：exe 所在目录必须可写。用默认的 NSIS 安装（`installMode:
-/// currentUser`）它就在用户目录下，可写；但如果装进 `C:\Program Files`
-/// （per-machine 安装 / MSI），普通用户**写不进去** —— 那时启动会在
-/// 「建目录」这一步失败并弹出带路径的说明，而不是悄悄把数据放到别处。
+/// **前提**：放置程序的目录必须可写。这不是本项目的选择，是各系统的规则：
+/// - Windows：默认的 NSIS 是当前用户安装（`installMode: currentUser`），可写；
+///   装进 `C:\Program Files`（per-machine / MSI）普通用户写不进去
+/// - Linux：`/usr/bin`、Flatpak / Snap 的沙箱都是只读 —— 那里只能走
+///   `TIME_SCOPE_DATA` 或发行版自带的数据目录
+/// - macOS：`/Applications` 对普通用户只读
+///
+/// 写不进去时**启动会在建目录那一步失败并弹出带路径的说明**，
+/// 而不是悄悄把数据放到别处（那才是真的找不到账本）。
 pub fn data_dir() -> PathBuf {
-    resolve_data_dir(std::env::var_os("TIME_SCOPE_DATA"), exe_dir().as_deref())
+    resolve_data_dir(
+        std::env::var_os("TIME_SCOPE_DATA"),
+        std::env::var_os("APPIMAGE"),
+        std::env::current_exe().ok().as_deref(),
+    )
 }
 
-/// 纯逻辑部分（好测）：给定覆盖值与 exe 目录，算出数据目录。
-fn resolve_data_dir(override_dir: Option<std::ffi::OsString>, exe_dir: Option<&Path>) -> PathBuf {
+/// 纯逻辑部分（好测）：给定「覆盖值 / AppImage / 自身路径」，算出数据目录。
+///
+/// 三个入参都是显式传进来的，于是这三个分支不需要真的跑在三个系统上才能测。
+fn resolve_data_dir(
+    override_dir: Option<std::ffi::OsString>,
+    appimage: Option<std::ffi::OsString>,
+    exe: Option<&Path>,
+) -> PathBuf {
     if let Some(dir) = override_dir {
         let p = PathBuf::from(dir);
         if !p.as_os_str().is_empty() {
             return p;
         }
     }
-    let base = exe_dir.expect("取不到 exe 所在目录（current_exe）—— 无法确定数据该放哪");
-    base.join(DATA_DIR_NAME)
+    // .AppImage：exe 在只读挂载点里，用 `$APPIMAGE` 指向的那个文件作锚
+    if let Some(img) = appimage {
+        let p = PathBuf::from(img);
+        if let Some(parent) = p.parent() {
+            return parent.join(DATA_DIR_NAME);
+        }
+    }
+    let exe = exe.expect("取不到自身路径（current_exe）—— 无法确定数据该放哪");
+    app_container(exe)
+        .parent()
+        .expect("程序所在目录没有父目录 —— 无法确定数据该放哪")
+        .join(DATA_DIR_NAME)
 }
 
-fn exe_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    exe.parent().map(Path::to_path_buf)
+/// 「程序」在文件系统上的那个东西：macOS 的 `.app` 文件夹，否则就是 exe 本身。
+///
+/// 判据只看路径里有没有 `.app/` 这一段 —— 不需要 `cfg!(target_os)`，
+/// 于是这条测试在 Windows 上也能跑（喂一个 macOS 形状的路径即可）。
+fn app_container(exe: &Path) -> PathBuf {
+    let comps: Vec<_> = exe.components().collect();
+    if let Some(i) = comps.iter().rposition(|c| {
+        c.as_os_str()
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(".app")
+    }) {
+        return comps[..=i].iter().collect();
+    }
+    exe.to_path_buf()
 }
 
 pub fn config_path() -> PathBuf {
@@ -919,7 +968,11 @@ mod retention_tests {
     #[test]
     fn data_dir_sits_next_to_the_executable() {
         // 一条规则：程序在哪，账本就在哪。不分安装版/便携版。
-        let dir = resolve_data_dir(None, Some(std::path::Path::new(r"D:\tools\时迹")));
+        let dir = resolve_data_dir(
+            None,
+            None,
+            Some(std::path::Path::new(r"D:\tools\时迹\time-scope.exe")),
+        );
         assert_eq!(dir, std::path::PathBuf::from(r"D:\tools\时迹\time-scope-data"));
     }
 
@@ -935,7 +988,8 @@ mod retention_tests {
     fn time_scope_data_overrides_the_exe_directory() {
         let dir = resolve_data_dir(
             Some(std::ffi::OsString::from(r"D:\ledgers\ts")),
-            Some(std::path::Path::new(r"C:\Program Files\时迹")),
+            None,
+            Some(std::path::Path::new(r"C:\Program Files\时迹\time-scope.exe")),
         );
         assert_eq!(
             dir,
@@ -949,7 +1003,8 @@ mod retention_tests {
         // 环境变量存在但为空（`$env:TIME_SCOPE_DATA = ""`）不该把目录解析成空路径
         let dir = resolve_data_dir(
             Some(std::ffi::OsString::from("")),
-            Some(std::path::Path::new(r"D:\tools\时迹")),
+            None,
+            Some(std::path::Path::new(r"D:\tools\时迹\time-scope.exe")),
         );
         assert_eq!(dir, std::path::PathBuf::from(r"D:\tools\时迹\time-scope-data"));
     }
@@ -958,8 +1013,68 @@ mod retention_tests {
     fn missing_exe_dir_is_a_loud_failure() {
         // 解析不出 exe 目录时**不静默落到当前工作目录** —— 那会让账本出现在
         // 随机位置（比如从快捷方式启动时的 system32）。宁可在这里炸。
-        let r = std::panic::catch_unwind(|| resolve_data_dir(None, None));
+        let r = std::panic::catch_unwind(|| resolve_data_dir(None, None, None));
         assert!(r.is_err(), "没有 exe 目录时必须报错，不能悄悄换地方");
+    }
+
+    #[test]
+    fn a_macos_app_bundle_puts_the_ledger_next_to_the_bundle() {
+        // exe 在 Foo.app/Contents/MacOS/ 里。往 bundle 内部写会破坏代码签名、
+        // 用户看不见，更新还会整个替换掉 —— 所以锚是那个 .app 文件夹。
+        let dir = resolve_data_dir(
+            None,
+            None,
+            Some(std::path::Path::new(
+                "/Users/me/Applications/时迹.app/Contents/MacOS/time-scope",
+            )),
+        );
+        assert_eq!(
+            dir,
+            std::path::PathBuf::from("/Users/me/Applications/time-scope-data"),
+            "数据要在 .app 旁边，不是在它里面"
+        );
+    }
+
+    #[test]
+    fn a_linux_appimage_puts_the_ledger_next_to_the_image_file() {
+        // AppImage 的 exe 在 /tmp/.mount_xxx/ 里（只读且临时），
+        // $APPIMAGE 才指向用户手里那个可写的文件。
+        let dir = resolve_data_dir(
+            None,
+            Some(std::ffi::OsString::from("/home/me/apps/时迹.AppImage")),
+            Some(std::path::Path::new("/tmp/.mount_abc123/usr/bin/time-scope")),
+        );
+        assert_eq!(
+            dir,
+            std::path::PathBuf::from("/home/me/apps/time-scope-data"),
+            "数据要跟在那个 .AppImage 文件旁边，不能写进临时挂载点"
+        );
+    }
+
+    #[test]
+    fn an_empty_appimage_is_ignored() {
+        // 环境变量存在但为空时不该把数据放到根目录
+        let dir = resolve_data_dir(
+            None,
+            Some(std::ffi::OsString::from("")),
+            Some(std::path::Path::new("/opt/time-scope/time-scope")),
+        );
+        assert_eq!(
+            dir,
+            std::path::PathBuf::from("/opt/time-scope/time-scope-data")
+        );
+    }
+
+    #[test]
+    fn the_override_beats_both_container_rules() {
+        let dir = resolve_data_dir(
+            Some(std::ffi::OsString::from("/data/ledger")),
+            Some(std::ffi::OsString::from("/home/me/apps/时迹.AppImage")),
+            Some(std::path::Path::new(
+                "/Users/me/Applications/时迹.app/Contents/MacOS/time-scope",
+            )),
+        );
+        assert_eq!(dir, std::path::PathBuf::from("/data/ledger"));
     }
 
     // --- 「改完要不要重启」的诚实性（2026-10-15）---
