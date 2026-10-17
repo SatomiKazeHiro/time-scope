@@ -1,31 +1,3 @@
-/**
- * 原始采集事件。UI 已改用 ActivitySegment，这条线只供
- * 事件表本身与诊断用途。
- */
-export interface StoredEvent {
-  id: string;
-  /** Unix 毫秒 */
-  timestamp: number;
-  type: EventType;
-  /** `EventType` 变体的 JSON */
-  payload: string;
-}
-
-export type EventType =
-  | "window_focus"
-  | "window_title_change"
-  | "system_idle"
-  | "system_resume"
-  | "session_lock"
-  | "session_unlock"
-  | "input_heartbeat";
-
-export interface WindowFocusPayload {
-  process_name: string;
-  window_title: string | null;
-  exe_path: string | null;
-}
-
 /** Rust `StoredSegment` 的镜像。Rust 侧是 camelCase 序列化。 */
 export interface ActivitySegment {
   id: string;
@@ -70,10 +42,16 @@ export async function getSegments(date: string): Promise<ActivitySegment[]> {
   return await invoke<ActivitySegment[]>("get_segments", { date });
 }
 
-/** @deprecated UI 改用 getSegments；后端也已移除 get_events。 */
-export async function getEvents(date: string): Promise<StoredEvent[]> {
+/**
+ * 按 evidence id 反查某个段的窗口标题。
+ *
+ * 标题不在段上而在 events 表里，所以这一条是**懒加载**的（点开段详情才调）。
+ * 它原来住在 `components/EventDetail.tsx`，是 `types.ts` 之外唯一一个 IPC 封装 ——
+ * IPC 边界集中在一个文件里，改后端命令名时只需要搜一处。
+ */
+export async function getSegmentTitles(eventIds: string[]): Promise<SegmentTitle[]> {
   const { invoke } = await import("@tauri-apps/api/core");
-  return await invoke<StoredEvent[]>("get_events", { date });
+  return await invoke<SegmentTitle[]>("get_segment_titles", { eventIds });
 }
 
 export function todayString(d: Date = new Date()): string {
@@ -86,30 +64,6 @@ export function shiftDate(date: string, days: number): string {
   const dt = new Date(y, m - 1, d);
   dt.setDate(dt.getDate() + days);
   return todayString(dt);
-}
-
-/** 事件类型 -> 展示色。骨架阶段按事件类型着色，分类色属 engine task。 */
-export const EVENT_COLOR: Record<EventType, string> = {
-  window_focus: "#4c8dff",
-  window_title_change: "#7fb0ff",
-  system_idle: "#9aa0a6",
-  system_resume: "#66bb6a",
-  session_lock: "#8e24aa",
-  session_unlock: "#ab47bc",
-  input_heartbeat: "#26a69a",
-};
-
-export function colorFor(type: string): string {
-  return EVENT_COLOR[type as EventType] ?? "#bdbdbd";
-}
-
-/** 安全解析 payload：坏 JSON 不该让整页崩。 */
-export function parsePayload<T>(raw: string): T | null {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
 }
 
 function pad(n: number): string {

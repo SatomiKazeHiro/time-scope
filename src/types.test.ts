@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { colorFor, parsePayload, shiftDate, todayString } from "./types";
+import { shiftDate, todayString } from "./types";
 
 describe("shiftDate", () => {
   it("rolls forward across a month boundary", () => {
@@ -31,37 +31,5 @@ describe("todayString", () => {
   it("zero-pads month and day", () => {
     expect(todayString(new Date(2026, 0, 5))).toBe("2026-01-05");
     expect(todayString(new Date(2026, 11, 31))).toBe("2026-12-31");
-  });
-});
-
-describe("colorFor", () => {
-  it("gives a distinct color per event type", () => {
-    const types = [
-      "window_focus",
-      "window_title_change",
-      "system_idle",
-      "system_resume",
-      "session_lock",
-      "session_unlock",
-      "input_heartbeat",
-    ];
-    const colors = types.map(colorFor);
-    expect(new Set(colors).size).toBe(types.length);
-  });
-
-  it("falls back for unknown types instead of returning undefined", () => {
-    expect(colorFor("brand_new_type")).toBe("#bdbdbd");
-  });
-});
-
-describe("parsePayload", () => {
-  it("parses valid JSON", () => {
-    expect(parsePayload<{ a: number }>('{"a":1}')).toEqual({ a: 1 });
-  });
-
-  it("returns null for malformed JSON instead of throwing", () => {
-    // 一条坏 Event 不该让整页白屏
-    expect(parsePayload("{not json")).toBeNull();
-    expect(parsePayload("")).toBeNull();
   });
 });

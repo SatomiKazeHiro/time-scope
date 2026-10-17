@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AppWindow, ChevronLeft, ChevronRight, Clock, Gauge, Layers, ShieldCheck } from "lucide-react";
-import { parsePayload, type Segment, type SegmentTitle } from "../types";
+import { getSegmentTitles, type Segment, type SegmentTitle } from "../types";
 import { formatDuration } from "../lib/bucket";
 import { colorForCategory, metaForCategory } from "../design/categories";
 
@@ -300,24 +300,5 @@ function TitleList({
         </li>
       ))}
     </ul>
-  );
-}
-
-export async function getSegmentTitles(eventIds: string[]): Promise<SegmentTitle[]> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  return await invoke<SegmentTitle[]>("get_segment_titles", { eventIds });
-}
-
-/** @deprecated 旧的事件详情面板。UI 改用 SegmentDetail 后随之退役。 */
-export function EventDetail({ event }: { event: import("../types").StoredEvent | null }) {
-  if (!event) return <p className="text-sm text-ink-faint">点击时间线上的色块查看详情。</p>;
-  const p = parsePayload<import("../types").WindowFocusPayload>(event.payload);
-  return (
-    <div className="mt-3">
-      <h2 className="panel-title">{event.type}</h2>
-      <p className="m-0 text-sm text-ink-muted">
-        {p ? `${p.process_name} — ${p.window_title ?? "（无标题）"}` : "无法解析"}
-      </p>
-    </div>
   );
 }
