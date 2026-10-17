@@ -1,18 +1,11 @@
 //! IPC 命令：前端能调用的全部 9 条。
 //!
-//! 从 `lib.rs` 拆出来的原因：`lib.rs` 同时是应用入口、命令宿主和启动编排，
-//! 改其中任何一件事都要在同一百来行里找位置。现在边界是：
-//! - `lib.rs` —— 插件顺序、启动、退出钩子
-//! - `boot.rs` —— 启动时那六步（开库 → 清理 → 装配重放 → 起线程 → 托盘 → manage）
-//! - `ipc.rs` ← 本文件 —— 命令
-//! - `state.rs` —— 命令与线程共享的东西
-//! - `maintenance.rs` —— 挂在轮询上的维护
+//! 命令全在这里：`lib.rs` 只管插件顺序与退出钩子，`boot.rs` 管启动编排，
+//! `state.rs` 放共享状态，`maintenance.rs` 是挂在轮询上的维护。
 //!
-//! **所有命令都标了 `async`**，所以它们跑在 Tauri 的异步运行时上，不是主线程。
-//! Tauri v2 文档：「Commands without the async keyword are executed on the main
-//! thread.」`get_top_titles` 那条 `json_extract` 全表扫实测一年数据 ≈20 秒，
-//! 挂在主线程上窗口会整个"未响应"、用户十有八九直接强杀进程。
-//! `tests/ipc_threading.rs` 守着这条不变量（它扫的就是本文件）。
+//! 全部标了 `async`：Tauri v2 里不带 async 的命令跑在主线程，而
+//! `get_top_titles` 的全表扫实测一年数据约 20 秒 —— 冻住窗口，用户会强杀进程。
+//! `tests/ipc_threading.rs` 守着这条。
 
 use crate::config;
 use crate::date_range::{day_range_ms, local_offset};
@@ -29,7 +22,7 @@ use std::collections::BTreeMap;
 ///
 /// 结果 = 已落库的段 + 正在生长的当前段（还没落库，投影出来只为实时）。
 ///
-/// 这个函数同时是三轮车的车头：**维护 → 按需重放 → 读**。三件事各自独立，
+/// 这个函数同时是三轮车的车头：维护 → 按需重放 → 读。三件事各自独立，
 /// 但都挂在这条稳定高频的 IPC 上（理由见各自的注释）；写成三个具名调用而不是
 /// 揉进一段，是因为「改轮询频率」不该悄悄改掉另外两件事的行为。
 #[tauri::command(async)]
@@ -79,7 +72,7 @@ pub fn get_segment_titles(
     Ok(titles::titles_for(&state.conn, &event_ids, &state.redactor))
 }
 
-/// 汇总页的热力图数据。**无参数** —— 热力图永远渲染全部数据，
+/// 汇总页的热力图数据。无参数 —— 热力图永远渲染全部数据，
 /// 不受选中范围影响（spec §2.3）。
 ///
 /// 库为空时返回 `None`：那是「刚装完还没跑满一天」的真实状态，
@@ -106,7 +99,7 @@ pub struct SummaryOut {
     top_apps: Vec<activity_storage::AppSlice>,
 }
 
-/// 汇总页顶部指标。`from` / `to` 都是 `YYYY-MM-DD` 的**闭区间**
+/// 汇总页顶部指标。`from` / `to` 都是 `YYYY-MM-DD` 的闭区间
 /// （点「某一天」时两者相同），内部转成半开区间。
 #[tauri::command(async)]
 pub fn get_summary(
@@ -140,12 +133,12 @@ pub fn get_summary(
     })
 }
 
-/// 窗口标题排名。**懒加载**——底部面板进入视口才发这一发（spec §3.3）。
+/// 窗口标题排名。懒加载——底部面板进入视口才发这一发（spec §3.3）。
 ///
 /// 不设范围上限：当前 5 天数据实测 199ms；按每天 10,092 事件外推，
 /// 一年约 3.7M 行 → 约 15s。这是 spec §9 第 7 条记录的已知代价。
 ///
-/// `async` 在这里是**必需**而非风格问题：这条 SQL 里的
+/// `async` 在这里是必需而非风格问题：这条 SQL 里的
 /// `json_extract(payload,...)` 必须回表取 payload、无法用索引覆盖，
 /// 只能全表扫；跑在主线程上会冻结整个界面（A3）。
 #[tauri::command(async)]
@@ -164,7 +157,7 @@ pub fn get_top_titles(
     let c = state.writer.conn();
     let raw = activity_storage::title_counts_in_range(&c, start_ms, end_ms)
         .map_err(|e| e.to_string())?;
-    // A4：`title_counts_in_range` 给的是 events.payload 里的**原文**，
+    // A4：`title_counts_in_range` 给的是 events.payload 里的原文，
     // 合并前必须再过一遍脱敏器，否则配了 [[redact]] 的用户在这里
     // 仍然看得到明文客户名/订单号。
     Ok(title_norm::merge_top_titles(raw, limit, &state.redactor))
@@ -172,7 +165,7 @@ pub fn get_top_titles(
 
 /// 设置页的「哪些程序还没规则覆盖」列表。
 ///
-/// 回答的是**「你的配置缺了什么」**，与汇总面板的「今天干了什么」是两件事——
+/// 回答的是「你的配置缺了什么」，与汇总面板的「今天干了什么」是两件事——
 /// 同一张表曾在当日汇总里做过并被撤回，因为那会把一张配置表混进
 /// 一个描述时间去向的面板。见 STATUS §4.1。
 ///
@@ -197,7 +190,7 @@ pub fn get_uncovered_programs(
 
 /// 设置页的「给这个程序加一条规则」。
 ///
-/// 写回 `rules.toml` 并**立刻热替换**内存里的规则集 —— 用户加完规则
+/// 写回 `rules.toml` 并立刻热替换内存里的规则集 —— 用户加完规则
 /// 就不该被要求重启，这正是这个入口存在的理由。
 ///
 /// `confidence` 固定 0.9：内置规则里跟 IDE / 浏览器同级的一律 0.9，
@@ -217,10 +210,10 @@ pub fn add_rule(
 
 /// 前端拿到的配置形状。与 `AppConfig` 字段一一对应，但：
 /// - `close_behavior` 用字符串（枚举在 Rust 侧、前端不认）
-/// - `needs_restart` 附带**每个 `config.toml` 键改完何时生效**，界面靠它标注
+/// - `needs_restart` 附带每个 `config.toml` 键改完何时生效，界面靠它标注
 ///   「重启后生效」。键用 toml 里的原名（snake_case），前端那侧的连接点。
 ///
-/// 这张表以前只存在于 `set_config` 的返回值里，而角标要的是**加载时**就有 ——
+/// 这张表以前只存在于 `set_config` 的返回值里，而角标要的是加载时就有 ——
 /// 于是前端照着「哪些字段要重启由后端说了算」的说法自己抄了一份，两份慢慢
 /// 就对不上了。现在两边读同一个值（`config` 模块里的测试钉着）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -235,7 +228,7 @@ pub struct ConfigOut {
     pub needs_restart: BTreeMap<&'static str, bool>,
 }
 
-/// 读配置。**每次现读磁盘**而不是返回启动时的快照 ——
+/// 读配置。每次现读磁盘而不是返回启动时的快照 ——
 /// 用户可能手改过 `config.toml`，界面显示陈旧的值比报错还误导。
 #[tauri::command(async)]
 pub fn get_config(state: tauri::State<'_, AppState>) -> Result<ConfigOut, String> {
@@ -248,7 +241,7 @@ pub fn get_config(state: tauri::State<'_, AppState>) -> Result<ConfigOut, String
         autostart: cfg.autostart,
         close_behavior: cfg.close_behavior.as_str().to_string(),
         events_retention_days: cfg.events_retention_days,
-        // 「哪些键要重启」是**配置项自己的属性**，住在 `config::FIELDS`。
+        // 「哪些键要重启」是配置项自己的属性，住在 `config::FIELDS`。
         // 这里只把它翻译成前端要的形状，不再维护第二份键名清单。
         needs_restart: config::needs_restart_map(),
     })

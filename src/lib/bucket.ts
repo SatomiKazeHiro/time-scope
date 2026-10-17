@@ -30,7 +30,7 @@ export interface SummaryRow {
  *
  * 每段先被截到 `[dayStartMs, dayStartMs+24h)`，所以跨零点的段不会把时长算爆。
  *
- * 重叠去重走 `clip.ts` 的 `clipToUncovered` —— **不再在这里内联一遍**。
+ * 重叠去重走 `clip.ts` 的 `clipToUncovered` —— 不再在这里内联一遍。
  * 这条规则原来也被 `metrics.ts` 内联了一次，两处金额一致靠人看着；2026-10-13
  * 那次 `summarize` 漏掉去重，正好证明「同一条口径抄两遍」迟早分叉
  * （STATUS 第 22 条「三处必须同源」）。后端的对等实现是

@@ -24,14 +24,14 @@ const TITLE_LIMIT = 10;
 /**
  * 汇总页。
  *
- * 范围状态只存在于这里，**不写 URL、不持久化**（spec §2.3）——
+ * 范围状态只存在于这里，不写 URL、不持久化（spec §2.3）——
  * 这是单机桌面应用，不是可分享的网页。
  *
  * 三段布局（spec §2.2）：指标横条 / 热力图整宽（含 24h 条）/ 底部双栏。
  * 段内不各自滚，滚动交给整页。
  */
 export default function SummaryPage() {
-  // `all` 是热力图覆盖的整个数据区间。热力图只渲染它，**与选中无关**。
+  // `all` 是热力图覆盖的整个数据区间。热力图只渲染它，与选中无关。
   const [all, setAll] = useState<DateRange | null>(null);
   const [kind, setKind] = useState<RangeKind>("all");
   const [picked, setPicked] = useState<string>("");   // 点中的那一天
@@ -50,7 +50,7 @@ export default function SummaryPage() {
   /**
    * 首个有记录的日子 —— 热力图用它区分「首次有记录之前」与「有记录但没活动」。
    *
-   * **不能拿 `all.from` 顶替**。`all.from` 是墙的窗口起点（53 周前），拿它当
+   * 不能拿 `all.from` 顶替。`all.from` 是墙的窗口起点（53 周前），拿它当
    * 「装了没装」的分界会让 `tracked` 恒为真，那一档永不渲染 —— 2026-10-17 的
    * 回归正是这么来的：`ede68cb` 把范围从 `cal.first` 改成窗口起点，传下去的
    * `trackedFrom` 跟着变成窗口起点，而 `ContributionWall.test` 只覆盖了
@@ -67,11 +67,11 @@ export default function SummaryPage() {
    * 三态而不是「有没有数据」：空列表既可能是「还没开始取」（用户还没滚到底），
    * 也可能是「取完了确实没有」。原来用 `titles.length === 0` 冒充「没取过」，
    * 于是取完的空列表仍在说「向下滚动加载」（让人去滚一个已经加载完的面板），
-   * 而「这个范围没有记录」那一条**永远不可达**。
+   * 而「这个范围没有记录」那一条永远不可达。
    */
   const [titleStatus, setTitleStatus] = useState<"idle" | "loading" | "done">("idle");
 
-  // ① 热力图数据：挂载时取一次。依赖数组**故意是空的**——
+  // ① 热力图数据：挂载时取一次。依赖数组故意是空的——
   //    范围变化时绝不能重取（spec §2.3）。
   useEffect(() => {
     let dead = false;
@@ -80,10 +80,10 @@ export default function SummaryPage() {
         if (dead) return;
         setLoaded(true);
         if (!cal) return;                       // 库为空：保持 all=null，走空状态
-        // 默认范围 = 墙铺的那 53 周窗口，**不是** [首个数据日, 今天]。
+        // 默认范围 = 墙铺的那 53 周窗口，不是 [首个数据日, 今天]。
         // 以前 chip 写「全部」而实际只查 5 天，墙上却是 53 周 —— 三处口径
         // 不一致，读者会以为指标覆盖了一年。数据全落在窗口内，所以改成
-        // 窗口后**数字一个都不变**，只是说法对上了。
+        // 窗口后数字一个都不变，只是说法对上了。
         const w = wallWindow(todayString());
         setAll({ kind: "all", from: w.start, to: w.end, label: "近一年" });
         setTrackedFrom(cal.first);
@@ -151,7 +151,7 @@ export default function SummaryPage() {
   }, [from, to, titleVisible]);
 
   /**
-   * 一次点击 = 选中该范围；**再点同一个目标 = 回到「全部」**。
+   * 一次点击 = 选中该范围；再点同一个目标 = 回到「全部」。
    * 归一化的实现由 `rangeFor` 做，这里只决定「选什么」还是「取消」。
    */
   const select = useCallback(
@@ -179,7 +179,7 @@ export default function SummaryPage() {
     }));
   }, [titles]);
   /**
-   * 标题面板的空文案。四条分支**都必须可达**：
+   * 标题面板的空文案。四条分支都必须可达：
    * - 取数中 → 统计中…
    * - 库空（连日历都没有）→ 还没有采集数据
    * - 取完了 → 这个范围没有记录
@@ -251,11 +251,11 @@ export default function SummaryPage() {
 }
 
 /**
- * 色阶图例。**用真的色阶色块**，不用 `░▒▓█` 之类的字符凑 ——
+ * 色阶图例。用真的色阶色块，不用 `░▒▓█` 之类的字符凑 ——
  * 字符渲染出来是单色，跟墙上实际用的紫阶对不上，读者没法拿图例反推深浅。
  * 0 档（轨道色）不在图例里：它是「当天没有活动」，不是一档强度。
  *
- * 「首次有记录之前」也不在图例里。图例是**解码颜色的钥匙**，那一档是关于
+ * 「首次有记录之前」也不在图例里。图例是解码颜色的钥匙，那一档是关于
  * 「这个应用什么时候开始有记录」的事实 —— 把它画成色块，读者会当成一种活动
  * 数据去读。它靠两处表达：格子的弱描边，以及热力图下方提示行里的一句话
  * （`ContributionWall`）。

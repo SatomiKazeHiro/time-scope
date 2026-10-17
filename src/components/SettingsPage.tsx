@@ -1,11 +1,11 @@
 /**
  * 设置页 —— 「哪些程序还没规则覆盖」+ 分类配置。
  *
- * 这个页面回答的是**「你的配置缺了什么」**，与汇总面板的「今天干了什么」
+ * 这个页面回答的是「你的配置缺了什么」，与汇总面板的「今天干了什么」
  * 是两件事。同一张未覆盖列表曾在当日汇总里做过并被撤回：一张配置表
  * 混进一个描述时间去向的面板，会让两件事都说不清。
  *
- * **加完规则立刻生效**，不等重启 —— 用户被要求重启，这个入口就没有意义。
+ * 加完规则立刻生效，不等重启 —— 用户被要求重启，这个入口就没有意义。
  * 后端 `add_rule` 写回 rules.toml 后热替换内存里的规则集。
  *
  * 另一页（配置）见 ConfigPanel；两者共用本页的外壳与分区标题样式。
@@ -28,14 +28,14 @@ const WINDOW_DAYS = 30;
 /**
  * 能作为规则目标的类别。
  *
- * **`idle` 与 `unknown` 被排除是有理由的**：它们不是「程序属于哪一类」，
+ * `idle` 与 `unknown` 被排除是有理由的：它们不是「程序属于哪一类」，
  * 是「没在用」和「没认出来」。写成规则只会造出永远命中不了的死规则。
  * 与后端 `append_rule` 的校验同款 —— 两边都要挡，界面挡是为了不给出点不动的选项。
  */
 const RULE_TARGETS: Category[] = ["work", "study", "browsing", "entertainment", "communication", "life"];
 
 /**
- * @param rulesOnly **仅测试用**：只渲染规则区。
+ * @param rulesOnly 仅测试用：只渲染规则区。
  *
  * 存在的唯一原因是 vitest 的 `vi.mock` 对同时发起的重复动态 import 处理不对
  * （第二个 import 拿到 undefined）。真实使用里 App 一次只挂一个视图，
@@ -90,7 +90,7 @@ export default function SettingsPage({ rulesOnly = false }: { rulesOnly?: boolea
 
   return (
     /* 与汇总页同一个骨架：页头 + 扁平 panel 分区 + gap-3。
-       **不要**在这里加 `overflow-y-auto` —— App 的根是 `min-h-screen`，
+       不要在这里加 `overflow-y-auto` —— App 的根是 `min-h-screen`，
        整页滚是既定决定（见 App.tsx 的注释）；页面自己再滚一层就是
        「窄窗口下三层嵌套滚动条」那个已经修过的问题。
 
@@ -169,10 +169,10 @@ export default function SettingsPage({ rulesOnly = false }: { rulesOnly?: boolea
  * 六个可选类别，按层级分组。
  *
  * 写法照抄 `GranularityPicker` 的分段控件（`gap-0.5` + `p-0.5` 的容器、
- * `rounded-sm` 的按钮），**它才是「从若干个里挑一个」在这个项目里的既有词汇**，
+ * `rounded-sm` 的按钮），它才是「从若干个里挑一个」在这个项目里的既有词汇，
  * 自己另发明一套会让两个控件看起来不是一家的。
  *
- * 类别色块是**辅助**，可读的名字才是标识 —— 层级内的两个类别只差明度
+ * 类别色块是辅助，可读的名字才是标识 —— 层级内的两个类别只差明度
  * （MASTER §2.3），光靠色块分不出「工作」和「学习」。色块带 1px 内描边，
  * 与图例、详情里的类别色块同款（§2.4）。
  */

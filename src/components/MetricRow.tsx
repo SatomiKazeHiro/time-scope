@@ -16,7 +16,7 @@ interface MetricRowProps {
 /** 没数据时的占位符。用「—」而不是 0，0 会被读成「这天真的没活动」。 */
 const PLACEHOLDER = "—";
 
-/** 空圆环：四档都是 0，弧长为 0，**几何与有数据时完全一致**（高度不变）。 */
+/** 空圆环：四档都是 0，弧长为 0，几何与有数据时完全一致（高度不变）。 */
 const EMPTY_DONUT: DonutSlice[] = [
   { key: "work", ms: 0 },
   { key: "browsing", ms: 0 },
@@ -34,11 +34,11 @@ function Label({ children }: { children: ReactNode }) {
 /**
  * 顶部指标区。
  *
- * 之前是**五个一模一样的圆角盒子**，里面塞三种不同性质的东西：一个累计读数、
+ * 之前是五个一模一样的圆角盒子，里面塞三种不同性质的东西：一个累计读数、
  * 一个比例构成、一条时间分布。行高被环形卡撑起来，另外四张各空掉近一半 ——
  * 空白不是留白，是没安排内容的余地。
  *
- * 现在按**信息性质**排，不按数量排：
+ * 现在按信息性质排，不按数量排：
  *
  * | 位置 | 内容 | 读法 |
  * |---|---|---|
@@ -46,9 +46,9 @@ function Label({ children }: { children: ReactNode }) {
  * | 主体 | 活跃占比（含两段时长） | 「多少是我真的在用」 |
  * | 主体 | 类别构成 | 「花在什么上」 |
  * | 主体 | 24h 时段分布（撑满卡高） | 「什么时段在动」 |
- * | 诊断行 | 平均段长 + 峰值 + 段数 | 引擎口径，**不占大字** |
+ * | 诊断行 | 平均段长 + 峰值 + 段数 | 引擎口径，不占大字 |
  *
- * 段数与切换次数是**引擎诊断量**（「引擎切成了 458 段」）。问「时间去哪了」的
+ * 段数与切换次数是引擎诊断量（「引擎切成了 458 段」）。问「时间去哪了」的
  * 人不需要它当主读数，所以降到脚注行；原先算得出却没显示的平均段长一并补上。
  */
 export default function MetricRow({ summary, loading, rangeLabel, rangeDays }: MetricRowProps) {
@@ -138,7 +138,7 @@ export default function MetricRow({ summary, loading, rangeLabel, rangeDays }: M
              「相邻段之间空了 ≥5 分钟」，实测 0–4 次（10-12 是 1 次），几乎没有
              信息量；而紧邻的「N 段」说的是同一件事 —— 段多就是切得碎。
              它与时间线指标模式的「切换次数」（数相邻窗口变化，10-12 是 48 次）
-             **定义不同却同名**，用户会以为两边矛盾。保留时间线那个。 */}
+             定义不同却同名，用户会以为两边矛盾。保留时间线那个。 */}
       <div
         data-metric-card="segments"
         className="panel flex flex-wrap items-baseline gap-x-2 gap-y-1 p-3 sm:col-span-2 lg:col-span-12"

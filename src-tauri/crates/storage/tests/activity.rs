@@ -159,7 +159,7 @@ fn evidence_may_reference_events_not_yet_persisted() {
 
 #[test]
 fn a_segment_crossing_midnight_is_returned_for_the_second_day() {
-    // A2：只看 `start_at` 落在哪一天，跨零点的段在第二天**整个消失**。
+    // A2：只看 `start_at` 落在哪一天，跨零点的段在第二天整个消失。
     // 真实库里 `seg-1791215866412`（10-05 23:57:46 → 10-06 00:00:22）就是这样：
     // 10-06 的时间线 00:00–00:00:22 缺一块，10-06 的汇总是 0。
     let conn = open_in_memory();
@@ -237,12 +237,12 @@ fn duplicate_ids_in_one_batch_are_rejected_instead_of_silently_replacing() {
     // B11。段 id 只是 `seg-{start_at}`，配合 `INSERT OR REPLACE`：
     // 同一批里出现两个同 id 的段 → 后者静默覆盖前者，
     // 前者的 evidence 也被 `DELETE ... WHERE activity_id = ?` 一并清掉，
-    // 而 `insert_segments` **仍然返回 Ok**。一段活动就这么没了，
+    // 而 `insert_segments` 仍然返回 Ok。一段活动就这么没了，
     // 界面上看不出来、日志里也没有一个字。
     //
     // 实测 5 天真实数据里"同毫秒换应用"是 0 次，所以这是潜在问题而非现患
     // （STATUS §4.1 曾撤回过同一 finding，理由是"触发不了"）——
-    // 但**存储层是能直接构造出来的**，所以在这里把它钉住。
+    // 但存储层是能直接构造出来的，所以在这里把它钉住。
     let conn = open_in_memory();
     let err = insert_segments(
         &conn,
@@ -264,7 +264,7 @@ fn duplicate_ids_in_one_batch_are_rejected_instead_of_silently_replacing() {
         "错误信息里应点名撞上的 id，实际：{err}"
     );
 
-    // 报错归报错，**不能留下写了一半的库**。
+    // 报错归报错，不能留下写了一半的库。
     let rows = get_segments_in_range(&conn, 0, i64::MAX).unwrap();
     assert!(rows.is_empty(), "不该写进任何一行，实际 {:?}", rows);
     let orphans: i64 = conn
@@ -291,7 +291,7 @@ fn distinct_ids_with_the_same_start_still_write_both() {
 
 #[test]
 fn replacing_an_existing_id_across_batches_is_still_allowed() {
-    // 重放靠 `INSERT OR REPLACE` 覆盖同 id 的旧段，那是**分两次**的正常路径。
+    // 重放靠 `INSERT OR REPLACE` 覆盖同 id 的旧段，那是分两次的正常路径。
     // B11 要拦的是「同一批里」的自相矛盾，不是把这个能力一起禁掉。
     let conn = open_in_memory();
     insert_segments(&conn, &[(seg("seg-1000", 1_000, 60_000, "work"), vec!["e1".into()])]).unwrap();

@@ -1,9 +1,9 @@
 //! 开机自启（spec §4.3）。
 //!
-//! **默认关闭**。一个会自动启动、自动读取窗口标题的程序，不该替用户做这个决定。
+//! 默认关闭。一个会自动启动、自动读取窗口标题的程序，不该替用户做这个决定。
 //!
 //! 同步方向不对称是有意的：config 说要开/关，就照做（用户的意图优先）；
-//! 系统状态与 config 不一致但 config 没要求变更时，把**系统状态写回 config**，
+//! 系统状态与 config 不一致但 config 没要求变更时，把系统状态写回 config，
 //! 这样托盘菜单的勾选态显示的是真实情况，而不是我们自己以为的情况。
 
 use crate::config::AppConfig;
@@ -41,7 +41,7 @@ pub fn disable(app: &AppHandle) -> bool {
     app.autolaunch().disable().is_ok()
 }
 
-/// 启动时同步一次，返回**同步后**的配置（自启状态已按系统实际值修正）。
+/// 启动时同步一次，返回同步后的配置（自启状态已按系统实际值修正）。
 pub fn setup(app: &AppHandle, mut cfg: AppConfig) -> AppConfig {
     match sync(cfg.autostart, is_enabled(app)) {
         SyncDirection::ToSystem => {

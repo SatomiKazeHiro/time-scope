@@ -1,11 +1,11 @@
 //! Windows 前台窗口采集。
 //!
-//! 关键约束（spec §5.1）：调用 `SetWinEventHook` 的线程**必须有 Windows 消息循环**，
+//! 关键约束（spec §5.1）：调用 `SetWinEventHook` 的线程必须有 Windows 消息循环，
 //! 否则注册成功但回调永不触发。所以这里用 `std::thread::spawn` 起专用线程跑原生
-//! `GetMessageW` / `DispatchMessageW` 消息泵，**不要**放进 tokio task。
+//! `GetMessageW` / `DispatchMessageW` 消息泵，不要放进 tokio task。
 //!
 //! windows-rs 0.58 的几个签名注意点（写错了编译不过，见 §15 风险表）：
-//! - `SetWinEventHook` / `UnhookWinEvent` 在 **`Win32::UI::Accessibility`**，不在 WindowsAndMessaging
+//! - `SetWinEventHook` / `UnhookWinEvent` 在 `Win32::UI::Accessibility`，不在 WindowsAndMessaging
 //! - `SetWinEventHook` 返回裸 `HWINEVENTHOOK`，不是 Result
 //! - `WINEVENTPROC` 的回调签名是 7 参数（hook, event, hwnd, idobject, idchild, ideventthread, dwmseventtime）
 //! - `EVENT_*` 是裸 `u32` 常量，不是 newtype
@@ -36,7 +36,7 @@ const EXE_PATH_BUF: usize = 4096;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
-/// watcher 线程的 id；`stop_window_watcher` 用它把 `WM_QUIT` 投递到**正确**的线程。
+/// watcher 线程的 id；`stop_window_watcher` 用它把 `WM_QUIT` 投递到正确的线程。
 static WATCHER_TID: AtomicU32 = AtomicU32::new(0);
 
 /// 回调里要用的 sender。回调签名是裸 `extern "system" fn`，不能捕获环境，
@@ -44,7 +44,7 @@ static WATCHER_TID: AtomicU32 = AtomicU32::new(0);
 static SENDER: OnceLock<Sender<RawSignal>> = OnceLock::new();
 
 /// `EVENT_OBJECT_NAMECHANGE` 不区分对象类型，会对子控件、滚动条等一切对象派发。
-/// spec §5.2 要求只保留**当前前台窗口**的标题变化。
+/// spec §5.2 要求只保留当前前台窗口的标题变化。
 ///
 /// 抽成纯函数以便单测。
 pub fn should_capture_title_change(hwnd: u64, current_foreground: u64) -> bool {
@@ -66,7 +66,7 @@ unsafe extern "system" fn event_hook_callback(
     let signal = match event {
         x if x == EVENT_SYSTEM_FOREGROUND => RawSignal::WindowFocus(hwnd),
         x if x == EVENT_OBJECT_NAMECHANGE => {
-            // 在**回调里**过滤：此刻的前台窗口就是事件发生时的前台窗口。
+            // 在回调里过滤：此刻的前台窗口就是事件发生时的前台窗口。
             // 若拖到 consumer 侧再过滤，用的是"当前"前台窗口，窗口切换快于
             // consumer 排空队列时会误删合法的标题变化。
             let fg = GetForegroundWindow();
@@ -131,7 +131,7 @@ pub fn spawn_window_watcher(sender: Sender<RawSignal>) {
     });
 }
 
-/// 停止 watcher。必须把 `WM_QUIT` 投给 **watcher 线程**——
+/// 停止 watcher。必须把 `WM_QUIT` 投给 watcher 线程——
 /// `GetMessageW` 阻塞时只有收到消息才会返回，单纯置 flag 不会唤醒它，线程会泄漏。
 pub fn stop_window_watcher() {
     RUNNING.store(false, Ordering::SeqCst);
@@ -213,7 +213,7 @@ pub fn make_focus_event(hwnd: HWND, ts: i64) -> Option<Event> {
 
 /// 构造 `WindowTitleChange` 事件。
 ///
-/// **不再做前台过滤**——过滤已移到 hook 回调（见 `event_hook_callback`），
+/// 不再做前台过滤——过滤已移到 hook 回调（见 `event_hook_callback`），
 /// 在事件发生的瞬间完成。这里再过滤一次反而会误删：等 consumer 跑到这一行时，
 /// 用户可能已经切到别的窗口了。
 pub fn make_title_event(hwnd: HWND, ts: i64) -> Option<Event> {

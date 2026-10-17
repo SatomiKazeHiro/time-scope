@@ -13,14 +13,14 @@ use tauri::{AppHandle, Manager, WindowEvent};
 /// 托管状态：托盘回调与关窗回调都要读它。
 pub struct Residency {
     pub config_path: std::path::PathBuf,
-    /// 关窗行为的**启动快照**，**不可变**。
+    /// 关窗行为的启动快照，不可变。
     ///
     /// 关窗时以磁盘为准（见 `effective_close_behavior`），这里只在
     /// config.toml 读不出来时兜底。做成不可变是刻意的：它是快照，不是缓存。
     /// 一旦它可写，「谁是这个值的权威」就有三个候选（设置页、弹框、这份快照），
     /// 而 2026-10-15 用户实机撞到的正是弹框把设置页刚存的值改掉了。
     pub close_behavior_fallback: CloseBehavior,
-    /// 开机自启的**启动快照**。`install()` 时从 `config.toml` 取一次；
+    /// 开机自启的启动快照。`install()` 时从 `config.toml` 取一次；
     /// 此后只有托盘菜单回调（`on_menu_event` 成功切过系统注册表之后）会写它，
     /// 系统级开关失败时不动这里，免得菜单显示一个没生效的状态。
     /// 设置页的 `set_config` 只 `patch_line` 写磁盘、碰不到这个字段 ——
@@ -160,7 +160,7 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
                 crate::autostart::disable(app)
             };
             if !ok {
-                // 失败时**不改**内存与勾选态：菜单不能显示一个没生效的状态
+                // 失败时不改内存与勾选态：菜单不能显示一个没生效的状态
                 eprintln!("[time-scope] 修改开机自启失败，状态未变");
                 return;
             }
@@ -181,14 +181,14 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
 }
 
 /// 读磁盘上的 `close_behavior`。读不出来（文件不存在、被锁、被改坏到
-/// `parse` 也救不回来）返回 `None`，**让调用方回退启动快照** ——
+/// `parse` 也救不回来）返回 `None`，让调用方回退启动快照 ——
 /// 在这里替用户猜一个，猜错的后果是常驻应用被静默改成退出。
 fn close_behavior_from_disk(path: &std::path::Path) -> Option<CloseBehavior> {
     let src = std::fs::read_to_string(path).ok()?;
     Some(crate::config::parse(&src).close_behavior)
 }
 
-/// 生效中的关窗行为：**磁盘上的值优先**，读不出来才用启动快照。
+/// 生效中的关窗行为：磁盘上的值优先，读不出来才用启动快照。
 ///
 /// 为什么不能只认快照（2026-10-15）：`set_config` 只 `patch_line` 写文件、
 /// 不回写 `Residency` 的快照。只读快照会造出一个「分歧窗口」——设置页选的值
@@ -217,7 +217,7 @@ fn install_close_handler(app: &AppHandle) {
                         }
                     }
                     CloseDecision::Ask => {
-                        // 答案**只管这一次**（2026-10-15 改，见 `apply_answer`）
+                        // 答案只管这一次（2026-10-15 改，见 `apply_answer`）
                         match ask_close_behavior(&handle) {
                             Some(CloseBehavior::Quit) => { /* 放行默认关闭 */ }
                             Some(other) => {
@@ -234,7 +234,7 @@ fn install_close_handler(app: &AppHandle) {
     }
 }
 
-/// 执行用户在关窗确认框里的选择 —— **只管这一次，不写回任何地方**。
+/// 执行用户在关窗确认框里的选择 —— 只管这一次，不写回任何地方。
 ///
 /// 2026-10-15 改。原来这里会 `patch_line` 把答案存进 config.toml
 /// （spec §4.2「问一次，答案覆写 config，之后不再问」），于是：
@@ -242,7 +242,7 @@ fn install_close_handler(app: &AppHandle) {
 /// → 再打开设置页看到的是 `minimize` 而不是他刚保存的 `ask`。
 /// `get_config` 每次现读磁盘，所以界面显示的也不是用户选的那个。
 ///
-/// **设置页是唯一的持久化入口。** 想固定行为就去设置页选 `minimize` / `quit`；
+/// 设置页是唯一的持久化入口。 想固定行为就去设置页选 `minimize` / `quit`；
 /// 想每次都问就选 `ask`。这样那个下拉框里三个值才都是名实相符的，
 /// 也才谈得上「保存了什么，重新打开就是什么」。
 ///
@@ -259,7 +259,7 @@ fn apply_answer(app: &AppHandle, answered: CloseBehavior) {
 
 /// 关窗确认框的样式。抽成常量是为了能单测。
 ///
-/// **故意不加 `MB_DEFBUTTON2`**（clippy 会因此报 `bad_bit_mask`）：
+/// 故意不加 `MB_DEFBUTTON2`（clippy 会因此报 `bad_bit_mask`）：
 /// button 1「是」本来就是默认项，一旦加上 `MB_DEFBUTTON2`，回车就会变成
 /// 「退出」——用户随手一按就把常驻应用关了。
 #[cfg(windows)]
@@ -340,9 +340,9 @@ mod tests {
     /// 防回归：确认框的回车默认项必须是「最小化」而不是「退出」——
     /// 随手一按回车就把常驻应用关掉，是最不该发生的那种误操作。
     ///
-    /// 注意 `MB_DEFBUTTON1 == 0`（它是"什么都不加"的默认），所以**不能**断言
+    /// 注意 `MB_DEFBUTTON1 == 0`（它是"什么都不加"的默认），所以不能断言
     /// "含有 MB_DEFBUTTON1"——那是个恒真断言，测不出任何东西。真正的判据是
-    /// 样式里**没有** `MB_DEFBUTTON2`。
+    /// 样式里没有 `MB_DEFBUTTON2`。
     #[test]
     fn the_close_prompt_defaults_to_minimizing_not_to_quitting() {
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -358,13 +358,13 @@ mod tests {
         assert_eq!(CLOSE_PROMPT_STYLE.0 & MB_DEFBUTTON4.0, 0);
     }
 
-    /// 关窗弹框**不得写 `config.toml`**。
+    /// 关窗弹框不得写 `config.toml`。
     ///
     /// 2026-10-15 用户实机撞到：设置页选了 `ask`、点 ✕ 答「是」，再打开设置页
     /// 看到的是 `minimize` —— 弹框把用户刚保存的值静默改掉了。`get_config`
     /// 每次现读磁盘，所以界面显示的也不是用户选的那个。
     ///
-    /// 用源码扫描守着：`Residency` 里的快照已经是**不可变**的（内存里改不了），
+    /// 用源码扫描守着：`Residency` 里的快照已经是不可变的（内存里改不了），
     /// 剩下唯一能持久化 `close_behavior` 的路就是 `patch_line`。扫描比注释可靠 ——
     /// 注释会跟着代码改着改着就过期，这条不会。
     #[test]
@@ -410,7 +410,7 @@ mod tests {
     /// 2026-10-15 之前这里读的是 `Residency` 的快照，于是有个「分歧窗口」：
     /// 设置页把 `close_behavior` 改成 minimize → 点 ✕ 仍按启动值走 →
     /// 启动值若是 ask 还会弹框 → 用户答一次，`remember_answer` 把同一个键
-    /// 写进 config.toml，**把用户刚选的值静默覆盖掉**。而 `get_config`
+    /// 写进 config.toml，把用户刚选的值静默覆盖掉。而 `get_config`
     /// 每次现读磁盘，于是界面上显示的又不是用户选的那个了。
     #[test]
     fn a_close_behavior_written_after_startup_is_honored() {
@@ -442,7 +442,7 @@ mod tests {
     /// 防回归：写进 config.toml 的值必须原样到达各层，而不是又回到硬编码默认。
     #[test]
     fn collector_gets_the_configured_thresholds() {
-        // 走**界面那条真实路径**：原始字符串 → config.toml → parse → 各层。
+        // 走界面那条真实路径：原始字符串 → config.toml → parse → 各层。
         // 以前这里用 `AppConfig::to_toml()` 拼文本再解析回来，那是第二个
         // 序列化器；它删掉之后（配置项改从 `config::FIELDS` 派生）这条测试
         // 顺便变强了：夹取发生在写回之前，而不是写完之后。

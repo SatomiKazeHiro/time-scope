@@ -6,11 +6,11 @@ import { GAP } from "./summary";
 /**
  * 每个 var(--x) 引用都必须能在 theme.css 里找到定义。
  *
- * 不存在的 var() 会让声明在**计算值阶段**失效：border 的颜色写错，
+ * 不存在的 var() 会让声明在计算值阶段失效：border 的颜色写错，
  * 整条 border 声明被丢掉，元素看着像「样式没生效」而不是「写错了」。
  * 这已经犯过两次（环心、选中描边），所以用测试守住。
  *
- * 顺带守住贡献墙描边的**几何**：那两条 box-shadow 住在 theme.css
+ * 顺带守住贡献墙描边的几何：那两条 box-shadow 住在 theme.css
  * （内描边与选中外环必须能叠加），所以几何也只能对着样式表断言。
  */
 const THEME = readFileSync("src/styles/theme.css", "utf8");

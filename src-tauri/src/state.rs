@@ -1,10 +1,7 @@
 //! 应用状态：几条线程与 IPC 之间共享的东西。
 //!
-//! 从 `lib.rs` 里拆出来，是为了让「共享什么」成为一份可以独立读完的清单 ——
-//! 入口函数那边只剩启动顺序与插件顺序。
-//!
-//! 这里的每个字段都至少被两方读写（IPC / 采集线程 / 引擎线程），
-//! 所以字段本身是 `pub(crate)`，但**跨模块的写只走方法**（见 `replace_rules`）。
+//! 每个字段都至少被两方读写，所以是 `pub(crate)`；跨模块的写走方法
+//! （见 `replace_rules`），别直接改字段。
 
 use crate::day_replay::ReplayedDays;
 use crate::engine_runtime::EngineRuntime;
@@ -21,25 +18,20 @@ pub struct AppState {
     /// 已重放过的日期。启动只重放"今天"；用户翻到别的日子时按需重放，
     /// 把上次崩溃留下的孤儿事件补成分段（spec §7.4）。
     pub(crate) replayed: ReplayedDays,
-    /// 当前生效的规则集，供**按需重放**读（引擎实时流那份在 `EngineRuntime` 里）。
-    ///
-    /// 为什么是两份：引擎线程持有 `EngineRuntime`（它自己一份 `rules`），
-    /// 而重放走的是 `day_replay`，不经过引擎线程。所以换规则时两边都要换 ——
-    /// 那是 `replace_rules` 存在的原因。
+    /// 供按需重放读的规则集。引擎实时流那份在 `EngineRuntime` 里 ——
+    /// 两份必须同时换，那是 `replace_rules` 存在的原因。
     pub(crate) rules: Arc<Mutex<RuleSet>>,
     pub(crate) config: EngineConfig,
     /// 标题脱敏器。consumer 与"按需重放"两条路径共用（spec §11）。
     pub(crate) redactor: Arc<Redactor>,
-    /// 原始事件保留天数（B3）。0 = 永不删。
-    ///
-    /// 共享可变：从 365 天改成 30 天应当**立刻**按新值清理，而不是等下次启动。
+    /// 原始事件保留天数。0 = 永不删。设置页改完立刻生效，不用等下次启动。
     pub(crate) retention_days: Arc<Mutex<u32>>,
     /// `config.toml` 的路径。写回要定位文件；`residency` 里也有一份同样的。
     pub(crate) config_path: std::path::PathBuf,
 }
 
 impl AppState {
-    /// 换规则集 —— **唯一入口**。
+    /// 换规则集 —— 唯一入口。
     ///
     /// 规则集有两个读者：引擎实时流（`EngineRuntime.rules`）与按需重放
     /// （`AppState.rules`）。必须同时换，否则会「时间线用新规则、历史重放用旧规则」，

@@ -14,7 +14,7 @@ pub type TitleRedactor = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 /// 消费循环：收 RawSignal → 生成 Event → 脱敏 → 入写盘队列，并转发给引擎线程。
 ///
-/// 脱敏放在**入队之前**：敏感标题不应该以明文形式在内存队列里存在哪怕一秒。
+/// 脱敏放在入队之前：敏感标题不应该以明文形式在内存队列里存在哪怕一秒。
 /// 转发用的是第二条 channel，collector 不需要认识 engine（spec §4 的边界）。
 /// `event_tx` 为 `None` 时只是不做转发。
 pub fn spawn_consumer(

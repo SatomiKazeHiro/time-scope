@@ -60,7 +60,7 @@ beforeEach(() => {
  * 挂设置页并等两区都加载完。
  *
  * 设置页同时挂规则区与配置区，两边都在挂载时动态 import 同一个被 mock 的模块。
- * vitest 的 `vi.mock` 对**同时**发起的重复动态 import 会让第二次拿到 undefined
+ * vitest 的 `vi.mock` 对同时发起的重复动态 import 会让第二次拿到 undefined
  * （症状是 `Cannot read properties of undefined (reading 'invoke')`，
  * 且表现得像「数据没加载出来」，与病因隔着好几层）。
  *

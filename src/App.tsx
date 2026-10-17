@@ -37,12 +37,12 @@ export default function App() {
     setMetric(m);
     setSelectedBucket(null);
   };
-  // 切粒度同理：`selectedBucket` 存的是**桶下标**，而下标是粒度的函数
+  // 切粒度同理：`selectedBucket` 存的是桶下标，而下标是粒度的函数
   // （30 分的第 18 格是 09:00–09:30，60 分的第 18 格是 18:00–19:00）。
   // 不复位的话选中框会静默挪到另一个时间段；再点那一格还会被当成
   // 「再次点击取消」，点下去毫无反应（B7）。
   //
-  // 只清桶选中，**不清 `selected`**：段是引擎判定的活动边界，与粒度无关，
+  // 只清桶选中，不清 `selected`：段是引擎判定的活动边界，与粒度无关，
   // 段详情面板不该因为用户调了一下粒度就自己清空。
   const switchGranularity = (g: number) => {
     setGranularity(g);
@@ -89,7 +89,7 @@ export default function App() {
   const dayStats = useMemo(() => {
     if (!isMetric || segments.length === 0) return null;
     const bs = bucketMetrics(segments, dayStartMs, intervalMs);
-    // 专注度只对**有活动**的桶求加权平均。挂机两小时不该把当天的专注度拉高或拉低
+    // 专注度只对有活动的桶求加权平均。挂机两小时不该把当天的专注度拉高或拉低
     // ——那既不是"专注"也不是"分心"，是"没在工作"，它由活跃/空闲比去说。
     const active = bs.filter((b) => b.activeMs > 0);
     const switches = bs.reduce((s, b) => s + b.switches, 0);
@@ -112,7 +112,7 @@ export default function App() {
   // `segments` 本来就按时间有序，所以位置就是数组下标。
   // 定位不到（`total === 0`）时卡片只显示 id、不给两个「点了没反应」的按钮。
   //
-  // **只走当天**：跨天要前端持有相邻两天的段，而它现在只拿当天，
+  // 只走当天：跨天要前端持有相邻两天的段，而它现在只拿当天，
   // 翻日期时才重新查 —— 那需要一份缓存 + 轮询对齐，先不做。
   const selectedPos = useMemo(() => {
     if (!selected) return undefined;
@@ -124,13 +124,13 @@ export default function App() {
     const s = segments[index];
     if (!s) return;
     setSelected(s);
-    // 指标模式下"选中桶"是按**格**的语义，跟着段走会让环留在原地，
+    // 指标模式下"选中桶"是按格的语义，跟着段走会让环留在原地，
     // 所以换段时一并清掉（B7 的同一条理由）。
     setSelectedBucket(null);
   }
 
   return (
-    /* min-h-screen：内容超了就让**整页**滚。原先用 h-full + 面板各自滚，
+    /* min-h-screen：内容超了就让整页滚。原先用 h-full + 面板各自滚，
        结果窄窗口下出现三层嵌套滚动条，每个面板只剩一两行 —— 不如一根
        页面滚动条来得自然。700px 高时内容本来就装得下，不会出现滚动。
        Sidebar 自己 sticky，不跟着页面滚走。 */
@@ -147,7 +147,7 @@ export default function App() {
             {/* 身份 | 控件 —— 一行。原来分三行，700px 的窗口里 260px（37%）
                 用在数据之前。托盘常驻的单窗口应用没有导航可放，一条工具栏是它的常态。
 
-                **必须能换行。** 之前给两组都加了 shrink-0，结果窄窗口下 120分
+                必须能换行。 之前给两组都加了 shrink-0，结果窄窗口下 120分
                 直接被裁掉、整条栏溢出。宽窗口下它自然排成一行，窄窗口下"指标+粒度"
                 整体落到第二行，比哪个按钮被切掉强。骨架与汇总页共用 PageHeader。 */}
             <PageHeader title="监控采集">

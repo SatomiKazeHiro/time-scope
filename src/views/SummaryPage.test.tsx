@@ -12,7 +12,7 @@ const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
 /**
- * 只把 `getTopTitles` 在**模块边界**上替换掉，其余两个仍走传输层 mock。
+ * 只把 `getTopTitles` 在模块边界上替换掉，其余两个仍走传输层 mock。
  *
  * 原因：`getTopTitles` 里的 `await import("@tauri-apps/api/core")` 在
  * 本文件里解析成 `undefined`（Vitest 对动态 import 的拦截依赖调用顺序，
@@ -127,7 +127,7 @@ describe("SummaryPage", () => {
     // `trackedFrom` 跟着变成了 `all.from`（= 窗口起点 = `days[0].date`），
     // 于是「首次有记录之前」那一档永不渲染 —— 而提示行还写着「画成浅格」。
     // `ContributionWall.test` 只覆盖了「不传 trackedFrom」的情形，所以没人发现；
-    // 这条钉的是**生产接线**：传进来的必须是 `cal.first`。
+    // 这条钉的是生产接线：传进来的必须是 `cal.first`。
     const { container } = render(<SummaryPage />);
     await waitFor(() => expect(callsTo("get_daily_calendar")).toBe(1));
     await waitFor(() =>

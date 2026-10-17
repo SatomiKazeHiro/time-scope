@@ -3,7 +3,7 @@ use activity_core::{Event, EventType};
 
 /// 把一个 Event 应用到上下文上。
 ///
-/// 纯函数集合，**无状态**（spec §7.1：Context 是临时状态，不落库）。
+/// 纯函数集合，无状态（spec §7.1：Context 是临时状态，不落库）。
 pub struct ContextBuilder;
 
 impl ContextBuilder {

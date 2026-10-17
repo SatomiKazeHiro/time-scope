@@ -16,7 +16,7 @@ function days(spec: Array<[string, number]>): DayCell[] {
 /** 从 `from` 起连续 `count` 天的 [date, 1] 序列。 */
 /** 复刻组件里给格子算 style 的那段逻辑，测它而不测 DOM。
  *  描边不在 JS 里了：0 档的强/弱内描边与选中外环必须能叠加，
- *  所以它们住在 theme.css 的 `.wall-cell` 规则里，这里只测**档名**。 */
+ *  所以它们住在 theme.css 的 `.wall-cell` 规则里，这里只测档名。 */
 function cellStyle(c: WallCell): string {
   return `bg: ${c.tracked ? scaleColor(c.step) : "var(--color-surface-2)"}; tone: ${toneOf(c) ?? "none"}`;
 }
@@ -153,7 +153,7 @@ describe("scaleStep", () => {
 });
 
 describe("wallWindow", () => {
-  // 热力图铺**固定 12 个月**，不随数据量伸缩 —— GitHub 就是这样。
+  // 热力图铺固定 12 个月，不随数据量伸缩 —— GitHub 就是这样。
   // 以前是「首个有数据的日子 → 今天」，所以 5 天数据只有 2 列 1 个月份标签。
   const W = wallWindow("2026-10-05");
   const WEEKS = 53;
@@ -195,7 +195,7 @@ describe("buildWall 的固定跨度", () => {
     expect(layout.weeks).toBe(53);
     // 网格是满的 53×7；末列的补齐位由 buildWall 补，present 的是窗口内真实日子
     expect(layout.cells).toHaveLength(53 * 7);
-    // 网格末格是补齐到周六的 10-10；最后一个**有数据的**格子才是今天
+    // 网格末格是补齐到周六的 10-10；最后一个有数据的格子才是今天
     expect(layout.cells.at(-1)!.col).toBe(52);
     const lastReal = layout.cells.filter((c) => c.present).at(-1)!;
     expect(lastReal.date).toBe("2026-10-05");
@@ -205,7 +205,7 @@ describe("buildWall 的固定跨度", () => {
   });
 
   it("槽位恒 371，其中「天」格子是 365~371（今天是周几决定）", () => {
-    // 窗口 = 今天所在周的**周一**往前推 52 周 → 到「今天」。
+    // 窗口 = 今天所在周的周一往前推 52 周 → 到「今天」。
     // 所以最后那个整周永远只有一个开头：周一 -> 365 天；周日 -> 371 天
     // （一个补齐位都没有）。槽位（DOM 子节点）恒为 53×7 = 371，差额是补齐位。
     // 2026-09-28 是周一，所以这一组正好覆盖 7 种情况。
@@ -276,7 +276,7 @@ describe("首次有记录之前", () => {
     // 上一版把这一档做成面板色 = 和空白没区别 -> 白茫茫一片。
     // 两者共用轨道色底，用描边强弱区分：强的读作「有个空方块」，
     // 弱的读作「首次有记录之前的幽灵格子」。具体色值在 theme.css 的
-    // .wall-cell[data-tone=…] 里，这里断言的是**档名分开了**。
+    // .wall-cell[data-tone=…] 里，这里断言的是档名分开了。
     const noActivity = Object.entries(byDate).find(
       ([, c]) => c.tracked && c.totalMs === 0,
     )?.[1];

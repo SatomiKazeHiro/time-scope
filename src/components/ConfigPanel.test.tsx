@@ -75,7 +75,7 @@ describe("ConfigPanel", () => {
 
   it("角标读后端给的判定，不读前端自己那份表", async () => {
     // 2026-10-15 那次界面说谎的机制就是前端硬编码了一份 `restart`，
-    // 与后端**一致地错**。这里反过来改后端的答案，角标必须跟着动 ——
+    // 与后端一致地错。这里反过来改后端的答案，角标必须跟着动 ——
     // 前端要是还留着自己的副本，这条会红。
     stub({ ...CFG, needsRestart: { ...CFG.needsRestart, close_behavior: true } });
     render(<ConfigPanel />);

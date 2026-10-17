@@ -15,7 +15,7 @@ use time::UtcOffset;
 pub struct ReplayedDays(Mutex<HashSet<String>>);
 
 impl ReplayedDays {
-    /// 该天是否已经重放**成功**过。
+    /// 该天是否已经重放成功过。
     pub fn already_played(&self, date: &str) -> bool {
         let set = match self.0.lock() {
             Ok(g) => g,
@@ -24,7 +24,7 @@ impl ReplayedDays {
         set.contains(date)
     }
 
-    /// 标记该天已重放。**只在重放成功后调用**（B5）——
+    /// 标记该天已重放。只在重放成功后调用（B5）——
     /// 提前 claim 会让一次失败的重放再也重试不了。
     pub fn claim(&self, date: &str) -> bool {
         let mut set = match self.0.lock() {
@@ -37,8 +37,8 @@ impl ReplayedDays {
 
 /// 把某一天已有的 Event 重放成 ActivitySegment 并落库。
 ///
-/// **为什么需要**：启动时只重放了"今天"（spec §7.4）。但上次崩溃/被杀时会留下
-/// 几秒到几分钟的**孤儿事件**——它们在 events 表里，却从没被引擎处理过。
+/// 为什么需要：启动时只重放了"今天"（spec §7.4）。但上次崩溃/被杀时会留下
+/// 几秒到几分钟的孤儿事件——它们在 events 表里，却从没被引擎处理过。
 /// 用户翻到那一天时会看到空白，以为那天没记录到自己。
 ///
 /// 返回 true 表示实际做了重放；false 表示失败（此时保留旧数据，不清空）。
@@ -65,7 +65,7 @@ fn replay_day(
     offset: UtcOffset,
     redactor: &Redactor,
 ) -> Option<crate::engine_runtime::EngineRuntime> {
-    // 先看一眼有没有重放过，但**先不 claim**：claim 一旦消耗掉就再也回不来，
+    // 先看一眼有没有重放过，但先不 claim：claim 一旦消耗掉就再也回不来，
     // 而下面任何一步失败都必须能重试（B5）。真正的 claim 在写库成功之后。
     if replayed.already_played(date) {
         return None;
@@ -81,11 +81,11 @@ fn replay_day(
         };
         rows.iter()
             .filter_map(|stored| {
-                // **对历史数据再脱敏一次**：脱敏功能上线前落库的标题不会被回溯改写，
-                // 重放时经过这里能让**引擎看到的** context 不含敏感片段。
+                // 对历史数据再脱敏一次：脱敏功能上线前落库的标题不会被回溯改写，
+                // 重放时经过这里能让引擎看到的 context 不含敏感片段。
                 // events 表里的原始行保持不变（不做数据改写）。
                 //
-                // 注意这只覆盖了引擎这一侧。**界面**读的是 events.payload 的原文，
+                // 注意这只覆盖了引擎这一侧。界面读的是 events.payload 的原文，
                 // 由 `titles_for` / `merge_top_titles` 各自再脱敏一次（A4）。
                 // 这里曾经是唯一的脱敏出口，注释也就跟着写了「界面上就不会再露出
                 // 旧数据里的敏感片段」——那句话当时是错的。
@@ -101,7 +101,7 @@ fn replay_day(
             .collect()
     };
 
-    // 「删当天 + 写当天」必须在**同一个事务**里（B5）。拆开的话会出现
+    // 「删当天 + 写当天」必须在同一个事务里（B5）。拆开的话会出现
     // 「删成功、写失败」的中间态：那天被清空，而 claim 已经消耗掉了，
     // 本进程内再也不会重放 —— 用户看到空白直到重启。
     let stored_segments = if events.is_empty() {
@@ -137,7 +137,7 @@ fn replay_day(
     Some(crate::engine_runtime::EngineRuntime::new(rules.clone(), *config))
 }
 
-/// 启动时调用：准备规则集、重放当天，并返回**可继续驱动的运行时**。
+/// 启动时调用：准备规则集、重放当天，并返回可继续驱动的运行时。
 pub fn bootstrap_today(
     conn: &SharedConn,
     replayed: &ReplayedDays,
@@ -326,7 +326,7 @@ mod replay_redaction_tests {
 
     #[test]
     fn replay_applies_redaction_to_legacy_rows() {
-        // 场景：脱敏功能上线**之前**落库的明文标题。开启脱敏后翻看那一天，
+        // 场景：脱敏功能上线之前落库的明文标题。开启脱敏后翻看那一天，
         // 引擎看到的不该是明文。
         let conn = open_in_memory_shared();
         insert_events(
@@ -463,7 +463,7 @@ mod atomicity_tests {
         get_segments_in_range(&conn.lock().unwrap(), day_ts(-1, 0), day_ts(0, 0)).unwrap()
     }
 
-    /// 两个不同应用的焦点事件 → 引擎会**关闭**一段。
+    /// 两个不同应用的焦点事件 → 引擎会关闭一段。
     ///
     /// 关键：只有一个事件时引擎产出的 `closed` 是空的，`replace_day_segments`
     /// 只删不写，压根不会碰到那个 INSERT 触发器，测不出任何东西。
@@ -482,7 +482,7 @@ mod atomicity_tests {
     fn a_failed_write_does_not_destroy_the_previous_segments() {
         // B5。旧流程是「先 `claim` → 删（一个事务）→ 写（另一个事务）」。
         // 删成功、写失败（SQLITE_FULL / 磁盘满）→ 那天被清空，而
-        // `claim` 已经消耗掉了 → 本进程内**永远不会重放**，用户看到空白直到重启。
+        // `claim` 已经消耗掉了 → 本进程内永远不会重放，用户看到空白直到重启。
         let conn = open_in_memory_shared();
         let replayed = ReplayedDays::default();
         seed_two_switches(&conn);
@@ -501,7 +501,7 @@ mod atomicity_tests {
 
     #[test]
     fn a_failed_replay_can_be_retried_afterwards() {
-        // B5 的另一半：`claim` 必须移到**成功之后**。
+        // B5 的另一半：`claim` 必须移到成功之后。
         // 否则这次失败把那天标记成"重放过了"，再也重试不了。
         let conn = open_in_memory_shared();
         let replayed = ReplayedDays::default();

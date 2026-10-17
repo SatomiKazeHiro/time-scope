@@ -159,7 +159,7 @@ fn default_rules_toml_is_valid() {
 
 #[test]
 fn default_rules_never_list_the_same_process_twice() {
-    // 同一个进程写进两条规则时**只有先命中的那条生效**，后一条永远够不到 ——
+    // 同一个进程写进两条规则时只有先命中的那条生效，后一条永远够不到 ——
     // 设置页的 `append_rule` 会明确拒绝这种写法（STATUS §1 第 27 条），
     // 内置默认也该守同一条线。
     //
@@ -321,12 +321,12 @@ pattern = "\d+"
     assert_eq!(ok.unwrap().redact, vec!["\\d+".to_string()]);
 }
 
-// --- B2：版本号必须由规则**内容**派生，而不是由条数 ---
+// --- B2：版本号必须由规则内容派生，而不是由条数 ---
 
 #[test]
 fn changing_a_rules_category_changes_the_version() {
     // B2。原来版本号是 `format!("rules:{}+redact:{}", rules.len(), redact.len())`
-    // —— 只由**条数**派生。把某条规则的 category 从 work 改成 study，
+    // —— 只由条数派生。把某条规则的 category 从 work 改成 study，
     // 条数不变、版本号一模一样，于是重算出来的段看起来和旧段同源，
     // 注释里"改了规则就能被区分开"这句话不成立。
     let a = RuleSet::from_toml(
@@ -370,7 +370,7 @@ fn changing_a_redact_patterns_text_changes_the_version() {
 
 #[test]
 fn the_version_is_deterministic_across_runs() {
-    // 版本号会**落库**（activities.classifier_version），所以同一份规则
+    // 版本号会落库（activities.classifier_version），所以同一份规则
     // 必须永远得到同一个值。不能用 HashMap 的迭代顺序或随机种子。
     let first = RuleSet::from_toml(SAMPLE).unwrap().version;
     for _ in 0..5 {

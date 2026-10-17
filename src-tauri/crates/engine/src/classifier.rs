@@ -1,7 +1,7 @@
 use crate::Category;
 use serde::{Deserialize, Serialize};
 
-/// 用户把 rules.toml 改坏了时的错误。**app 层据此退回内置默认规则**（Review Focus #5）。
+/// 用户把 rules.toml 改坏了时的错误。app 层据此退回内置默认规则（Review Focus #5）。
 #[derive(Debug)]
 pub enum RuleError {
     Parse(toml::de::Error),
@@ -40,7 +40,7 @@ pub struct RawRule {
 struct RulesDoc {
     #[serde(default, rename = "rule")]
     rule: Vec<RawRule>,
-    /// 脱敏模式（spec §11）。**保持未编译的字符串**：engine 不该为隐私关注点
+    /// 脱敏模式（spec §11）。保持未编译的字符串：engine 不该为隐私关注点
     /// 多一个 regex 依赖，编译与否由 app 层决定。
     #[serde(default, rename = "redact")]
     redact: Vec<RawRedact>,
@@ -69,18 +69,18 @@ impl Rule {
 #[derive(Debug, Clone)]
 pub struct RuleSet {
     pub rules: Vec<Rule>,
-    /// 脱敏正则的**源码**，未编译（spec §11）
+    /// 脱敏正则的源码，未编译（spec §11）
     pub redact: Vec<String>,
     /// 规则集版本号，写进每条 Activity 的 `classifier_version`（spec §7.2）
     pub version: String,
 }
 
-/// 规则集的版本号（spec §7.2），由**内容**派生（B2）。
+/// 规则集的版本号（spec §7.2），由内容派生（B2）。
 ///
 /// 保留 `rules:N` / `redact:M` 两个计数前缀：人看版本串时一眼知道规模，
 /// 而真正区分"内容变没变"的是后面的内容哈希。
 ///
-/// **哈希必须是确定性的** —— 这个字符串会**落库**
+/// 哈希必须是确定性的 —— 这个字符串会落库
 /// （`activities.classifier_version`），同一份 rules.toml 在任何时候、
 /// 任何机器上都必须算出同一个值。所以不能用 `HashMap` 的迭代顺序、
 /// 也不能用 `DefaultHasher::new()`（SipHash 的实现细节不承诺跨版本稳定）。
@@ -156,7 +156,7 @@ impl Classification {
 }
 
 impl RuleSet {
-    /// **纯函数**：只解析传入的字符串，不碰文件系统。IO 在 app 层。
+    /// 纯函数：只解析传入的字符串，不碰文件系统。IO 在 app 层。
     pub fn from_toml(src: &str) -> Result<RuleSet, RuleError> {
         let doc: RulesDoc = toml::from_str(src).map_err(RuleError::Parse)?;
         let raw = doc.rule;
@@ -189,7 +189,7 @@ impl RuleSet {
             });
         }
 
-        // 版本号由规则**内容**派生（B2）：改了规则（含脱敏规则），重算出来的
+        // 版本号由规则内容派生（B2）：改了规则（含脱敏规则），重算出来的
         // Activity 才能被区分开。原来只由条数派生，把 category 从 work 改成
         // study、或者改一条正则的文本，条数不变、版本号一模一样 ——
         // 注释里那句话当时是不成立的。
@@ -197,7 +197,7 @@ impl RuleSet {
         Ok(RuleSet { rules, redact, version })
     }
 
-    /// 分类。进程名匹配**大小写不敏感**且只看文件名部分。
+    /// 分类。进程名匹配大小写不敏感且只看文件名部分。
     pub fn classify(&self, process_name: Option<&str>) -> Classification {
         let Some(name) = process_name else {
             return Classification::unknown();
@@ -229,7 +229,7 @@ fn file_name_lower(p: &str) -> String {
 }
 
 /// 内置默认规则。首次启动时由 app 层拷到 数据目录下的 `rules.toml`（exe 同目录的 `time-scope-data\`）。
-/// **只作为兜底**——用户改了之后以用户的文件为准（spec §7.2）。
+/// 只作为兜底——用户改了之后以用户的文件为准（spec §7.2）。
 pub const DEFAULT_RULES_TOML: &str = r#"
 # Time Scope 分类规则
 #

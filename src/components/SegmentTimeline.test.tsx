@@ -389,11 +389,11 @@ describe("SegmentTimeline 悬停态跨模式", () => {
 
   it("切到指标模式后不再拿段下标当桶下标读数", () => {
     // B9。`hoverIndex` 一个 state 承载两套语义：
-    //   类别模式 `:325` 写的是**段**下标（125 段 → 0..124）
-    //   指标模式 `:280` 写的是**桶**下标（30 分粒度 → 0..47）
+    //   类别模式 `:325` 写的是段下标（125 段 → 0..124）
+    //   指标模式 `:280` 写的是桶下标（30 分粒度 → 0..47）
     // 鼠标悬停后用键盘切模式，onMouseLeave 不会触发 → 悬停态原样留着。
     // 于是指标模式下拿"第 120 段"当"第 120 桶"去读，读出的是
-    // **另一个时间范围**的专注度 —— 一个凭空捏造的数值。
+    // 另一个时间范围的专注度 —— 一个凭空捏造的数值。
     const segments = fragmentedDay(125);
     const { container, rerender } = render(
       <SegmentTimeline
@@ -467,7 +467,7 @@ describe("SegmentTimeline 键盘可达性", () => {
   it("色块是可聚焦的按钮，而不是只有鼠标能点", () => {
     // B8。`<svg role="img">` 把整棵树对辅助技术声明成「一张图」，
     // 子节点一律被遮蔽；加上 `<rect>` 本身没有 tabIndex/role，
-    // 于是「点色块看这段在干什么」这个**核心操作纯键盘完全到不了**。
+    // 于是「点色块看这段在干什么」这个核心操作纯键盘完全到不了。
     const { container } = render(
       <SegmentTimeline segments={segments} dayStartMs={0} onSelect={() => {}} />,
     );
@@ -476,7 +476,7 @@ describe("SegmentTimeline 键盘可达性", () => {
       expect(c.getAttribute("role")).toBe("button");
       expect(["0", "-1"], "每个色块都要可聚焦").toContain(c.getAttribute("tabindex"));
     }
-    // 注意：**可聚焦 ≠ 每个都占一个 Tab 位**。那是 roving tabindex 的事
+    // 注意：可聚焦 ≠ 每个都占一个 Tab 位。那是 roving tabindex 的事
     //（见下面那组测试）——这里只断「每一个都是能聚焦的按钮」。
     expect(cells.filter((c) => c.getAttribute("tabindex") === "0").length).toBe(1);
   });
@@ -484,7 +484,7 @@ describe("SegmentTimeline 键盘可达性", () => {
   it("色块的无障碍名里有时间、类别和时长", () => {
     // 光有 role 没有名字等于没说 —— 读屏只会念「按钮」。
     //
-    // 时间用**本地分量**构造：`clockOf` 走的是本地时区，写死 epoch 0 会让
+    // 时间用本地分量构造：`clockOf` 走的是本地时区，写死 epoch 0 会让
     // 断言随开发机时区漂（本机 UTC-8 下 `0` 渲染成 08:00）。
     const dayStart = new Date(2026, 0, 1, 9, 0, 0, 0).getTime();
     const { container } = render(

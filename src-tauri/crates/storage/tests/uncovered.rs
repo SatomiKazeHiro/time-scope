@@ -6,7 +6,7 @@ use activity_storage::{
 ///
 /// 覆盖三件事：
 /// 1. 只取 `unknown` 的段 —— 已分类的段不该出现在「没规则覆盖」里
-/// 2. 同一个程序的多段要**合并**时长，而不是出现两行
+/// 2. 同一个程序的多段要合并时长，而不是出现两行
 /// 3. 按耗时降序，让「最该先补规则的那个」排在最上面
 fn seg(id: &str, start_ms: i64, end_ms: i64, category: &str, app: Option<&str>) -> StoredSegment {
     StoredSegment {
@@ -45,7 +45,7 @@ fn orders_by_duration_desc_and_only_unknown() {
             seg("c", 5 * H, 6 * H, "unknown", Some("DBeaver.exe")),
             // VS Code 也在 unknown 里（没有被任何规则命中）
             seg("d", 6 * H, 8 * H, "unknown", Some("Code.exe")),
-            // 已被规则命中的段**不该出现**
+            // 已被规则命中的段不该出现
             seg("e", 8 * H, 20 * H, "work", Some("Code.exe")),
         ],
     );
@@ -84,7 +84,7 @@ fn share_is_against_uncovered_total_not_the_whole_day() {
 fn segments_outside_the_window_are_excluded() {
     let conn = open_in_memory();
     let now: i64 = 20 * H;
-    // days=1 是**一天**的窗口：[now-24h, now] = [-4h, 20h]
+    // days=1 是一天的窗口：[now-24h, now] = [-4h, 20h]
     put(
         &conn,
         vec![

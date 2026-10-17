@@ -10,12 +10,12 @@ export interface ActivitySegment {
   classifierVersion: string;
   evidenceEventIds: string[];
   /**
-   * 这段里**用户确实有输入**的时长（毫秒），2026-10-13 新增。
+   * 这段里用户确实有输入的时长（毫秒），2026-10-13 新增。
    *
    * 专注度的分母（`focus = 主导类别时长 / 有输入时长`）。这样「人不在」
    * （锁屏 / 长时间无输入）不会被读成「高度专注」。
    *
-   * `**null` = 2026-10-13 之前的历史数据，没有这个量**；`0` = 这段确实
+   * `null` = 2026-10-13 之前的历史数据，没有这个量；`0` = 这段确实
    * 没有输入。两者必须分开 —— 都当 0 会让历史日期看起来像「完全没人用电脑」。
    */
   activeMs?: number | null;
@@ -45,7 +45,7 @@ export async function getSegments(date: string): Promise<ActivitySegment[]> {
 /**
  * 按 evidence id 反查某个段的窗口标题。
  *
- * 标题不在段上而在 events 表里，所以这一条是**懒加载**的（点开段详情才调）。
+ * 标题不在段上而在 events 表里，所以这一条是懒加载的（点开段详情才调）。
  * 它原来住在 `components/EventDetail.tsx`，是 `types.ts` 之外唯一一个 IPC 封装 ——
  * IPC 边界集中在一个文件里，改后端命令名时只需要搜一处。
  */
@@ -79,7 +79,7 @@ export interface DayCell {
 }
 
 /**
- * 热力图的数据源。`days` **只含有记录的日期** ——
+ * 热力图的数据源。`days` 只含有记录的日期 ——
  * 空缺日期由 `lib/summary.ts` 的 `fillDays` 补齐（后端的 `GROUP BY`
  * 会跳过没开机的那天，直接用它的结果排格子会整片错位）。
  */
@@ -102,7 +102,7 @@ export interface AppSlice {
   ms: number;
 }
 
-/** 顶部指标。`from` / `to` 都是 `YYYY-MM-DD` 的**闭区间**。 */
+/** 顶部指标。`from` / `to` 都是 `YYYY-MM-DD` 的闭区间。 */
 export interface Summary {
   totalMs: number;
   activeMs: number;
@@ -122,7 +122,7 @@ export interface MergedTitle {
   redacted: boolean;
 }
 
-/** 热力图的数据。**无参数** —— 热力图永远渲染全部数据，不受选中范围影响。 */
+/** 热力图的数据。无参数 —— 热力图永远渲染全部数据，不受选中范围影响。 */
 export async function getDailyCalendar(): Promise<DailyCalendar | null> {
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<DailyCalendar | null>("get_daily_calendar");
@@ -145,7 +145,7 @@ export async function getTopTitles(
 /**
  * 一个「有记录但没规则覆盖」的程序。
  *
- * `shareOfUncovered` 的分母是**未覆盖总时长**，不是全天 ——
+ * `shareOfUncovered` 的分母是未覆盖总时长，不是全天 ——
  * 用户打开设置页要回答的是「我漏配的时间里有多少给了它」。
  * 与后端 `uncovered_programs` 的注释同款。
  */
@@ -161,7 +161,7 @@ export async function getUncoveredPrograms(days = 30): Promise<UncoveredProgram[
   return await invoke<UncoveredProgram[]>("get_uncovered_programs", { days });
 }
 
-/** 给一个程序加分类规则。**立即生效**，不需要重启。 */
+/** 给一个程序加分类规则。立即生效，不需要重启。 */
 export async function addRule(application: string, category: Category): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke<void>("add_rule", { application, category });
@@ -176,7 +176,7 @@ export interface AppConfig {
   closeBehavior: string;
   eventsRetentionDays: number;
   /**
-   * 每个 `config.toml` 键改完**是否要重启**，键用 toml 里的原名。
+   * 每个 `config.toml` 键改完是否要重启，键用 toml 里的原名。
    *
    * 后端给（`get_config` 一并返回），前端不自己列 —— 复制一份表就多一处
    * 会跟实现对不上的地方，而那种对不上表现为「界面说不用重启、实际要重启」。
@@ -191,7 +191,7 @@ export async function getConfig(): Promise<AppConfig> {
 }
 
 /**
- * 改一个配置项，返回**是否需要重启才生效**。
+ * 改一个配置项，返回是否需要重启才生效。
  *
  * 这个判定由后端给出（依据是参数绑在哪里），前端不自己猜 ——
  * 复制一份表就多一处会跟实现对不上的地方，而那种对不上

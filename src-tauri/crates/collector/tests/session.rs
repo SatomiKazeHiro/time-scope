@@ -1,4 +1,4 @@
-//! session 监听的**纯逻辑**部分。真实的 WTS/Power 注册与窗口消息必须人工验证，
+//! session 监听的纯逻辑部分。真实的 WTS/Power 注册与窗口消息必须人工验证，
 //! 但"消息怎么翻译成信号"和"注册失败时会怎样"是行为，必须能自动验证。
 
 use activity_collector::session::{
@@ -95,11 +95,11 @@ const PBT_APMPOWERSTATUSCHANGE: usize = 0x000A;
 //   [time-scope] PowerRegisterSuspendResumeNotification 失败：合盖/唤醒将不被记录
 //   [time-scope] 锁屏/睡眠监听 不可用
 //
-// 源码里 `WTSRegisterSessionNotification`（锁屏/解锁）其实**成功**了，
-// 但紧接着电源注册失败就 `return`，函数提前退出 → **消息泵从未启动** →
+// 源码里 `WTSRegisterSessionNotification`（锁屏/解锁）其实成功了，
+// 但紧接着电源注册失败就 `return`，函数提前退出 → 消息泵从未启动 →
 // 那个已经注册成功的 HWND 根本没人收消息。于是「电源失败」连坐「锁屏失效」。
 //
-// 两条通路是**独立能力**：合盖/唤醒没记录，不该让锁屏/解锁也没记录。
+// 两条通路是独立能力：合盖/唤醒没记录，不该让锁屏/解锁也没记录。
 
 use activity_collector::session::SessionRegistration;
 

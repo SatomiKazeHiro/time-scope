@@ -5,13 +5,13 @@ use crate::normalize;
 use crate::{ActivityContext, ActivitySegment, Category, OpenSegment, CLASSIFIER_RULE};
 use activity_core::{Event, EventType};
 
-/// 引擎的完整状态。**只有这个结构体是可变的**，其余全是纯函数。
+/// 引擎的完整状态。只有这个结构体是可变的，其余全是纯函数。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EngineState {
     pub current_segment: Option<OpenSegment>,
     pub current_context: Option<ActivityContext>,
     pub is_idle: bool,
-    /// 已关闭、但**还可能被下一个段并掉**的那一段。
+    /// 已关闭、但还可能被下一个段并掉的那一段。
     ///
     /// 归一化只需要一段前瞻：短段要并进前驱（前驱已知），或并进后继（等下一条）。
     /// 所以这里最多一个段 —— 不再是旧版那个需要保持时间序的 `pending` 列表，
@@ -26,7 +26,7 @@ impl EngineState {
 
     /// 把正在生长的段投影成一个可展示的 ActivitySegment。
     ///
-    /// **它还没落库** —— `get_segments` 用它把"当前这一段"附在结果末尾，
+    /// 它还没落库 —— `get_segments` 用它把"当前这一段"附在结果末尾，
     /// 时间线因此是实时的。
     pub fn open_segment_snapshot(
         &self,
@@ -56,7 +56,7 @@ pub struct EngineOutput {
     pub closed_segments: Vec<ActivitySegment>,
 }
 
-/// 逐个吞 Event，吐出可落库的 Segment。**无 IO、无副作用**（spec §7.4）。
+/// 逐个吞 Event，吐出可落库的 Segment。无 IO、无副作用（spec §7.4）。
 pub fn reduce(
     state: &EngineState,
     event: &Event,
@@ -66,24 +66,24 @@ pub fn reduce(
     let mut st = state.clone();
     let ts = event.timestamp;
 
-    // 0. 心跳的「有输入秒数」记到**当前正在生长的段**上（2026-10-13）。
-    //    必须在下面切段逻辑**之前**做 —— 心跳不携带 application，
+    // 0. 心跳的「有输入秒数」记到当前正在生长的段上（2026-10-13）。
+    //    必须在下面切段逻辑之前做 —— 心跳不携带 application，
     //    它不会自己开段，但它是「用户确实在动」这件事唯一的直接证据。
     //    这段时长只作附加量，不碰任何边界（见 OpenSegment::active_ms）。
     if let EventType::InputHeartbeat(p) = &event.event_type {
         if p.active_seconds > 0 {
             if let Some(cur) = st.current_segment.as_mut() {
-                // **按窗口与段的重叠算**（2026-10-13 修）。
+                // 按窗口与段的重叠算（2026-10-13 修）。
                 // `active_seconds` 说的是「心跳之前那个窗口里有几秒在动」，
                 // 窗口起点由 `window_start_ms` 给出。只拿 `ts - start_at` 当上限
                 // 会在段刚开时丢掉窗口前半段（落在段外）—— 实测心跳共报 16 秒、
                 // 两个段总共只收到 9 秒，另一个拿到 0。
                 //
-                // 有输入的秒可以看成落在窗口里的任意位置，**保守取交集上界**：
+                // 有输入的秒可以看成落在窗口里的任意位置，保守取交集上界：
                 // 窗口 `[w0, ts]` 与段 `[start_at, …]` 重叠多少，
                 // 报告的 `active_seconds` 最多也超不过这个重叠。
                 //
-                // **不要再拿 `end_at` 当上限**（2026-10-13 踩过两次）：
+                // 不要再拿 `end_at` 当上限（2026-10-13 踩过两次）：
                 // 心跳到来时 `extend` 还没跑，`end_at` 仍等于 `start_at`，
                 // 用它一夹就把这一笔全丢了。段本来就会延长到 `ts`，
                 // 算进去是对的。
@@ -97,7 +97,7 @@ pub fn reduce(
                 let overlap = (ts - w0.max(cur.start_at)).max(0);
                 let claimed = i64::from(p.active_seconds) * 1000;
                 cur.active_ms += claimed.min(overlap);
-                // **总量不许超过段自身的墙钟时长**。每笔都夹了还不够：
+                // 总量不许超过段自身的墙钟时长。每笔都夹了还不够：
                 // 窗口之间可以重叠（两个心跳报的是同一段时间），
                 // 累加起来会超过段有多长 —— 分母比它衡量的东西还大是荒谬的。
                 // 2026-10-13 实测：四个各 10 秒的窗口累出 35 秒，而段只有 20 秒。
@@ -114,7 +114,7 @@ pub fn reduce(
         _ => {}
     }
 
-    // 2. 新上下文：**沿用上一次的**再应用这个 Event。
+    // 2. 新上下文：沿用上一次的再应用这个 Event。
     //    不能每次从空 context 起算——心跳事件不携带 application，
     //    重建会把 application 冲成 None，导致"同一应用"判定失败、每来一个心跳就切一段。
     let mut new_ctx = st.current_context.clone().unwrap_or_default();
@@ -127,7 +127,7 @@ pub fn reduce(
     match event.event_type {
         // --- idle 分支 ---
         EventType::SystemIdle | EventType::SessionLock => {
-            // 已经有一段 idle 时**不重开**：锁屏通知可能重复到达
+            // 已经有一段 idle 时不重开：锁屏通知可能重复到达
             // （锁屏与合盖各发一次），每次都开新段会把一段连续的空闲切碎。
             match st.current_segment.clone() {
                 Some(cur) if cur.category == Category::Idle => {
@@ -178,13 +178,13 @@ pub fn reduce(
                     }
                 }
                 Some(cur) => {
-                    // 已经在 idle 段里时，心跳/焦点变化**只延长**它：
+                    // 已经在 idle 段里时，心跳/焦点变化只延长它：
                     // 锁屏期间"正在用哪个程序"没有意义（spec §3.1），
                     // 让 application 参与判定会把一段连续的空闲切成碎片。
                     let same = (st.is_idle && cur.category == Category::Idle)
                         || (cur.application == new_ctx.application && cur.category == category);
 
-                    // **空档守卫在这里生效**：跨过观测空档时，
+                    // 空档守卫在这里生效：跨过观测空档时，
                     // 当前段在自己的最后一条证据处收尾，这条事件另开一段。
                     // 放在 extend 之前判定，因为 extend 会把段用 `max(ts)`
                     // 拉到下一条事件 —— 那正是凭空造时间的入口。
@@ -250,7 +250,7 @@ pub fn reduce(
 // min/max。代码里早就写着「不可凭空造时间」，但守卫只加在 close_current 一处，
 // 另外 5 处照样能违反它 —— 所以重叠查了三轮都查不完。
 //
-// **下面这两个函数是唯一允许改边界的地方。** 别的代码只能读 start_at/end_at。
+// 下面这两个函数是唯一允许改边界的地方。 别的代码只能读 start_at/end_at。
 // 要新增一条写边界的路径，先想清楚它属于哪一种。
 //
 // 两条不变式：
@@ -258,7 +258,7 @@ pub fn reduce(
 //   2. end_at 不得超过「最后一条证据」所在的时间 —— 没有观测就没有时间
 // ===========================================================================
 
-/// 空档判定：`ts` 与最后一条证据相距超过阈值 ⇒ 这段时间**没有观测**。
+/// 空档判定：`ts` 与最后一条证据相距超过阈值 ⇒ 这段时间没有观测。
 ///
 /// 与 `max_observation_gap_s` 的语义是「没有观测」，不是「没有输入」
 /// —— `idle_threshold_s` 管的是后者，两者不要合并。
@@ -266,7 +266,7 @@ pub fn crossed_observation_gap(last_evidence_at: i64, ts: i64, config: &EngineCo
     ts.saturating_sub(last_evidence_at) > (config.max_observation_gap_s as i64) * 1000
 }
 
-/// 把段的 `end_at` 推到 `ts` —— **唯一**允许往后推边界的地方。
+/// 把段的 `end_at` 推到 `ts` —— 唯一允许往后推边界的地方。
 ///
 /// 跨过观测空档时不推，停在最后一条证据：那段时间没有事件，就没有时间。
 /// 这就是「不可凭空造时间」的实现。
@@ -306,18 +306,18 @@ fn new_open_segment(
  * 观测空档守卫（2026-10-12 事故）。
  *
  * `ts` 与「上一条证据」相距超过 `max_observation_gap_s` 时，
- * **空档本身不产生任何段**：当前段在它自己的 `last_evidence_at` 处收尾，
+ * 空档本身不产生任何段：当前段在它自己的 `last_evidence_at` 处收尾，
  * 调用方（`reduce`）随后按新事件另开一段。
  *
  * 为什么必须在这里：原来的 `end_at = end_at.max(ts)` 把段一路拉到
- * 下一条事件的���间戳。应用退出 / 机器睡眠的整段时间里**一条事件都没有**，
+ * 下一条事件的���间戳。应用退出 / 机器睡眠的整段时间里一条事件都没有，
  * 于是空白被当成同一应用的连续工作记下来 —— 一次停机凭空造出 11 小时。
  * 2026-10-12 那天因此被记成 18.29 小时 unknown，界面随之说谎
  * （24h 时段分布 18/24 根柱子满格、专注度大片 100%）。
  *
- * 与 `idle_threshold_s` 的区别：那条是「**没有输入**」（heartbeat 说用户没动，
- * 记成 idle）；这条是「**没有观测**」（压根没事件，可能是进程没跑），
- * 正确处理是**什么都不记**，而不是补一段 idle 或 unknown。
+ * 与 `idle_threshold_s` 的区别：那条是「没有输入」（heartbeat 说用户没动，
+ * 记成 idle）；这条是「没有观测」（压根没事件，可能是进程没跑），
+ * 正确处理是什么都不记，而不是补一段 idle 或 unknown。
  *
  * 这个原则现在有两处守卫：这里（收尾）与 `normalize.rs`（合并只认首尾相接）。
  */
@@ -328,7 +328,7 @@ fn extend(
     evidence_id: String,
     config: &EngineConfig,
 ) {
-    // 走唯一的收尾入口：跨过观测空档时**不推** end。
+    // 走唯一的收尾入口：跨过观测空档时不推 end。
     // 原来这里是裸的 `max(ts)`，空档守卫只加在 close_current ——
     // 两条路径口径不一致，就是 6 处写边界各自为政的典型后果。
     advance_end(&mut cur.end_at, cur.last_evidence_at, ts, config);
@@ -345,7 +345,7 @@ fn close_current(
     config: &EngineConfig,
 ) -> Option<ActivitySegment> {
     let mut open = st.current_segment.take()?;
-    // 收尾以**最后一条证据**为准，而不是「这段一直活到 ts」。
+    // 收尾以最后一条证据为准，而不是「这段一直活到 ts」。
     // `reduce` 里那些直接 `close_current` 的分支（切应用、resume）都过这里。
     advance_end(&mut open.end_at, open.last_evidence_at, ts, config);
     Some(ActivitySegment {

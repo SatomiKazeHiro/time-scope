@@ -1,6 +1,6 @@
 //! SQLite schema 与迁移。
 //!
-//! 迁移是**按 `user_version` 顺序应用**的：`MIGRATIONS` 是一个 `(目标版本, SQL)` 的
+//! 迁移是按 `user_version` 顺序应用的：`MIGRATIONS` 是一个 `(目标版本, SQL)` 的
 //! 有序表，`migrate` 只执行那些目标版本大于当前 `user_version` 的条目。
 //!
 //! 这样加第 2 版时只需往表里追加一条：
@@ -10,7 +10,7 @@
 //! ```
 //!
 //! 已有数据库会在下次启动时自动升到 2，而新建库会从 0 一路升到最新。
-//! **不要**再写"每次启动都重跑全部 CREATE TABLE"的版本——那会让 ALTER TABLE
+//! 不要再写"每次启动都重跑全部 CREATE TABLE"的版本——那会让 ALTER TABLE
 //! 在第二次启动时因"列已存在"而失败，或者干脆永远不执行。
 
 use rusqlite::Connection;

@@ -7,7 +7,7 @@
 //! `thread 'main' panicked at src/lib.rs:224:39: open db`：
 //! 没有路径、没有原因、更不知道下一步该干什么。
 //!
-//! 这里把它改成：把错误整理成一句**带路径、带原因、带下一步**的说明，
+//! 这里把它改成：把错误整理成一句带路径、带原因、带下一步的说明，
 //! 由 app 层弹给用户，然后让 `setup` 返回 `Err` —— Tauri 会干净地退出，
 //! 而不是 panic。
 //!
@@ -43,7 +43,7 @@ pub fn open_db(path: &Path) -> Result<SharedConn, DbOpenError> {
     activity_storage::open_file_shared(path).map_err(|e| explain(path, &e))
 }
 
-/// 把说明弹成一个模态框。**必须有** —— 托盘常驻的应用没有终端，
+/// 把说明弹成一个模态框。必须有 —— 托盘常驻的应用没有终端，
 /// 只 `eprintln!` 的话用户根本看不到，等于什么都没说。
 ///
 /// 用原生 MessageBoxW 而不是 dialog 插件：为一个错误提示引入插件不划算，
@@ -93,12 +93,12 @@ fn describe(err: &rusqlite::Error) -> String {
     }
 }
 
-/// 用户该做什么。**每一条都要能照着做**，别只说"请重试"。
+/// 用户该做什么。每一条都要能照着做，别只说"请重试"。
 ///
-/// **按错误码判定，不按错误消息判**。错误码这一维在源头就有
+/// 按错误码判定，不按错误消息判。错误码这一维在源头就有
 /// （`rusqlite::ffi::Error` 的 `code` / `extended_code`），原来却先 `describe()`
 /// 压成字符串、再 `contains("denied")` 猜回来 —— 五段猜测，而且 io 错误的消息
-/// 是**本地化**的：中文 Windows 上是「拒绝访问」，于是「没有写权限」那条建议
+/// 是本地化的：中文 Windows 上是「拒绝访问」，于是「没有写权限」那条建议
 /// 在中文系统上永远不出现。少一个维度去猜，就是把本来明确的判断变成了运气。
 fn next_step(err: &rusqlite::Error) -> &'static str {
     use rusqlite::ErrorCode;
@@ -159,7 +159,7 @@ mod tests {
         // B4 的核心。旧代码是 `.expect("open db")` → panic，用户看到
         // "thread 'main' panicked at ... open db"，既没有路径也没有原因。
         let dir = tmp_dir("blocked");
-        // 在本该是目录的位置放一个**文件**，于是 create_dir_all 必然失败。
+        // 在本该是目录的位置放一个文件，于是 create_dir_all 必然失败。
         let blocker = dir.join("notadir");
         std::fs::write(&blocker, b"x").unwrap();
         let path = blocker.join("time-scope.db");
@@ -230,7 +230,7 @@ mod tests {
         assert!(err.next_step.contains("不会丢"), "实际：{}", err.next_step);
     }
 
-    /// 权限问题按**错误码**给出建议 —— 与错误消息是什么语言无关。
+    /// 权限问题按错误码给出建议 —— 与错误消息是什么语言无关。
     ///
     /// 消息故意写成中文：按 `contains("denied")` 猜的那一版会让这条断言变红
     /// （它会掉到兜底那句，只说「检查目录是否存在且可写」）。
@@ -247,7 +247,7 @@ mod tests {
     }
 
     /// 中文的错误消息不该影响判定（io 错误在 rusqlite 里没有 sqlite 错误码，
-    /// 落到兜底那条；关键是**不能**因为它不含英文关键词就什么都不说）。
+    /// 落到兜底那条；关键是不能因为它不含英文关键词就什么都不说）。
     #[test]
     fn a_localized_io_message_still_gets_an_actionable_next_step() {
         let err = explain(

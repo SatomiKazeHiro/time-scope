@@ -7,9 +7,9 @@ import { colorForCategory, metaForCategory } from "../design/categories";
 /**
  * 选中某个 ActivitySegment 后的详情（spec §10）。
  *
- * **关于窗口标题**：
+ * 关于窗口标题：
  * 标题不在段上，而是存在 events 表里（一个段可能对应几十条事件、几十个标题）。
- * 点开时按 evidence id 反查，`redacted` 标记由**后端**判定——前端不硬编码
+ * 点开时按 evidence id 反查，`redacted` 标记由后端判定——前端不硬编码
  * `[redacted]` 这个占位符，否则改了占位符就会出现"标记失效但数据仍脱敏"的怪状态。
  */
 export default function SegmentDetail({
@@ -49,7 +49,7 @@ export default function SegmentDetail({
     return () => {
       cancelled = true;
     };
-    // 依赖里**必须带 evidenceIds.length**（B6）。正在生长的那一段 id 恒为
+    // 依赖里必须带 evidenceIds.length（B6）。正在生长的那一段 id 恒为
     // `open-{start_at}` 不变，而 evidenceEventIds 每 5 秒轮询就变长；
     // 只依赖 `[key]` 会让面板自相矛盾 ——「N 条事件支撑」在涨、标题列表不动。
     // 取 length 而不是数组本身：数组每次都是新引用，会变成每次轮询都重取。
@@ -141,12 +141,12 @@ export default function SegmentDetail({
  * 卡片右上角的「定位 + 前后段导航」。
  *
  * 三样东西：这一段在当天里的第几、原始 id、以及前一段/后一段。
- * - **序号**用等宽数字（`tnum`）：每按一次就变一位，非等宽会让整行宽度跳。
- * - **id** 是给人报问题时对得上的，别指望用户自己看懂。
- * - **按钮**到头就禁用、不循环：从 23:59 一下跳到 00:00 跨度太大，位置感会丢。
+ * - 序号用等宽数字（`tnum`）：每按一次就变一位，非等宽会让整行宽度跳。
+ * - id 是给人报问题时对得上的，别指望用户自己看懂。
+ * - 按钮到头就禁用、不循环：从 23:59 一下跳到 00:00 跨度太大，位置感会丢。
  *   与时间线上方向键的行为一致。
  *
- * 只走**当天**（`position` 由 App 给出）。跨天需要前端持有相邻两天的段，
+ * 只走当天（`position` 由 App 给出）。跨天需要前端持有相邻两天的段，
  * 而它现在只拿当天 —— 见上一轮讨论，先不做。
  */
 function Locator({

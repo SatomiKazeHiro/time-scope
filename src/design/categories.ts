@@ -3,7 +3,7 @@ import type { Category } from "../types";
 /**
  * 类别的展示元数据。
  *
- * 这里**只放 CSS 变量名，不放色值** —— 色值唯一的真相在 `styles/theme.css`。
+ * 这里只放 CSS 变量名，不放色值 —— 色值唯一的真相在 `styles/theme.css`。
  * 之前色值在 TS 和组件里各存一份，改主题要记得改两处，迟早漏。
  *
  * 编码结构（详见 design-system/time-scope/MASTER.md §2）：
@@ -33,7 +33,7 @@ export interface CategoryMeta {
   /** 同色相内的明度级：主 = 该层级里更显眼的那个，次 = 退后档 */
   step: "primary" | "secondary" | null;
   /**
-   * 段内能不能打直标。**这是结构决策，与配色无关** —— 标签颜色由 CSS 的
+   * 段内能不能打直标。这是结构决策，与配色无关 —— 标签颜色由 CSS 的
    * `--on-cat-*` 随主题走，不在这里决定。
    *
    * study / life 在两个主题下都是 false：深色底下它们的浅字只有 4.47 /

@@ -4,11 +4,11 @@
  * 全部是无 IO 的纯函数——布局算法是这个页面最容易错的地方
  * （周一起始、首列补齐），把它从 React 组件里剥出来，才能一条条地断言。
  *
- * 热力图口径：**ISO 8601 —— 7 行 = 周一到周日**（行 0 = 周一），
+ * 热力图口径：ISO 8601 —— 7 行 = 周一到周日（行 0 = 周一），
  * 1 列 = 1 周（自周一起）。左侧标 Mon / Wed / Fri。
  *
- * 注意：GitHub 贡献墙的**行序是周日开头**（官方 REST API 文档写明
- * `0-6: Sunday - Saturday`），这里**故意跟它不一样** —— 一周从周一开始
+ * 注意：GitHub 贡献墙的行序是周日开头（官方 REST API 文档写明
+ * `0-6: Sunday - Saturday`），这里故意跟它不一样 —— 一周从周一开始
  * 是 ISO 8601 的标准，也是几乎所有编程语言和地区的默认。
  */
 
@@ -31,12 +31,12 @@ export const PITCH = CELL + GAP;
 const MONTH_LABEL_MIN_GAP = 2;
 
 /**
- * 一行的星期标签，**下标 = 墙的行号**，行 0 = 周一（ISO 8601）。
+ * 一行的星期标签，下标 = 墙的行号，行 0 = 周一（ISO 8601）。
  */
 export const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
 
 /**
- * 左侧标**全部 7 行**。
+ * 左侧标全部 7 行。
  *
  * GitHub 只标 Mon / Wed / Fri，那是因为它两侧都挤。我们左边是整条留白，
  * 7 行各有名字更好读，而且「行 0 = 周一」一眼就确认了，不用靠猜。
@@ -48,14 +48,14 @@ export const LABELLED_ROWS = [0, 1, 2, 3, 4, 5, 6] as const;
 export const WALL_WEEKS = 53;
 
 /**
- * 热力图的横轴窗口：**固定 53 周，最后一格是 `today`**。
+ * 热力图的横轴窗口：固定 53 周，最后一格是 `today`。
  *
  * 固定跨度而不是「首个有数据的日子 → 今天」：那样只有 5 天数据时整面墙
  * 只有 2 列 1 个月份标签，看起来像渲染坏了。GitHub 不管你有多少数据都
  * 铺满一整年，没数据的日子是空的 —— 那个「空」本身就是「我那时候还没
  * 开始用」的信息。
  *
- * 首格从今天所在周的**周一**往前推 52 周，所以每列都对齐周。
+ * 首格从今天所在周的周一往前推 52 周，所以每列都对齐周。
  */
 export function wallWindow(today: string): { start: string; end: string; weeks: number } {
   const end = today;
@@ -63,16 +63,16 @@ export function wallWindow(today: string): { start: string; end: string; weeks: 
   return { start, end, weeks: WALL_WEEKS };
 }
 
-/** `YYYY-MM-DD` 的本地星期，沿用 JS 约定：**0 = 周日**。 */
+/** `YYYY-MM-DD` 的本地星期，沿用 JS 约定：0 = 周日。 */
 export function weekdayOf(date: string): number {
   const [y, m, d] = date.split("-").map(Number);
   return new Date(y, m - 1, d).getDay();
 }
 
 /**
- * 这天在墙里的**行号**（ISO 8601）：0 = 周一 … 6 = 周日。
+ * 这天在墙里的行号（ISO 8601）：0 = 周一 … 6 = 周日。
  *
- * 与 `weekdayOf`（JS 约定，0 = 周日）**差一个偏移**，两个下标别混用。
+ * 与 `weekdayOf`（JS 约定，0 = 周日）差一个偏移，两个下标别混用。
  */
 export function rowOf(date: string): number {
   return (weekdayOf(date) + 6) % 7;
@@ -113,16 +113,16 @@ export function scaleColor(step: number): string {
 /**
  * 「首次有记录之前」的那段日子怎么画。
  *
- * **它和「有记录但当天没活动」是两件事，必须分开。** GitHub 的空格有意义是因为
+ * 它和「有记录但当天没活动」是两件事，必须分开。 GitHub 的空格有意义是因为
  * GitHub 一直存在；时迹三个月前还不存在，那段日子的空格读作「我一整年
  * 几乎没用过」——而事实是「我 5 天前才装上」。
  *
- * **口径的边界**：后端只有 `DailyCalendar.first`（首个有记录的日子），**没有
- * 安装日**这个维度。所以这一档说的是「首次有记录之前」，不是严格的「还没装」
+ * 口径的边界：后端只有 `DailyCalendar.first`（首个有记录的日子），没有
+ * 安装日这个维度。所以这一档说的是「首次有记录之前」，不是严格的「还没装」
  * —— 「装了但从没产生记录」与「还没装」在这里是同一档。函数名 `uninstalled`
  * 是旧称，沿用不改是因为它同时是 CSS 的 `data-tone` 取值。
  *
- * 两者**底色相同**（轨道色），只差描边强弱：
+ * 两者底色相同（轨道色），只差描边强弱：
  * - 首次有记录之前：弱描边 `--color-line`，读作「幽灵格子」
  * - 没活动：强描边 `--color-line-strong`，读作「有个确切的空方块」
  *
@@ -133,7 +133,7 @@ export function uninstalledColor(): string {
   return "var(--color-surface-2)";
 }
 
-/* 描边不在这一层了：0 档的内描边（强/弱两级）与选中的外环必须能**组合**，
+/* 描边不在这一层了：0 档的内描边（强/弱两级）与选中的外环必须能组合，
    放在 CSS 里才不会退化成「底色 × 有没有选中」的笛卡尔积。
    这里只给出档名（`toneOf`），真正的 1px 内描边在 theme.css 的
    `.wall-cell[data-tone=…]` 里。 */
@@ -157,7 +157,7 @@ export interface WallCell {
 export interface WallLayout {
   cells: WallCell[];
   weeks: number;
-  /** `date` 是**该月第一天**，不是那一列的列首日期 —— 月首常落在周中，
+  /** `date` 是该月第一天，不是那一列的列首日期 —— 月首常落在周中，
    *  拿列首去推 rangeFor("month") 会选中上一个月。 */
   monthLabels: Array<{ col: number; label: string; date: string }>;
 }
@@ -166,7 +166,7 @@ export interface WallLayout {
  * 格子的内描边档。组件把它写成 `data-tone`，描边本身在
  * `theme.css` 的 `.wall-cell[data-tone="…"]`。
  *
- * 空档必须分两级 —— 两者**底色相同**（都是轨道色 `--color-surface-2`，
+ * 空档必须分两级 —— 两者底色相同（都是轨道色 `--color-surface-2`，
  * 浅色主题下压在白色面板上几乎看不见），只靠 1px 内描边的强弱区分：
  * - `uninstalled`：首次有记录之前的那段日子（弱描边 `--color-line`）
  * - `empty`：有记录但当天没活动（强描边 `--color-line-strong`）
@@ -174,7 +174,7 @@ export interface WallLayout {
  * 取值名沿用 `uninstalled`：它同时是 CSS 的 `data-tone`，改名要连
  * `theme.css` 一起动，而语义在注释与可访问名里已经说清了。
  *
- * 不描边两者都看不见，都描强又分不开。**不新增 token**（MASTER §2.4）。
+ * 不描边两者都看不见，都描强又分不开。不新增 token（MASTER §2.4）。
  */
 export type WallTone = "uninstalled" | "empty";
 
@@ -187,10 +187,10 @@ export function toneOf(cell: WallCell): WallTone | undefined {
 /**
  * 把连续的日期序列摊成 GitHub 贡献墙的网格。
  *
- * 首列往前补到**周一**、末列往后补到周日 —— 不补的话第一列和最后一列
+ * 首列往前补到周一、末列往后补到周日 —— 不补的话第一列和最后一列
  * 会整列错位。补齐后总格数恒为 7 的倍数。
  *
- * **前置条件：`days` 必须是连续、升序的日期序列。** 缺日会算错补齐量
+ * 前置条件：`days` 必须是连续、升序的日期序列。 缺日会算错补齐量
  * （末列位置由 `days[last].date` 决定）。调用方用 `fillDays` 产出，
  * 它保证连续；`totalMs` 为 0 的日子照样在序列里。
  */
@@ -202,7 +202,7 @@ export function buildWall(days: DayCell[], trackedFrom?: string): WallLayout {
   const maxMs = Math.max(...days.map((d) => d.totalMs), 0);
   // 缺省为「从窗口第一天起就在运行」——调用方不传时不做未安装期区分。
   const since = trackedFrom ?? first;
-  // **行 0 = 周一**（ISO 8601）：首列往前补到周一，末列往后补到周日。
+  // 行 0 = 周一（ISO 8601）：首列往前补到周一，末列往后补到周日。
   const lead = rowOf(first);
   const total = days.length + lead + (6 - rowOf(last));
 
@@ -255,7 +255,7 @@ export interface Frame {
 /**
  * 算出 `[from, to]` 在墙里占的那一块。
  *
- * 用**日历位置**算，不只取有数据的格子：用户选「10 月」时，框要框住整个月的
+ * 用日历位置算，不只取有数据的格子：用户选「10 月」时，框要框住整个月的
  * 7 行高度，跟那天有没有活动无关。补齐位有真实日期，所以直接按日期过滤
  * `cells` 就能得到日历矩形。
  *
@@ -275,7 +275,7 @@ export function selectionFrame(
   return { col, row, cols: colEnd - col + 1, rows: rowEnd - row + 1 };
 }
 
-/** 该日期所在周的**周一**（ISO 8601，墙里的一周从周一开始）。 */
+/** 该日期所在周的周一（ISO 8601，墙里的一周从周一开始）。 */
 export function startOfWeek(date: string): string {
   return shiftDate(date, -rowOf(date));
 }

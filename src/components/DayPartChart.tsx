@@ -16,7 +16,7 @@ const BAR_RATIO = 0.56;
 const HOUR_MS = 3_600_000;
 
 /**
- * 24h 活跃时段分布。**24 根细柱，不用平滑面积** ——
+ * 24h 活跃时段分布。24 根细柱，不用平滑面积 ——
  * 平滑曲线会在两个 0 之间鼓出弧，读起来像「凌晨 6 点也在用」，
  * 那是数据里不存在的值（spec §10）。
  *
@@ -31,7 +31,7 @@ export default function DayPartChart({ hourlyMs, stretch = false }: DayPartChart
   const barW = colW * BAR_RATIO;
 
   return (
-    /* 刻度文字**不能留在 SVG 里**。stretch 走的是
+    /* 刻度文字不能留在 SVG 里。stretch 走的是
        `preserveAspectRatio="none"`，那会把 <text> 一起横向压扁 ——
        数字被挤成竖线。所以刻度标签放 HTML 覆盖层，
        和 SegmentTimeline 的时间轴标签同一个理由。 */

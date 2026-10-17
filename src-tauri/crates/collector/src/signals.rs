@@ -1,6 +1,6 @@
 //! collector 内部信号：从 OS 采集线程传给 consumer 线程的最小载荷。
 //!
-//! 只传 HWND（窗口事件）或一个数字（输入事件），**不在这一层取标题/进程名**——
+//! 只传 HWND（窗口事件）或一个数字（输入事件），不在这一层取标题/进程名——
 //! 那是重活，留给 consumer 线程（spec §5.1）。
 
 #[cfg(windows)]
@@ -20,7 +20,7 @@ pub enum RawSignal {
     InputActive,
     /// 一个 heartbeat 窗口内的活跃秒数（0..=heartbeat_every_s）
     ///
-    /// 第二个值是这个窗口的**起点**（Unix 毫秒）。`active_seconds` 只说
+    /// 第二个值是这个窗口的起点（Unix 毫秒）。`active_seconds` 只说
     /// 「过去 N 秒里有几秒在动」，不说那几秒在哪 —— 而段是从某个时刻
     /// 开始的，窗口可能只与段重叠一部分。见 `InputHeartbeatPayload::window_start_ms`。
     Heartbeat(u8, i64),

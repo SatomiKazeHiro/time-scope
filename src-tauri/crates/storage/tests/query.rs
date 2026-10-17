@@ -146,7 +146,7 @@ fn distinct_event_types_all_get_distinct_type_column() {
 #[test]
 fn pruning_removes_only_events_older_than_the_cutoff() {
     // B3。events 表实测 ≈5 MB/天 ≈1.8 GB/年，没有保留期就一直涨。
-    // 删的是**原始事件**，`activities` 一行不动 —— 它才是时长账本。
+    // 删的是原始事件，`activities` 一行不动 —— 它才是时长账本。
     let conn = open_in_memory();
     insert_events(
         &conn,

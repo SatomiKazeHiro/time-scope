@@ -1,6 +1,6 @@
 //! config.toml 的解析与默认模板（spec §5）。
 //!
-//! 设计原则（spec §5.2）：**任何问题都回退到默认值，绝不报错**。
+//! 设计原则（spec §5.2）：任何问题都回退到默认值，绝不报错。
 //! 只有一个文件不存在时才写默认模板；文件坏了就只读不写，留给用户自己修。
 //!
 //! 逐字段读取（而不是整份 deserialize 成一个 struct）是有意的：
@@ -58,7 +58,7 @@ impl CloseBehavior {
 // ===========================================================================
 // 「一个配置项」的唯一所有者
 //
-// 2026-10-17。在这之前，一个配置项的知识散在**八处**：结构体字段、`Default`、
+// 2026-10-17。在这之前，一个配置项的知识散在八处：结构体字段、`Default`、
 // `parse` 的逐字段夹取、`to_toml`、`set_config` 的外层 match、同一个函数里
 // 第二层 match（把夹取后的值再取回来一次）、`CONFIG_KEYS`、
 // `config_field_needs_restart`。代码自己都在报怨 —— 那个第二层 match 里有个
@@ -73,7 +73,7 @@ pub enum FieldKind {
     /// 整数（秒 / 天）。缺字段、类型不对、文件坏了都回退到 `default`。
     Int { default: u32, min: u32, max: u32 },
     Bool { default: bool },
-    /// 枚举。`values` 同时是**合法取值**与**报错文案**的一部分。
+    /// 枚举。`values` 同时是合法取值与报错文案的一部分。
     Enum {
         values: &'static [&'static str],
         default: &'static str,
@@ -84,11 +84,11 @@ pub struct FieldSpec {
     /// `config.toml` 里的键名（snake_case）。也是前端 `needsRestart` 的键。
     pub key: &'static str,
     pub kind: FieldKind,
-    /// 改完是否**必须重启**才生效。依据是参数绑在哪里，不是界面偏好：
+    /// 改完是否必须重启才生效。依据是参数绑在哪里，不是界面偏好：
     /// - 四个采集/引擎参数：绑进 `spawn_input_poller` 的线程参数与
     ///   `EngineConfig` 的构造注入，进程内改不了（STATUS §4.1）
     /// - `autostart`：`Residency` 启动时快照 + 系统注册表，`set_config` 碰不到
-    /// - `close_behavior`：关窗拦截**现读 config.toml**，真热生效
+    /// - `close_behavior`：关窗拦截现读 config.toml，真热生效
     /// - `events_retention_days`：`set_config` 回写内存，下一次轮询就按新值清理
     pub needs_restart: bool,
 }
@@ -140,7 +140,7 @@ pub fn field(key: &str) -> Option<&'static FieldSpec> {
     FIELDS.iter().find(|f| f.key == key)
 }
 
-/// 这个键改完要重启吗？**未知键一律当作要重启** —— 没登记过的键宁可多提醒
+/// 这个键改完要重启吗？未知键一律当作要重启 —— 没登记过的键宁可多提醒
 /// 一次重启，也不要悄悄标成「已生效」。
 pub fn needs_restart(key: &str) -> bool {
     field(key).map(|f| f.needs_restart).unwrap_or(true)
@@ -173,7 +173,7 @@ fn enum_default(key: &str) -> &'static str {
     }
 }
 
-/// 把用户填的字符串变成**可以写回文件的 TOML 文本**。校验与夹取都在这里，
+/// 把用户填的字符串变成可以写回文件的 TOML 文本。校验与夹取都在这里，
 /// 于是 `set_config` 不再需要「拼一份假 TOML 再解析回来再 match 一次」那两步。
 ///
 /// 返回值第二项是数字键的新取值（保留期靠它热生效），非数字键为 `None`。
@@ -200,7 +200,7 @@ pub fn render_value(key: &str, raw: &str) -> Result<(String, Option<u32>), Strin
     }
 }
 
-/// 校验并写回一个键。**只改磁盘上的那一行**（`patch_line`），
+/// 校验并写回一个键。只改磁盘上的那一行（`patch_line`），
 /// 不覆盖整份文件、不抹掉注释；文件坏了就拒绝写入并把原因带回去。
 pub fn set_value(path: &Path, key: &str, raw: &str) -> Result<SetOutcome, String> {
     let (rendered, int) = render_value(key, raw)?;
@@ -229,17 +229,17 @@ pub struct AppConfig {
     pub autostart: bool,
     /// 点 ✕ 时的行为
     pub close_behavior: CloseBehavior,
-    /// 保留多少天的**原始事件**。0 = 永不删（spec §8.1，B3）。
+    /// 保留多少天的原始事件。0 = 永不删（spec §8.1，B3）。
     ///
     /// 只管 `events`（原始流，实测 ≈5 MB/天 ≈1.8 GB/年）。
-    /// **`activities` 一行不删** —— 它才是时长账本，而且很小
+    /// `activities` 一行不删 —— 它才是时长账本，而且很小
     /// （≈50k 行/年）。所以时间线、汇总、热力图不受这个设置影响，
     /// 受影响的只有「窗口标题 Top」与段详情里能回溯到的标题范围。
     pub events_retention_days: u32,
 }
 
 impl Default for AppConfig {
-    /// 各项默认值从 `FIELDS` 取，**不再各写一遍** —— 原来这里与 `parse` 里的
+    /// 各项默认值从 `FIELDS` 取，不再各写一遍 —— 原来这里与 `parse` 里的
     /// `unwrap_or(d.xxx)` 是同一批数字的两份副本。
     fn default() -> Self {
         Self {
@@ -262,10 +262,10 @@ impl AppConfig {
     }
 }
 
-/// **纯函数**：任何输入都返回一个可用的配置。
+/// 纯函数：任何输入都返回一个可用的配置。
 ///
 /// 逐字段取值：类型对不上、越界、缺失都只影响那一个字段。
-/// **夹取范围与默认值从 `FIELDS` 取**，不再在这里各写一遍。
+/// 夹取范围与默认值从 `FIELDS` 取，不再在这里各写一遍。
 pub fn parse(src: &str) -> AppConfig {
     let d = AppConfig::default();
     let Ok(table) = src.parse::<toml::Table>() else {
@@ -298,40 +298,26 @@ pub fn parse(src: &str) -> AppConfig {
     }
 }
 
-/// 数据目录的名字。**有前缀**，放在 exe 旁边一眼能认出是谁生成的，
+/// 数据目录的名字。有前缀，放在 exe 旁边一眼能认出是谁生成的，
 /// 也不会和别人的 `data\` 撞（2026-10-17 用户要求）。
 pub const DATA_DIR_NAME: &str = "time-scope-data";
 
-/// 库 / `config.toml` / `rules.toml` 住哪 —— **「程序」所在目录下的 `time-scope-data\`**。
+/// 库 / `config.toml` / `rules.toml` 住哪 —— 「程序」所在目录下的 `time-scope-data\`。
 ///
-/// 一条规则：**程序在哪，账本就在哪**。不区分「安装版 / 便携版」——
-/// 它们是同一个软件，凭什么走两条路。拷贝一份 exe 到 U 盘，账本跟着走；
-/// 删掉目录 = 连数据一起删，这才是「便携」该有的样子。
+/// 一条规则：程序在哪，账本就在哪，不分安装版 / 便携版。只用 `current_exe()`
+/// 与路径拼接，没有任何平台 API，Linux / macOS 上一样成立。
 ///
-/// **与操作系统无关**：这里只用 `current_exe()` 与路径拼接 —— 没有
-/// `%APPDATA%`、没有注册表、没有 `dirs` 之类的平台库。同一份规则在 Linux /
-/// macOS 上一样成立，只要程序本身待在一个**可写**的目录里。
+/// 但「程序」在另两个平台上长得不一样（见 `app_container`）：
+/// - macOS：exe 在 `Foo.app/Contents/MacOS/` 里。写进去会破坏代码签名、更新时
+///   整个 bundle 被替换 —— 所以认那个 `.app` 文件夹，数据放它旁边
+/// - Linux AppImage：exe 在只读且临时的 `/tmp/.mount_*` 里，`$APPIMAGE` 才指向
+///   用户手里那个可写的文件 —— 数据放它旁边
 ///
-/// 但「程序」在三个平台上长的不一样，于是有两条容器规则（见 `app_container`）：
-/// - **macOS 的 `.app`**：exe 在 `Foo.app/Contents/MacOS/foo` 里。往那里写会
-///   破坏代码签名、用户也看不见，而且更新会整个替换掉 bundle —— 所以认
-///   那个 `.app` **文件夹**为「程序」，数据放在它**旁边**。
-/// - **Linux 的 `.AppImage`**：exe 在一个只读且临时的 squashfs 挂载点里
-///   （`/tmp/.mount_*`）。运行时 `$APPIMAGE` 指向那个 `.AppImage` 文件本身 ——
-///   数据就放在它旁边。
+/// `TIME_SCOPE_DATA` 可显式覆盖（开发时别写真实账本、或想把库放别的盘）。
 ///
-/// 唯一例外是 `TIME_SCOPE_DATA` 显式覆盖：开发时把库指到别处（别让 dev
-/// 写真实账本）、或者你想把账本放在另一块盘上。它是一个开关，不是一条分支。
-///
-/// **前提**：放置程序的目录必须可写。这不是本项目的选择，是各系统的规则：
-/// - Windows：默认的 NSIS 是当前用户安装（`installMode: currentUser`），可写；
-///   装进 `C:\Program Files`（per-machine / MSI）普通用户写不进去
-/// - Linux：`/usr/bin`、Flatpak / Snap 的沙箱都是只读 —— 那里只能走
-///   `TIME_SCOPE_DATA` 或发行版自带的数据目录
-/// - macOS：`/Applications` 对普通用户只读
-///
-/// 写不进去时**启动会在建目录那一步失败并弹出带路径的说明**，
-/// 而不是悄悄把数据放到别处（那才是真的找不到账本）。
+/// 前提：放置程序的目录必须可写 —— Windows 的 `C:\Program Files`、Linux 的
+/// `/usr/bin` 与 Flatpak/Snap、macOS 的 `/Applications` 都不是。写不进去时启动
+/// 会报错并说明，不会悄悄换地方。
 pub fn data_dir() -> PathBuf {
     resolve_data_dir(
         std::env::var_os("TIME_SCOPE_DATA"),
@@ -391,7 +377,7 @@ pub fn config_path() -> PathBuf {
 
 /// 读配置；文件不存在则写默认模板。
 ///
-/// **文件坏了不覆盖**（spec §5.2）：那是用户自己的内容，留着给他修。
+/// 文件坏了不覆盖（spec §5.2）：那是用户自己的内容，留着给他修。
 pub fn load_or_create(path: &Path) -> AppConfig {
     match std::fs::read_to_string(path) {
         Ok(text) => parse(&text),
@@ -407,14 +393,14 @@ pub fn load_or_create(path: &Path) -> AppConfig {
     }
 }
 
-/// 改一个键并写回，**只动那一行**。
+/// 改一个键并写回，只动那一行。
 ///
 /// 为什么不整份重写：模板里的注释是给用户看的说明，整份重写会把它们全部抹掉；
-/// 而且文件一旦被用户改坏，整读再整写会用默认值**覆盖**他写的东西（spec §5.2）。
+/// 而且文件一旦被用户改坏，整读再整写会用默认值覆盖他写的东西（spec §5.2）。
 ///
 /// `rendered_value` 是已经渲染好的 TOML 值，例如 `true`、`"minimize"`。
 /// - 文件不存在：写默认模板 + 追加这一行
-/// - 文件存在但 TOML 语法错：**不写**，返回 Err。错误信息只说「未写回」——
+/// - 文件存在但 TOML 语法错：不写，返回 Err。错误信息只说「未写回」——
 ///   「本次选择还有没有生效」各调用方不一样，由调用方自己补，不要在这里替它们断言
 /// - 键不存在：追加到末尾
 pub fn patch_line(path: &Path, key: &str, rendered_value: &str) -> std::io::Result<()> {
@@ -609,7 +595,7 @@ close_behavior = "minimize"
 
     #[test]
     fn every_field_survives_a_write_then_parse_round_trip() {
-        // 走**生产那条路**（`set_value` → `patch_line` → `parse`），
+        // 走生产那条路（`set_value` → `patch_line` → `parse`），
         // 而不是另写一个序列化器再验它 —— 那会多出一份「键名清单」，
         // 两份清单迟早有一份忘了改。
         let dir = std::env::temp_dir().join(format!("ts-cfg-rt-{}", std::process::id()));
@@ -748,7 +734,7 @@ close_behavior = "minimize"
 
     #[test]
     fn patching_a_file_with_a_wrong_typed_value_still_works() {
-        // 值类型错（比如写成字符串）**仍是合法 TOML**，所以只改我们那一行，
+        // 值类型错（比如写成字符串）仍是合法 TOML，所以只改我们那一行，
         // 不顺手"修"用户那一项——他在文件里写什么就留着什么
         let dir = tmp_dir("patch-wrongtype");
         let path = dir.join("config.toml");
@@ -887,7 +873,7 @@ mod retention_tests {
 
     // --- 配置项的唯一所有者：FIELDS ---
 
-    /// 表与结构体必须一一对应。**加字段忘了登记表、或表里写错类型**，
+    /// 表与结构体必须一一对应。加字段忘了登记表、或表里写错类型，
     /// 这里立刻红 —— 而不是等界面上少一个控件、或那个键改不进去。
     ///
     /// 默认值写死在这里是故意的：改默认值应当是个显眼的动作。
@@ -1011,7 +997,7 @@ mod retention_tests {
 
     #[test]
     fn missing_exe_dir_is_a_loud_failure() {
-        // 解析不出 exe 目录时**不静默落到当前工作目录** —— 那会让账本出现在
+        // 解析不出 exe 目录时不静默落到当前工作目录 —— 那会让账本出现在
         // 随机位置（比如从快捷方式启动时的 system32）。宁可在这里炸。
         let r = std::panic::catch_unwind(|| resolve_data_dir(None, None, None));
         assert!(r.is_err(), "没有 exe 目录时必须报错，不能悄悄换地方");
@@ -1079,7 +1065,7 @@ mod retention_tests {
 
     // --- 「改完要不要重启」的诚实性（2026-10-15）---
     //
-    // 界面标「已保存，立刻生效」的字段**必须真的会热生效**。2026-10-15 之前
+    // 界面标「已保存，立刻生效」的字段必须真的会热生效。2026-10-15 之前
     // 这里把 `autostart` / `close_behavior` 都算成热生效，但 `Residency` 在
     // `install()` 时快照了这两个值，`set_config` 只写文件、不回写快照 ——
     // 界面说「已保存」而行为要等下次启动。界面说谎比多要求一次重启更糟。

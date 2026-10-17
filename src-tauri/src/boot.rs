@@ -1,9 +1,7 @@
-//! 启动编排：`lib.rs` 的 setup 里原本揉在一起的那六件事。
+//! 启动编排：六个具名步骤。
 //!
-//! 拆出来的理由：这里的**执行顺序本身就是语义** —— VACUUM 必须在采集线程起来
-//! 之前（它会锁住整个库）、今日重放必须在实时流之前（否则正在生长的段会丢）、
-//! 托盘与自启必须在 `manage(AppState)` 之前拿到配置。原来这些只靠相邻注释保证，
-//! 加一个线程或改一次失败处理，都得在同一百来行里找位置。现在是一串具名步骤。
+//! 顺序本身是语义：VACUUM 必须在采集线程之前（它会锁住整个库），今日重放必须
+//! 在实时流之前（否则正在生长的段会丢），托盘与自启要在 `manage` 之前拿到配置。
 
 use crate::config;
 use crate::day_replay::{self, ReplayedDays};
@@ -21,9 +19,8 @@ use tauri::Manager;
 
 /// 启动整条链路。返回 `Err` 时 Tauri 会干净退出（不 panic）。
 pub fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    // ① 打开数据库。B4：打不开就弹一句带路径/原因/下一步的说明，然后让
-    //    setup 返回 Err，而不是 `.expect("open db")` panic ——
-    //    那句话没有路径也没有原因，用户无从下手。
+    // ① 打开数据库。打不开就弹一句带路径/原因/下一步的说明再返回 Err，
+    //    别 `.expect()` panic —— 那句话没有路径也没有原因，用户无从下手。
     let data_dir = config::data_dir();
     let db_path = data_dir.join("time-scope.db");
     let conn: SharedConn = match db_open::open_db(&db_path) {
@@ -42,18 +39,16 @@ pub fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
     // 文件缺失时生成默认模板，坏了就用默认值（都不影响启动）。
     let app_config = config::load_or_create(&config::config_path());
 
-    // ② 启动清理 + VACUUM。B3：**必须在采集线程起来之前做** ——
-    //    VACUUM 会锁住整个库，放在运行期就是把「20 秒写不进去」变成日常。
-    //    运行期只删不 VACUUM：删掉的页进 freelist 会被复用，**这就止住了增长**，
-    //    已经很大的文件要缩回去则交给这一次启动时的 VACUUM。
+    // ② 启动清理 + VACUUM，必须在采集线程起来之前做（VACUUM 会锁住整个库）。
+    //    运行期只删不 VACUUM：删掉的页进 freelist 会被复用，增长就止住了。
     retention::prune_at_startup(&conn, app_config.events_retention_days);
 
-    // ③ 规则 + 今日重放（先从磁盘读规则，再按它重放今天）
+    // ③ 读规则 + 按它重放今天
     let replayed = ReplayedDays::default();
     let (rule_set, config, runtime) = day_replay::bootstrap_today(&conn, &replayed, &app_config);
     let engine = Arc::new(Mutex::new(runtime));
 
-    // ④ 脱敏器：app 层构造，注入 consumer。敏感标题在**入队前**就被替换，
+    // ④ 脱敏器：app 层构造，注入 consumer。敏感标题在入队前就被替换，
     //    不会以明文在内存队列里存在（spec §11）。
     let redactor = Arc::new(Redactor::new(&rule_set.redact));
     if !redactor.is_empty() {
@@ -98,7 +93,7 @@ pub fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
         "[time-scope] 锁屏/睡眠监听 {}",
         match session {
             activity_collector::session::RegistrationOutcome::Ok => "已就绪".to_string(),
-            // **别笼统说「不可用」**（2026-10-13）：真实事故里只有电源注册失败、
+            // 别笼统说「不可用」（2026-10-13）：真实事故里只有电源注册失败、
             // 锁屏那一路其实正常，却被这句话说成「该时段都不被记录」，
             // 害得以为锁屏没在记。具体哪一路坏了，上面那两行各自已经说清了。
             activity_collector::session::RegistrationOutcome::Failed { reason } => {

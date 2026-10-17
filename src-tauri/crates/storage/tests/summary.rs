@@ -23,7 +23,7 @@ fn put(conn: &rusqlite::Connection, segs: Vec<StoredSegment>) {
     insert_segments(conn, &refs).unwrap();
 }
 
-/// 某个 Unix 毫秒所在**本地日**的零点。借 SQLite 自己换算，
+/// 某个 Unix 毫秒所在本地日的零点。借 SQLite 自己换算，
 /// 避免测试里复刻时区 / 夏令时逻辑（spec §3.4 说那个口径是已知的近似）。
 ///
 /// 注意 `'utc'` 修饰符不能省。原来写的是
@@ -43,7 +43,7 @@ fn local_midnight_ms(conn: &rusqlite::Connection, ms: i64) -> i64 {
 
 /// 三个连续的本地午夜：d0、d0+1天、d0+2天。
 ///
-/// 注意：这里跨的是**本地日**而不是固定 86,400,000ms 夏令时切换的那天
+/// 注意：这里跨的是本地日而不是固定 86,400,000ms 夏令时切换的那天
 /// 可能不是 24 小时（spec §3.4 记的已知限制）。测试跑在开发机上，
 /// 撞上切换日会失败——那时改成向后再取一天即可。
 fn three_days(conn: &rusqlite::Connection) -> (i64, i64, i64) {
@@ -120,7 +120,7 @@ fn days_with_no_segments_are_absent() {
 fn a_segment_crossing_midnight_is_split_across_both_days() {
     // A2。原来这条测试反过来钉死了旧口径（"整段时长算给开始那天"），
     // 代价是第二天凭空少一段：时间线缺一块、汇总是 0、热力图那格是空的。
-    // 口径改为**按交集切分**——这是唯一能让时间线/汇总/热力图三者同源的算法。
+    // 口径改为按交集切分——这是唯一能让时间线/汇总/热力图三者同源的算法。
     //
     // （原注释援引 spec §7.3 作为该口径的依据，但 §7.3 只讲 Segmenter 状态机，
     //   全文没有对「按天归属」的规定。STATUS §4.1 把「跨零点的段两天都看不到」
@@ -336,7 +336,7 @@ const CST: i32 = 8 * 3600;
 
 #[test]
 fn gaps_do_not_create_phantom_time_in_the_hourly_profile() {
-    // 相邻段之间空 6 分钟 —— 那 6 分钟**不属于任何段**，不该出现在 24h 分布里。
+    // 相邻段之间空 6 分钟 —— 那 6 分钟不属于任何段，不该出现在 24h 分布里。
     // 曾经这个间隔还会被算成一次「切换」，现在那个字段没了，
     // 但「空档不产生时长」这件事仍要守住。
     let conn = open_in_memory();
@@ -382,7 +382,7 @@ fn hourly_buckets_use_local_hour_not_utc() {
 #[test]
 fn segment_spanning_hour_boundaries_is_split() {
     // 01:00 -> 04:20，跨 3 个整小时 + 20 分钟。
-    // 这里刻意用 **offset 0**：本条只验「跨边界要劈开」，时区换算是
+    // 这里刻意用 offset 0：本条只验「跨边界要劈开」，时区换算是
     // 上一条 `hourly_buckets_use_local_hour_not_utc` 的职责。传 CST 会让
     // 段整体挪 8 个桶，下标就对不上了。
     let conn = open_in_memory();
@@ -528,7 +528,7 @@ fn empty_title_range_yields_empty_vec() {
 #[test]
 fn range_pacing_never_touches_the_evidence_table() {
     // B1。`range_pacing` 只用 `start_at`/`end_at`/`category` 三个字段，
-    // 却借道 `get_segments_in_range` —— 而那个函数对**每个段**都跑一次
+    // 却借道 `get_segments_in_range` —— 而那个函数对每个段都跑一次
     // evidence 查询（N+1）。实测 654 段 → 654 次查询、66,800 条证据
     // 白读进内存，然后一个字节都没用。
     //
@@ -576,10 +576,10 @@ fn pacing_spans_match_the_timeline_spans() {
 // --- 重叠段去重 ---
 //
 // 全库有 84 处重叠段（12 天里 10 天有），引擎侧成因另查（10-06 修过一次，
-// 只堵住一条路径）。这里只修**读侧**：重叠的时间被算了两遍，
+// 只堵住一条路径）。这里只修读侧：重叠的时间被算了两遍，
 // 于是 `total_ms` 可以 > 24h（2026-10-12 是 24.25h）。
 //
-// **归属规则：先开始的段拥有重叠部分**（first-wins by start_at）。
+// 归属规则：先开始的段拥有重叠部分（first-wins by start_at）。
 // 理由：确定、不需要新数据、且与时间线的阅读顺序一致
 // （时间线也是从左往右读，先出现的那段先占位）。
 // 实测重叠的两段类别总是不同（work×browsing 17 处最多），

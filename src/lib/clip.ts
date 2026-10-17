@@ -1,20 +1,13 @@
 /**
- * 重叠段的裁剪口径 —— **全仓唯一的一份**（前端）。
+ * 重叠段的裁剪口径 —— 全仓唯一的一份（前端）。
  *
- * 规则只有一条：**先开始的段拥有重叠部分**（first-wins by startAt）。
- * 选它的理由与后端 `storage::summary::clip_to_uncovered` 相同：确定、不需要
- * 新数据、与时间线的阅读顺序一致（时间线也从左往右读）。
+ * 规则：先开始的段拥有重叠部分（first-wins by startAt），与后端
+ * `storage::summary::clip_to_uncovered` 同一条。以前前端抄了两遍、后端一遍、
+ * 热力图一遍，2026-10-13 就因为漏抄一处让「当日汇总」与时间线指标对不上。
  *
- * 为什么必须有这个文件：同一条规则原来在前端写了两遍（`metrics.ts` 的桶内
- * 累加、`bucket.ts` 的当日汇总），加上后端一份、热力图一份一共四处。
- * 2026-10-13 的「三处同源」就是这么丢了一处 —— `summarize` 漏了去重，
- * 于是「当日汇总」与「时间线指标」在重叠出现时会对不上。
- *
- * **被藏起来的量必须可见**：`hiddenCount` / `hiddenMs` 由调用方报出来。
- * 静默兜底比不兜底更危险：数字仍然对 → 「引擎又产出坏数据」完全隐形。
+ * 被藏起来的量必须由调用方报出来：静默兜底时数字仍然对，问题就隐形了。
  */
 
-/** 只需要时间边界的任何东西。 */
 export interface Span {
   startAt: number;
   endAt: number;
@@ -40,7 +33,7 @@ export interface ClipResult<T extends Span> {
  * 裁剪掉与更早段重叠的部分。
  *
  * 入参不必有序：内部按 `startAt` 排序（同起点保持入参顺序，让结果可预测）。
- * 首尾相接（`prev.endAt === next.startAt`）**不是**重叠，两段都计满。
+ * 首尾相接（`prev.endAt === next.startAt`）不是重叠，两段都计满。
  */
 export function clipToUncovered<T extends Span>(spans: readonly T[]): ClipResult<T> {
   const ordered = spans

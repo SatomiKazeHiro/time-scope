@@ -8,8 +8,8 @@
 //!
 //! | 时机 | 做什么 | 为什么 |
 //! |---|---|---|
-//! | 启动时（采集线程起来**之前**） | 删 + `VACUUM` | VACUUM 会锁住整个库。放在启动时它挡住的是"还没开始采集"，放在运行期它挡住的是**采集本身** |
-//! | 运行期，每 24h 至多一次 | 只删，不 VACUUM | 删掉的页进 freelist 会被后续写入复用，**这就止住了增长**；文件要缩回去得靠下次启动的 VACUUM |
+//! | 启动时（采集线程起来之前） | 删 + `VACUUM` | VACUUM 会锁住整个库。放在启动时它挡住的是"还没开始采集"，放在运行期它挡住的是采集本身 |
+//! | 运行期，每 24h 至多一次 | 只删，不 VACUUM | 删掉的页进 freelist 会被后续写入复用，这就止住了增长；文件要缩回去得靠下次启动的 VACUUM |
 //!
 //! 保留天数来自 `config.toml` 的 `events_retention_days`（默认 365，0 = 永不删）。
 
@@ -26,7 +26,7 @@ static LAST_PRUNE_MS: AtomicI64 = AtomicI64::new(0);
 
 /// 删掉 `retention_days` 天以前的事件，返回删了几条。
 ///
-/// `retention_days == 0` 是"永不删"，直接返回 0 —— 注意它**不是**
+/// `retention_days == 0` 是"永不删"，直接返回 0 —— 注意它不是
 /// "删掉 0 天前"，那样会把整张表清空。
 pub fn prune_events(conn: &SharedConn, retention_days: u32, now_ms: i64) -> usize {
     if retention_days == 0 {
@@ -46,7 +46,7 @@ pub fn prune_events(conn: &SharedConn, retention_days: u32, now_ms: i64) -> usiz
     }
 }
 
-/// 启动时清理 + VACUUM。**必须在采集线程起来之前调用。**
+/// 启动时清理 + VACUUM。必须在采集线程起来之前调用。
 pub fn prune_at_startup(conn: &SharedConn, retention_days: u32) {
     if retention_days == 0 {
         return;
@@ -74,7 +74,7 @@ pub fn prune_at_startup(conn: &SharedConn, retention_days: u32) {
     let _ = LAST_PRUNE_MS.compare_exchange(0, activity_storage::now_ms(), Ordering::Relaxed, Ordering::Relaxed);
 }
 
-/// 运行期清理：**每 24h 至多一次，且不 VACUUM**。
+/// 运行期清理：每 24h 至多一次，且不 VACUUM。
 ///
 /// 挂在 `get_segments` 这条稳定的高频 IPC 上，而不是为此再开一个定时线程 ——
 /// 代价只是每次多一次原子读。
@@ -129,14 +129,14 @@ mod tests {
             .len() as i64
     }
 
-    /// `LAST_PRUNE_MS` 是**进程级**静态，测试默认并行跑，于是
+    /// `LAST_PRUNE_MS` 是进程级静态，测试默认并行跑，于是
     /// `the_runtime_prune_runs_once_then_waits_a_day` 通过 `prune_if_due`
     /// 写进去的时间戳，会落进 `retention_zero_disables_the_runtime_prune_entirely`
     /// 的断言里 —— 实测约 8 次里挂 1 次，失败值恰好是 `seeded()` 的
     /// `now`（259200000）。
     ///
     /// 下面两条碰它的测试都要先拿这把锁。锁中毒时取 `into_inner()`
-    /// 而不是 panic —— 中毒来自**别的**测试崩了，不该连累这两条。
+    /// 而不是 panic —— 中毒来自别的测试崩了，不该连累这两条。
     static PRUNE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn exclusive() -> std::sync::MutexGuard<'static, ()> {

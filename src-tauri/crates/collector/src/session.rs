@@ -1,12 +1,12 @@
 //! 锁屏 / 睡眠监听（spec §3）。
 //!
-//! 两条 Win32 通路，**都必须挂在一个窗口 HWND 上**：
+//! 两条 Win32 通路，都必须挂在一个窗口 HWND 上：
 //! - `WTSRegisterSessionNotification` —— 锁屏 / 解锁（窗口消息 `WM_WTSSESSION_CHANGE`）
 //! - `PowerRegisterSuspendResumeNotification` —— 合盖 / 唤醒（`WM_POWERBROADCAST`）
 //!
 //! 这与现有的采集线程不同：窗口 hook 和输入轮询都可以纯后台线程起，
-//! 但这两个通知只能绑窗口。Tauri 2 不透出原始窗口消息，所以监听**自己建一个
-//! message-only 窗口**并跑自己的消息泵 —— 这也是托盘型应用收这两类通知的
+//! 但这两个通知只能绑窗口。Tauri 2 不透出原始窗口消息，所以监听自己建一个
+//! message-only 窗口并跑自己的消息泵 —— 这也是托盘型应用收这两类通知的
 //! 标准做法（spec §3.2）。翻译逻辑 [`translate`] 与注册结论
 //! [`registration_outcome`] 都是纯函数，可自动验证。
 
@@ -30,22 +30,22 @@ const PBT_APMRESUME: usize = 0x0007;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistrationOutcome {
     Ok,
-    /// 注册失败。**只降级锁屏采集，不影响其余功能**（spec §7）。
+    /// 注册失败。只降级锁屏采集，不影响其余功能（spec §7）。
     Failed { reason: &'static str },
 }
 
-/// 两条注册通路的**独立**结果（2026-10-13）。
+/// 两条注册通路的独立结果（2026-10-13）。
 ///
-/// **为什么要有这个类型**：原来两条注册写在同一个函数里，任何一条失败都直接
-/// `return` —— 于是一条失败会**连坐**另一条，而且函数提前返回意味着消息泵
+/// 为什么要有这个类型：原来两条注册写在同一个函数里，任何一条失败都直接
+/// `return` —— 于是一条失败会连坐另一条，而且函数提前返回意味着消息泵
 /// 根本没启动，已成功注册的那个 HWND 也没人收消息。
 ///
 /// 真实事故（2026-10-13）用户终端里打的是
 /// `PowerRegisterSuspendResumeNotification 失败：合盖/唤醒将不被记录`
 /// 紧接着 `锁屏/睡眠监听 不可用`。而 `WTSRegisterSessionNotification`
-/// 其实**成功了** —— 只是因为电源失败提前 return，锁屏事件也一条都发不出来。
+/// 其实成功了 —— 只是因为电源失败提前 return，锁屏事件也一条都发不出来。
 ///
-/// 修好之后：两路各自成败，**只要有一路可用，消息泵就必须启动**。
+/// 修好之后：两路各自成败，只要有一路可用，消息泵就必须启动。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionRegistration {
     pub wts_ok: bool,
@@ -61,7 +61,7 @@ impl SessionRegistration {
     pub fn power_works(&self) -> bool {
         self.power_ok
     }
-    /// **两路都**不可用 —— 只有这时消息泵才可以不启动
+    /// 两路都不可用 —— 只有这时消息泵才可以不启动
     pub fn is_fully_broken(&self) -> bool {
         !self.wts_ok && !self.power_ok
     }
@@ -79,7 +79,7 @@ pub fn registration_outcome(raw: Result<(), &'static str>) -> RegistrationOutcom
     }
 }
 
-/// 把一条窗口消息翻译成采集信号。**纯函数**。
+/// 把一条窗口消息翻译成采集信号。纯函数。
 ///
 /// `wparam` 对两种消息都带着事件码（WTS_* 或 PBT_APM*），无关消息返回 `None`。
 pub fn translate(msg: u32, wparam: usize) -> Option<RawSignal> {
@@ -100,7 +100,7 @@ pub fn translate(msg: u32, wparam: usize) -> Option<RawSignal> {
     }
 }
 
-/// 在**自建的 message-only 窗口**上启动锁屏/睡眠监听。
+/// 在自建的 message-only 窗口上启动锁屏/睡眠监听。
 ///
 /// 为什么自己建窗口（而不是用 Tauri 主窗口）：Tauri 2 的 `WindowEvent` 不透出原始
 /// 窗口消息，拿不到 `WM_WTSSESSION_CHANGE` / `WM_POWERBROADCAST`。而 WTS 与电源
@@ -117,9 +117,9 @@ pub fn spawn_listener(sender: Sender<RawSignal>) -> RegistrationOutcome {
     let spawned = std::thread::Builder::new()
         .name("ts-session".into())
         .spawn(move || {
-            // `run_listener` 在**进入消息泵之前**就把注册结果发回去。
+            // `run_listener` 在进入消息泵之前就把注册结果发回去。
             // 原来是把返回值等到消息泵退出（= 进程结束）才发，
-            // 于是这个 5 秒握手**永远超时** —— 监听其实好好的，
+            // 于是这个 5 秒握手永远超时 —— 监听其实好好的，
             // 界面却报「不可用」。
             let _ = run_listener(sender, ready_tx);
         });
@@ -168,7 +168,7 @@ fn run_listener(
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        // 诊断（2026-10-13 保留）：只打**消息号与 wparam**，不打窗口标题
+        // 诊断（2026-10-13 保留）：只打消息号与 wparam，不打窗口标题
         // —— 那是用户数据。只在锁屏/合盖/唤醒这三个低频时刻打，
         // 一次刷屏都不会有（实测：一天几十行以内）。
         //
@@ -255,7 +255,7 @@ fn run_listener(
         }
     };
 
-    // 两条注册**各自成败，不要连坐**（2026-10-13）。
+    // 两条注册各自成败，不要连坐（2026-10-13）。
     // 原来任何一条失败都直接 return，函数提前退出 → 消息泵从未启动 →
     // 已经成功注册的那个 HWND 也没人收消息。真实事故里 WTS 注册成功了，
     // 却因为电源失败而让锁屏事件一条都发不出来。
@@ -281,7 +281,7 @@ fn run_listener(
     };
     let power_ok = power.to_hresult().is_ok();
     if !power_ok {
-        // 只说这一路没了，**不说「整个监听不可用」** —— 那是之前那句误导人的话，
+        // 只说这一路没了，不说「整个监听不可用」 —— 那是之前那句误导人的话，
         // 用户正是被它误导才以为锁屏也没在记
         eprintln!(
             "[time-scope] PowerRegisterSuspendResumeNotification 失败：合盖/唤醒将不被记录（{:?}）",
@@ -290,7 +290,7 @@ fn run_listener(
     }
 
     let reg = SessionRegistration { wts_ok, power_ok };
-    // **消息泵对两路都必要** —— 它是那个 HWND 上消息被分发的唯一途径。
+    // 消息泵对两路都必要 —— 它是那个 HWND 上消息被分发的唯一途径。
     // 所以判据是「有一路可用就跑」，不是「两路都成功才跑」。
     if !reg.should_pump() {
         let reason = "锁屏与电源两条注册都失败";
@@ -300,8 +300,8 @@ fn run_listener(
         return out;
     }
 
-    // **进消息泵之前**回传结果 —— 握手就靠它（见 `spawn_listener` 的注释）。
-    // 只有两路都成功才报 Ok；一路成功时给出**具体是哪一路可用**。
+    // 进消息泵之前回传结果 —— 握手就靠它（见 `spawn_listener` 的注释）。
+    // 只有两路都成功才报 Ok；一路成功时给出具体是哪一路可用。
     // reason 只描述事实，不带「部分可用」这种结论词 ——
     // 上层 `lib.rs` 会加前缀，写两遍就成了
     // 「部分可用（部分可用（…））」（2026-10-13 真机上出现过）。

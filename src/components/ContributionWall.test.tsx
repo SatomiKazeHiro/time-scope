@@ -121,7 +121,7 @@ describe("ContributionWall", () => {
   it("点周条回调那一周的周日", () => {
     const { onSelectWeek } = setup();
     fireEvent.click(screen.getAllByTestId("week-strip-btn")[0]);
-    // 2026-10-01 是周四，首列从**周一** 2026-09-28 起
+    // 2026-10-01 是周四，首列从周一 2026-09-28 起
     expect(onSelectWeek).toHaveBeenCalledWith("2026-09-28");
   });
 
@@ -215,7 +215,7 @@ describe("ContributionWall", () => {
     const monthRow = container.querySelector(".h-3.w-full") as HTMLElement;
     expect(monthRow).toBeTruthy();
     expect(monthRow.className).toContain("h-3");
-    // 占位必须在定位原点**里面**（它是原点的流内兄弟，靠它把原点推下去）
+    // 占位必须在定位原点里面（它是原点的流内兄弟，靠它把原点推下去）
     const origin = container.querySelector("[data-weekday-origin]") as HTMLElement;
     expect(origin.previousElementSibling).toBe(spacer);
   });

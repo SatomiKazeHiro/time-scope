@@ -6,7 +6,7 @@ pub const PLACEHOLDER: &str = "[redacted]";
 
 /// 窗口标题脱敏器（spec §11）。
 ///
-/// 持有**启动时编译好**的正则：窗口标题变化很频繁（实测 100 秒能来 100+ 次），
+/// 持有启动时编译好的正则：窗口标题变化很频繁（实测 100 秒能来 100+ 次），
 /// 每条都重新编译是不可接受的。
 #[derive(Debug, Default)]
 pub struct Redactor {
@@ -18,7 +18,7 @@ pub struct Redactor {
 impl Redactor {
     /// 从 `rules.toml` 的 `[[redact]]` 原始模式构建。
     ///
-    /// **编译失败的模式被跳过而不是让整个规则文件失效**：脱敏和分类是独立的
+    /// 编译失败的模式被跳过而不是让整个规则文件失效：脱敏和分类是独立的
     /// 关注点，一条正则写错不该让用户的分类规则也一起报废。
     pub fn new(patterns: &[String]) -> Self {
         let mut regexes = Vec::new();
@@ -75,7 +75,7 @@ impl Redactor {
 
     /// 脱敏一段 payload JSON 里所有 `window_title` 字段的值。
     ///
-    /// 用于**历史数据**：本功能上线前已经落库的标题不会被回溯重写，
+    /// 用于历史数据：本功能上线前已经落库的标题不会被回溯重写，
     /// 但重放时经过这里，界面上就不会再露出旧数据里的敏感片段。
     pub fn redact_payload(&self, payload: &str) -> Option<String> {
         if self.is_empty() {

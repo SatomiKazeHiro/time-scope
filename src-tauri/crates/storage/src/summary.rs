@@ -2,7 +2,7 @@
 //!
 //! 全部聚合都在这里，不散落到 app 层——app 层只做时区换算和 JSON 序列化。
 //!
-//! **按天分组用 SQL 的 `localtime`**，这依赖进程时区，且在夏令时切换日
+//! 按天分组用 SQL 的 `localtime`，这依赖进程时区，且在夏令时切换日
 //! 会差一小时。全项目已经建立在「单个固定 offset」的假设上
 //! （`date_range::day_range_ms` 同款），单独给汇总页做 DST 正确的分组
 //! 会制造「只有汇总页对、其他页错」的不一致。见 spec §3.4 与 §9 第 1 条。
@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use crate::activity::SegmentSpan;
 
-/// 热力图的一格：某一天的监控总时长（**含 idle**）。
+/// 热力图的一格：某一天的监控总时长（含 idle）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DayCell {
@@ -20,7 +20,7 @@ pub struct DayCell {
     pub total_ms: i64,
 }
 
-/// 热力图的数据源。**`days` 只含有记录的日期**——补齐空缺是前端的活，
+/// 热力图的数据源。`days` 只含有记录的日期——补齐空缺是前端的活，
 /// 因为 `GROUP BY` 会跳过没开机的那天，直接用它的结果排格子会整片错位。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,17 +32,17 @@ pub struct DailyCalendar {
     pub days: Vec<DayCell>,
 }
 
-/// 取全部数据的逐日监控时长。**无参数**——热力图永远渲染全部数据，
+/// 取全部数据的逐日监控时长。无参数——热力图永远渲染全部数据，
 /// 不受选中范围影响（spec §2.3）。
 ///
-/// **跨零点的段按本地午夜切分到两天**（A2）。按 `start_at` 分组的话，
+/// 跨零点的段按本地午夜切分到两天（A2）。按 `start_at` 分组的话，
 /// 23:57 起的段整段落给第一天，第二天那格是空的——于是「昨天最后一格」
 /// 和「今天第一格」对不上，与时间线/汇总页看到的事实矛盾。
 ///
-/// 切分保证：某一天的格子**恒等于** `range_totals` 对那一天算出的 `total_ms`。
+/// 切分保证：某一天的格子恒等于 `range_totals` 对那一天算出的 `total_ms`。
 /// 这条以前只是注释里的愿望 —— 两处各自用 SQL 求和，热力图那边没做重叠去重，
 /// 于是 15 天里 5 天对不上（最大单日差 23 分钟）。现在两边都走
-/// `clip_to_uncovered`，等式由**同一份实现**保证（2026-10-17）。
+/// `clip_to_uncovered`，等式由同一份实现保证（2026-10-17）。
 ///
 /// 两天用固定 86,400,000ms 递推，是跟随全项目既有的单固定 offset 假设
 /// （前端 `+86_400_000`、`date_range::day_range_ms`、本文件的 `localtime` 同款）。
@@ -54,10 +54,10 @@ pub fn daily_calendar(conn: &Connection) -> Result<Option<DailyCalendar>, rusqli
     // ① 本地日边界与日期标签交给 SQL：`localtime` 的口径与全项目一致，
     //    在 Rust 里重算一遍 offset 会多出第二个真相来源。
     //
-    // 锚点是最早那个段所在**本地日**的真零点：`date(...,'localtime')` 拿到本地
+    // 锚点是最早那个段所在本地日的真零点：`date(...,'localtime')` 拿到本地
     // 日期标签，拼上 ` 00:00:00` 得到本地墙上时间，再用 `'utc'` 修饰符换算回
     // 真正的 Unix 时刻（少写 `'utc'` 会差一个 UTC offset）。
-    // **不能用** `datetime(...,'localtime','start of day')` 再 `strftime('%s',...)`：
+    // 不能用 `datetime(...,'localtime','start of day')` 再 `strftime('%s',...)`：
     // 那是把本地零点当 UTC 读，得到的不是零点而是「零点 + UTC offset」。
     let mut day_stmt = conn.prepare(
         "WITH RECURSIVE
@@ -127,7 +127,7 @@ pub fn daily_calendar(conn: &Connection) -> Result<Option<DailyCalendar>, rusqli
     Ok(Some(DailyCalendar { first, last, days }))
 }
 
-/// 圆环的一档。**只有 4 种 key**，前端的 `DonutChart` 按下标取色，
+/// 圆环的一档。只有 4 种 key，前端的 `DonutChart` 按下标取色，
 /// 所以顺序固定为 work / browsing / idle / unknown。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,34 +161,34 @@ const DONUT_KEYS: [&str; 4] = ["work", "browsing", "idle", "unknown"];
 
 const TOP_APPS_LIMIT: usize = 5;
 
-/// **一段只被计入它未被更早的段占用的时间。**
+/// 一段只被计入它未被更早的段占用的时间。
 ///
 /// 输入必须已按 `start_at` 升序（`CLIPPED_SPANS_FROM` 保证）。
 /// 维护一个「已占用的右边界」`covered_until`：本段只取 `[max(start, covered_until), end)`，
 /// 非空时才算入，并把 `covered_until` 推到 `max(covered_until, end)`。
 ///
-/// **为什么需要**：库里存在真实重叠的段（引擎侧成因另查，
+/// 为什么需要：库里存在真实重叠的段（引擎侧成因另查，
 /// 10-06 的 fc1c1bc 修过一条路径但没堵完）。逐段独立累加会把同一段时间
-/// 算两次，于是 2026-10-12 的全天总时长是 **24.25 小时**。
+/// 算两次，于是 2026-10-12 的全天总时长是 24.25 小时。
 ///
-/// **归属规则：先开始的段拥有重叠部分**（first-wins by start_at）。
+/// 归属规则：先开始的段拥有重叠部分（first-wins by start_at）。
 /// 确定、不需要新数据、与时间线的阅读顺序一致（时间线也从左往右读）。
-/// 实测重叠的两段**类别总是不同**（work×browsing 最多，17 处），
+/// 实测重叠的两段类别总是不同（work×browsing 最多，17 处），
 /// 所以这条规则是必须的 —— 不选就会把同一段时间记给两个类别。
 ///
-/// 首尾相接（`prev.end_at == next.start_at`）**不是**重叠：
+/// 首尾相接（`prev.end_at == next.start_at`）不是重叠：
 /// `covered_until` 取的是 `<=`，相接时 `max(start, covered) == start`，仍计满。
 ///
-/// **被去重掉的量必须可见**（2026-10-13）。这里曾经只去重、不留痕 ——
+/// 被去重掉的量必须可见（2026-10-13）。这里曾经只去重、不留痕 ——
 /// 于是「库里又出现重叠」这件事是静默的：数字仍然对（去重了），但没人知道
 /// 引擎又产出了坏数据，排查时看不出是「读侧在擦屁股」还是「引擎本来就这样」。
 /// 那个静默让重叠问题被反复当成新 bug 查了三轮。
 ///
-/// **但也不能每次查询都打一行**（同一天踩的）：前端每 5 秒轮询一次，
+/// 但也不能每次查询都打一行（同一天踩的）：前端每 5 秒轮询一次，
 /// 一次刷新要跑好几个聚合查询，于是同一批重叠会被报几十遍 ——
 /// 「报对了但天天报就成了噪音」，那样日志反而没人看。
 ///
-/// 所以走 `OverlapReporter`：**累计**藏了多少段、多少毫秒，每分钟最多打一行汇总。
+/// 所以走 `OverlapReporter`：累计藏了多少段、多少毫秒，每分钟最多打一行汇总。
 /// 一次说清总量与频率，噪音可控，问题照样藏不住。
 pub(crate) fn clip_to_uncovered(spans: &[SegmentSpan]) -> Vec<(i64, i64, &str, Option<&str>)> {
     let mut out = Vec::with_capacity(spans.len());
@@ -212,7 +212,7 @@ pub(crate) fn clip_to_uncovered(spans: &[SegmentSpan]) -> Vec<(i64, i64, &str, O
     out
 }
 
-/// 重叠情况的**节流汇报**。
+/// 重叠情况的节流汇报。
 ///
 /// 为什么需要它：前端的 5 秒轮询会让同一次「数据是脏的」被反复报出来。
 /// 累积 + 每分钟一行，既保证「藏了多少」随时可查，又不至于把日志淹掉。
@@ -307,7 +307,7 @@ pub fn range_totals(
         })
         .collect();
 
-    // top_apps 与 by_category 用**同一个去重结果**（`clip_to_uncovered` 已按
+    // top_apps 与 by_category 用同一个去重结果（`clip_to_uncovered` 已按
     // start_at 升序切好），否则两处会因重叠而对不上：类别按 first-wins 归属，
     // 应用也必须同样，否则「某应用时长」会与「它出现的那些档位之和」矛盾。
     let mut by_app: Vec<(String, i64)> = Vec::new();
@@ -343,7 +343,7 @@ pub fn range_totals(
 }
 
 /// 类别落在圆环的哪一档。`work` / `browsing` / `idle` 各归各位，
-/// **其余全部并入 `unknown`**（含 `unknown` 自己）。
+/// 其余全部并入 `unknown`（含 `unknown` 自己）。
 fn donut_bucket(category: &str) -> &'static str {
     match category {
         "work" => "work",
@@ -377,9 +377,9 @@ pub struct RangePacing {
 /// `switch_count` 已删除（2026-10-13）：它数的是「相邻段之间空了 ≥5 分钟」，
 /// 实测全库 0–4 次（2026-10-12 是 1 次），几乎没有信息量，且与紧邻的「N 段」
 /// 说的是同一件事。它与时间线指标模式的「专注切换」（数相邻窗口变化，
-/// 同日 48 次）**定义不同却同名**，用户会以为两边矛盾 —— 保留后者。
+/// 同日 48 次）定义不同却同名，用户会以为两边矛盾 —— 保留后者。
 ///
-/// `offset_secs` 是本地 UTC 偏移的**秒数**，由 app 层从
+/// `offset_secs` 是本地 UTC 偏移的秒数，由 app 层从
 /// `UtcOffset::whole_seconds()` 传进来 —— storage crate 不依赖 `time`。
 pub fn range_pacing(
     conn: &Connection,
@@ -401,7 +401,7 @@ pub fn range_pacing(
 
     // 24h 分布：逐段按本地小时边界劈开，跨小时的段分给两桶。
     //
-    // **先去重再劈桶**（`clip_to_uncovered`）：逐段独立劈完累加会把重叠的时间
+    // 先去重再劈桶（`clip_to_uncovered`）：逐段独立劈完累加会把重叠的时间
     // 劈进两次，那 18 小时的伪造段就是被这样撒成 18/24 根满格的柱子。
     for (start, end, cat, _app) in clip_to_uncovered(&segs) {
         if cat == "idle" {
@@ -427,9 +427,9 @@ fn add_to_hours(buckets: &mut [i64; 24], start_ms: i64, end_ms: i64, offset_secs
     }
 }
 
-/// 范围内按**原始**字符串分组的窗口标题及其次数。
+/// 范围内按原始字符串分组的窗口标题及其次数。
 ///
-/// 只返回原始计数，**不做归一化** —— 归一化在 app 层（`title_norm.rs`），
+/// 只返回原始计数，不做归一化 —— 归一化在 app 层（`title_norm.rs`），
 /// 因为它要 `regex` 和脱敏占位符，两者都不属于 storage 的职责。
 ///
 /// 两段式的原因：先在 SQL 里把 3.7M 行压成约 1000 行，再在 Rust 里归一化
@@ -467,7 +467,7 @@ pub struct UncoveredProgram {
     /// 进程名（只有文件名部分，规则匹配也只比这个）
     pub application: String,
     pub total_ms: i64,
-    /// 占**未覆盖总时长**的比例，0–1。
+    /// 占未覆盖总时长的比例，0–1。
     ///
     /// 分母刻意不是全天时长：用户打开这个列表要回答的是
     /// 「我漏配的时间里有多少给了它」，不是「我一天有多少给了它」。
@@ -481,15 +481,15 @@ const DAY_MS: i64 = 86_400_000;
 
 /// 最近 `days` 天里落进 `unknown` 的程序，按耗时降序。
 ///
-/// 这份列表回答的是「**你的配置缺了什么**」，与汇总面板的「今天干了什么」
+/// 这份列表回答的是「你的配置缺了什么」，与汇总面板的「今天干了什么」
 /// 是两件事 —— 曾在当日汇总里做过并被撤回，因为那会把一张配置表
 /// 混进一个描述时间去向的面板。设置页是它的家。
 ///
-/// **命中口径与 `range_totals` 同源**：`start_at < end AND end_at > start`
-/// 的区间相交，起止**裁剪到窗口**。改这里必须同时改那里
+/// 命中口径与 `range_totals` 同源：`start_at < end AND end_at > start`
+/// 的区间相交，起止裁剪到窗口。改这里必须同时改那里
 /// （STATUS「别动这里」第 22 条）—— 不然同一天在时间线和这里会算出不同时长。
 ///
-/// 没有未覆盖段时返回**空列表而不是 Err**：「全都覆盖了」是一个好状态，
+/// 没有未覆盖段时返回空列表而不是 Err：「全都覆盖了」是一个好状态，
 /// 调用方据此显示空状态；返回 Err 会让界面把它当成出错来提示。
 pub fn uncovered_programs(
     conn: &Connection,

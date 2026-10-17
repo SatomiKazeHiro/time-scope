@@ -5,7 +5,7 @@
 //! （`◐` / `◑`）。直接按原样排名，Top N 会被这些计数器占满——
 //! 实测 2026-10-05，Top 6 全部是 Edge 计数器变体（spec §4）。
 //!
-//! 这里只做**剥壳**，不改语义：真实标题（`main.rs - Visual Studio Code`）
+//! 这里只做剥壳，不改语义：真实标题（`main.rs - Visual Studio Code`）
 //! 必须原样通过。剥不掉的东西（`无标题`、`New Tab`、标题中间的 `⏳`）如实留着，
 //! 见 spec §4.2。
 
@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 static TAB_GROUP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"和另外\s*\d+\s*个页面").expect("编译期常量正则"));
 
-/// 剥掉**前导**状态符。锚在 `^` 上——标题中间的 `⏳` 不动，
+/// 剥掉前导状态符。锚在 `^` 上——标题中间的 `⏳` 不动，
 /// 因为放宽锚点会连带吃掉 `main.rs - Visual Studio Code` 的开头。
 static LEADING_SYMBOL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[\s◐◑◒◓●○◉⭐*+!\-]+").expect("编译期常量正则")
@@ -35,8 +35,8 @@ static WHITESPACE: LazyLock<Regex> =
 
 /// 剥掉零宽字符：U+200B ZWSP / U+200C ZWNJ / U+200D ZWJ / U+FEFF BOM。
 ///
-/// **必须在最前面跑。** Edge 的窗口标题是 `Microsoft<ZWSP> Edge`，
-/// 而 `\s` **匹配不了零宽字符**——不先剥掉，`EDGE_PROFILE` 里那个
+/// 必须在最前面跑。 Edge 的窗口标题是 `Microsoft<ZWSP> Edge`，
+/// 而 `\s` 匹配不了零宽字符——不先剥掉，`EDGE_PROFILE` 里那个
 /// `(?:...Microsoft\s*Edge\s*)?$` 可选组就永远匹配不上，整条规则
 /// 连带失效。实测 2026-10-05：真实库里排第一的 Edge 标题全都带着
 /// `- 个人 - Microsoft<ZWSP> Edge` 没被剥掉。
@@ -47,7 +47,7 @@ static ZERO_WIDTH: LazyLock<Regex> = LazyLock::new(|| {
 /// 归一化一条窗口标题。返回 `None` 表示「剥完没有内容」，调用方应跳过它——
 /// 空串会占掉 Top N 的一个坑。
 ///
-/// 规则按顺序应用（spec §4.1），**顺序不能换**：零宽字符最先剥，
+/// 规则按顺序应用（spec §4.1），顺序不能换：零宽字符最先剥，
 /// 然后是计数器、前导符、尾部配置名、空白。
 pub fn normalize_title(raw: &str) -> Option<String> {
     let s = ZERO_WIDTH.replace_all(raw, "");
@@ -75,11 +75,11 @@ pub struct MergedTitle {
 
 /// 把「原始标题 + 次数」脱敏、归一化、合并、取前 `limit` 名。
 ///
-/// **先合并再截断**——反过来的话「取前 10 条原始行再归一化」会把 10 行
+/// 先合并再截断——反过来的话「取前 10 条原始行再归一化」会把 10 行
 /// 塌成 2 行，白白丢掉 8 个名额。
 ///
-/// **脱敏排在归一化/合并之前**（spec §11，A4）。`title_counts_in_range` 从
-/// `events.payload` 里 GROUP BY 出的是**原文**——配了 `[[redact]]` 的用户
+/// 脱敏排在归一化/合并之前（spec §11，A4）。`title_counts_in_range` 从
+/// `events.payload` 里 GROUP BY 出的是原文——配了 `[[redact]]` 的用户
 /// 在这里照样看到明文客户名/订单号。先脱敏再合并还有个附带好处：只在敏感
 /// 片段上不同的标题会先塌成一条再累加计数，而不是各自占一个坑。
 pub fn merge_top_titles(
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn zero_width_characters_are_stripped() {
         // Edge 的窗口标题里 Microsoft<ZWSP> Edge —— 中间是 U+200B 零宽空格，
-        // **\s 匹配不了它**。不先剥掉，后面的规则在真实数据上全部失效。
+        // \s 匹配不了它。不先剥掉，后面的规则在真实数据上全部失效。
         let n = |s: &str| normalize_title(s).expect("应归一化出非空结果");
         assert_eq!(
             n("无标题 和另外 31 个页面 - 个人 - Microsoft\u{200b} Edge"),
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn real_edge_titles_from_the_live_db_normalize() {
         // 真实库（2026-10-05）里排第一的那几条，逐条钉住。
-        // 之前这条规则只在**普通空格**的假数据上测过，真实标题里是零宽空格，
+        // 之前这条规则只在普通空格的假数据上测过，真实标题里是零宽空格，
         // 于是整条规则在真机上完全没生效 —— 测试验的是我以为的输入。
         let n = |s: &str| normalize_title(s).expect("应归一化出非空结果");
         assert_eq!(
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn merge_keeps_blank_page_titles_visible() {
         // Review Focus #5：无标题 / New Tab 归一化后仍在，且占大头。
-        // 这是 spec §4.2 记录的**已知限制，不是 bug**。这条测试防止将来
+        // 这是 spec §4.2 记录的已知限制，不是 bug。这条测试防止将来
         // 有人「顺手」加个过滤把它们藏起来——那会让用户以为时间白记了。
         let raw = vec![
             ("无标题".to_string(), 7086),
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn top_titles_stored_before_the_rules_existed_are_still_redacted() {
-        // A4。`title_counts_in_range` 从 events.payload 里 GROUP BY 出**原文**，
+        // A4。`title_counts_in_range` 从 events.payload 里 GROUP BY 出原文，
         // 配了 [[redact]] 的用户照样在这里看到明文客户名/订单号。
         let raw = vec![("客户88712 号订单 - Chrome".to_string(), 7)];
         let top = merge_top_titles(raw, 10, &redactor(&[r"客户\d+"]));
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn top_titles_are_redacted_before_normalizing_and_merging() {
-        // 脱敏必须在归一化/合并**之前**：这样只在敏感片段上不同的几条会先塌成
+        // 脱敏必须在归一化/合并之前：这样只在敏感片段上不同的几条会先塌成
         // 一条再累加计数，而不是各自占一个坑。
         let raw = vec![
             ("客户111 - 个人 - Microsoft\u{200b} Edge".to_string(), 10),

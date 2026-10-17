@@ -29,7 +29,7 @@ pub fn decide(current: CloseBehavior, ask_supported: bool) -> CloseDecision {
 
 // 这里曾经有一个 `remember(answered)`：把用户的选择规范化后交回去写 config。
 // 2026-10-15 连同它的写回一起删了 —— 设置页刚选的值会被弹框静默改掉。
-// 答案怎么执行归 residency.rs 的 `apply_answer`，且**只管这一次**。
+// 答案怎么执行归 residency.rs 的 `apply_answer`，且只管这一次。
 
 #[cfg(test)]
 mod tests {

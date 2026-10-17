@@ -51,17 +51,17 @@ fn find_rule_for(text: &str, process: &str) -> Option<String> {
     })
 }
 
-/// 往 `rules.toml` **追加**一条规则，并把新的 `RuleSet` 返回给调用方热替换。
+/// 往 `rules.toml` 追加一条规则，并把新的 `RuleSet` 返回给调用方热替换。
 ///
-/// **只追加，不整份重写** —— 与 `config::patch_line` 同款理由：
+/// 只追加，不整份重写 —— 与 `config::patch_line` 同款理由：
 /// 文件里可能有用户自己写的注释和空行，整读再整写会全部抹掉。
 ///
-/// **坏文件绝不覆盖**：解析不了就返回 `Err`，磁盘上一个字节都不动。
+/// 坏文件绝不覆盖：解析不了就返回 `Err`，磁盘上一个字节都不动。
 /// 这与 `load_rules` 的既定行为一致（坏文件只读不写，留给用户自己修）。
 /// 用户在这里看到的是「请先手工修好 rules.toml」，而不是应用默默
 /// 把他写的规则换成内置默认 —— 那会毁掉他手写的东西。
 ///
-/// 追加后**立刻重新解析一遍**再返回：写进去了不等于写对了。
+/// 追加后立刻重新解析一遍再返回：写进去了不等于写对了。
 /// 万一手滑写出一份解析不了的（新进程名里带引号之类），
 /// 宁可报错也不能让下次启动炸掉。
 pub fn append_rule(
@@ -121,7 +121,7 @@ pub fn append_rule(
 
     let mut text = existing;
 
-    // 已有同名规则就**拒绝**，不追加第二条。
+    // 已有同名规则就拒绝，不追加第二条。
     //
     // 引擎按文件顺序取第一个命中的，两条同名规则并存时用户改的那条
     // 永远不生效 —— 而界面会告诉他「已保存」。那种静默失败比报错难查得多。
@@ -158,7 +158,7 @@ fn default_rule_set() -> RuleSet {
     RuleSet::from_toml(DEFAULT_RULES_TOML).expect("内置默认规则必须始终可解析")
 }
 
-/// 加载规则集。**任何失败都不 panic**，一律退回内置默认。
+/// 加载规则集。任何失败都不 panic，一律退回内置默认。
 pub fn load_rules(path: &Path) -> (RuleSet, RulesSource) {
     match std::fs::read_to_string(path) {
         Ok(text) => match RuleSet::from_toml(&text) {

@@ -8,7 +8,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// 采集到的事实。不可变，永不修改。
 ///
-/// spec §6：Event 是最底层事实，Activity 是可重算的解释。Event 里**没有** category /
+/// spec §6：Event 是最底层事实，Activity 是可重算的解释。Event 里没有 category /
 /// confidence 之类的业务结论——那些属于 engine。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -46,11 +46,11 @@ pub struct WindowTitleChangePayload {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InputHeartbeatPayload {
     pub active_seconds: u8,
-    /// **这个心跳窗口的起点**（Unix 毫秒），2026-10-13 新增。
+    /// 这个心跳窗口的起点（Unix 毫秒），2026-10-13 新增。
     ///
     /// 为什么必须带：`active_seconds` 只说「过去 10 秒里有几秒在动」，
-    /// **不说那几秒在哪**。而段是从某个时刻开始的 —— 一个 8 秒的窗口
-    /// 可能只与段重叠 1 秒。没有窗口起点就算不出「**段内**有多少时间在动」。
+    /// 不说那几秒在哪。而段是从某个时刻开始的 —— 一个 8 秒的窗口
+    /// 可能只与段重叠 1 秒。没有窗口起点就算不出「段内有多少时间在动」。
     ///
     /// 实测过这个差别：段刚开时若拿 `ts - start_at` 当上限，
     /// 心跳共报 16 秒，两个段总共只收到 9 秒，另一个拿到 0。

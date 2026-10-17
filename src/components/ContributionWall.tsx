@@ -10,9 +10,9 @@ import type { DayCell } from "../types";
  * 列宽（`--cw`）与间隙。选中框、月份标签、`grid-template-rows` 全从它算，
  * 墙随容器缩放时它们不会错位。
  *
- * 用 **cqw（容器查询单位）** 而不是 `%`：`grid-template-rows` 里的百分比
- * 解析的是**块向**尺寸（高度），而高度是 auto，于是循环依赖、行高塌成 0。
- * cqw 解析的是**行内**尺寸（宽度），宽度是定值，所以成立。
+ * 用 cqw（容器查询单位） 而不是 `%`：`grid-template-rows` 里的百分比
+ * 解析的是块向尺寸（高度），而高度是 auto，于是循环依赖、行高塌成 0。
+ * cqw 解析的是行内尺寸（宽度），宽度是定值，所以成立。
  */
 function gridVars(weeks: number): React.CSSProperties {
   return {
@@ -32,7 +32,7 @@ const PAD_STYLE: React.CSSProperties = { background: "transparent" };
 /**
  * 一个日格的可访问名（也用作它的原生 `title`）。
  *
- * 两种"空"必须分开说（STATUS 第 20、21 条）：界面上它们靠**描边强弱**区分，
+ * 两种"空"必须分开说（STATUS 第 20、21 条）：界面上它们靠描边强弱区分，
  * 而读屏用户看不到描边 —— 名字就是他们唯一的区分通道。
  */
 function dayLabel(c: { date: string; totalMs: number; tracked: boolean }): string {
@@ -42,10 +42,10 @@ function dayLabel(c: { date: string; totalMs: number; tracked: boolean }): strin
 }
 
 interface ContributionWallProps {
-  /** **连续升序**的日期序列（`lib/summary.ts` 的 `fillDays` 产出） */
+  /** 连续升序的日期序列（`lib/summary.ts` 的 `fillDays` 产出） */
   days: DayCell[];
   /**
-   * **首个有记录的日子**（不是安装日 —— 那个维度后端没有）。这之前的格子画成
+   * 首个有记录的日子（不是安装日 —— 那个维度后端没有）。这之前的格子画成
    * 弱描边，与「有记录但当天没活动」是两回事（见 `uninstalledColor`）。
    *
    * 不传时退化为「从窗口第一天起就有记录」，于是没有这一档 —— 生产代码必须传。
@@ -59,15 +59,15 @@ interface ContributionWallProps {
 }
 
 /**
- * 监控时长的 GitHub 式贡献墙，但**行序跟 GitHub 不同**：行 0 = 周一（ISO 8601），
+ * 监控时长的 GitHub 式贡献墙，但行序跟 GitHub 不同：行 0 = 周一（ISO 8601），
  * 1 列 = 1 周（自周一起）。GitHub 是周日开头，这里按 ISO 走。
  *
- * 选中范围**逐格判断**（按格子自己的日期），不画跨格矩形 —— 跨格矩形要算
+ * 选中范围逐格判断（按格子自己的日期），不画跨格矩形 —— 跨格矩形要算
  * 「第 N 列第 M 行」再绝对定位，`--cw` 稍有偏差就整块错到隔壁列（已错过三轮）。
- * 每格的外环向外扩**半格间隙**，相邻选中格自然连成一整片，所以框的宽度
+ * 每格的外环向外扩半格间隙，相邻选中格自然连成一整片，所以框的宽度
  * 仍然一眼能看出选的是日、周还是月。
  *
- * 框外**不压暗**（聚光灯）：最低档卡在 ordinal 的 2:1 底线上，任何压暗都破线
+ * 框外不压暗（聚光灯）：最低档卡在 ordinal 的 2:1 底线上，任何压暗都破线
  * ——详见 theme.css 里 `.wall-cell[data-in-range]` 的注释。
  */
 export default function ContributionWall({
@@ -77,7 +77,7 @@ export default function ContributionWall({
   /** `--cw` 由列数算出来；外层容器与内层网格共用同一份。 */
   const vars = useMemo(() => gridVars(layout.weeks), [layout.weeks]);
 
-  /** 某个格子是否落在当前选中范围内 —— 按**格子自己的日期**判断。 */
+  /** 某个格子是否落在当前选中范围内 —— 按格子自己的日期判断。 */
   const inSelection = useCallback(
     (date: string) =>
       selection !== null && date >= selection.from && date <= selection.to,
@@ -89,25 +89,25 @@ export default function ContributionWall({
   }
 
   /**
-   * 某列的**周一**（row 0）。补齐位也有真实日期，所以每周都拿得到 ——
+   * 某列的周一（row 0）。补齐位也有真实日期，所以每周都拿得到 ——
    * 这才是 `onSelectWeek` 声明的那个参数。`rangeFor("week", …)` 内部
    * 还会再 snap 一次，两处一致才不会被传错日期坑到。
    *
-   * **O(1) 取下标**：网格是列优先铺的（`buildWall` 按 i = col*7 + row 推），
+   * O(1) 取下标：网格是列优先铺的（`buildWall` 按 i = col*7 + row 推），
    * 所以 `cells[ci * 7]` 必然就是第 ci 列的 row 0。以前用 `find` 扫全表，
    * 53 列 × 371 格 = 每次渲染两万次比较，纯浪费。
    */
   const weekStartOf = (ci: number): string | undefined => layout.cells[ci * 7]?.date;
 
   return (
-    // **左内边距 + 绝对定位的标签列**，标签不占布局宽度。
+    // 左内边距 + 绝对定位的标签列，标签不占布局宽度。
     //
-    // 这不是审美选择，是正确性：--cw 用 `100cqw` 量**这个容器**的
+    // 这不是审美选择，是正确性：--cw 用 `100cqw` 量这个容器的
     // 行内尺寸。若让标签列正常占 12px + 6px 间距，网格会比容器窄 18px，
-    // 而 --cw 仍按整宽算 —— 每列多算 0.34px，累到第 52 列正好偏**一整列**，
+    // 而 --cw 仍按整宽算 —— 每列多算 0.34px，累到第 52 列正好偏一整列，
     // 周框看起来就落到下一列去了。
     <div
-      /* relative 不能省：container-type 在 Chrome 里**不会**给绝对定位的
+      /* relative 不能省：container-type 在 Chrome 里不会给绝对定位的
          后代当包含块，星期标签会跑到页面根上去（压住页头）。 */
       className="relative w-full pl-4"
       /* --cw 必须定义在容器上：星期标签列是内层 div 的兄弟节点，
@@ -140,7 +140,7 @@ export default function ContributionWall({
             // 1fr 均分而不是写死像素：53 列写死 11px 只占 742px，
             // 在 1080px 的面板上右边空三分之一。
             gridTemplateColumns: `repeat(${layout.weeks}, minmax(0, 1fr))`,
-            // **行高必须显式给**：不写 grid-template-rows 时
+            // 行高必须显式给：不写 grid-template-rows 时
             // `grid-auto-flow: column` 只排出一行，整面墙的高度塌成 0。
             gridTemplateRows: `repeat(7, var(--cw))`,
             // 必须列优先：一列自上而下填满 7 行才换列，否则整个周会被打横
@@ -165,7 +165,7 @@ export default function ContributionWall({
                    内描边和外环必须能叠加，只有 CSS 能做到不写笛卡尔积 */
                 data-tone={toneOf(c)}
                 data-in-range={inSelection(c.date) ? "" : undefined}
-                /* title 与 aria-label **必须给同一句话**（B8）：`title` 只是
+                /* title 与 aria-label 必须给同一句话（B8）：`title` 只是
                    鼠标悬停才出现的视觉提示，读屏与键盘用户拿不到，原生 title
                    在触摸/键盘下也根本不弹。而这两种"空"在界面上是分开画的
                    （见 STATUS 第 20、21 条），读屏用户看不到描边强弱，

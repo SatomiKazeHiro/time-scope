@@ -15,9 +15,9 @@ pub struct StoredSegment {
     pub classifier_version: String,
     #[serde(default)]
     pub evidence_event_ids: Vec<String>,
-    /// 这段里**用户确实有输入**的时长（毫秒），2026-10-13 新增（schema v2）。
+    /// 这段里用户确实有输入的时长（毫秒），2026-10-13 新增（schema v2）。
     ///
-    /// **`None` = 2026-10-13 之前的数据，没有这个量**；`Some(0)` = 这段
+    /// `None` = 2026-10-13 之前的数据，没有这个量；`Some(0)` = 这段
     /// 确实没有输入。两者必须能分开 —— 显示成同一个 0% 会让历史日期
     /// 看起来像「那段时间完全没人用电脑」。
     #[serde(default)]
@@ -27,12 +27,12 @@ pub struct StoredSegment {
 /// 单事务写入 segments 及其 evidence。`(段, 该段的 evidence event id)` 配对。
 ///
 /// 覆盖写（`INSERT OR REPLACE`）时先删掉该段已有的 evidence 再插新的，
-/// 否则重算后的旧证据会残留。**跨批**覆盖同 id 是重放的正常路径。
+/// 否则重算后的旧证据会残留。跨批覆盖同 id 是重放的正常路径。
 ///
-/// 但**同一批里**出现两个同 id 的段是另一回事：段 id 只由 `start_at` 派生
+/// 但同一批里出现两个同 id 的段是另一回事：段 id 只由 `start_at` 派生
 /// （`seg-{start_at}`），两个段起点相同就会撞上，而 `INSERT OR REPLACE` 会让
 /// 后者静默覆盖前者、前者的 evidence 也被一并删掉 —— 一段活动就这么没了，
-/// 返回值还是 `Ok`。这里在开事务**之前**就把它拦下来并返回错误（B11）：
+/// 返回值还是 `Ok`。这里在开事务之前就把它拦下来并返回错误（B11）：
 /// 宁可整批不写（可事后重放），也不要静默丢数据。
 pub fn insert_segments(
     conn: &Connection,
@@ -47,7 +47,7 @@ pub fn insert_segments(
     tx.commit()
 }
 
-/// 同一批里出现重复 id 就报错。**必须在开事务之前**调 —— 报错时库里
+/// 同一批里出现重复 id 就报错。必须在开事务之前调 —— 报错时库里
 /// 不能留下写了一半的数据。
 fn reject_duplicate_ids(segments: &[(StoredSegment, Vec<String>)]) -> rusqlite::Result<()> {
     let mut seen = std::collections::HashSet::with_capacity(segments.len());
@@ -63,7 +63,7 @@ fn reject_duplicate_ids(segments: &[(StoredSegment, Vec<String>)]) -> rusqlite::
     Ok(())
 }
 
-/// 清掉与 `[start_ms, end_ms)` **相交**的段及其证据。**重放某一天前必须调用**（spec §7.4）。
+/// 清掉与 `[start_ms, end_ms)` 相交的段及其证据。重放某一天前必须调用（spec §7.4）。
 ///
 /// 按相交而不是按 `start_at` 落在区间内：跨零点的段 `start_at` 在前一天，
 /// 旧口径删不掉它，于是「重放 10-06」写进去的新段会和它重叠。
@@ -78,11 +78,11 @@ pub fn delete_segments_for_day(
     tx.commit()
 }
 
-/// **单事务**「删掉与 `[start_ms, end_ms)` 相交的段 + 写入新段」。
+/// 单事务「删掉与 `[start_ms, end_ms)` 相交的段 + 写入新段」。
 ///
 /// 拆成"删一个事务、写另一个事务"会有一个很难看的中间态：删成功、写失败
 /// （`SQLITE_FULL`、磁盘满、进程被杀）→ 那天被清空，而且调用方通常已经把
-/// 这一天标记成"处理过了"，于是**本进程内再也不会重放**，用户看到空白直到
+/// 这一天标记成"处理过了"，于是本进程内再也不会重放，用户看到空白直到
 /// 重启（审计 §3 B5）。合成一个事务后，要么全成、要么全不成。
 pub fn replace_day_segments(
     conn: &Connection,
@@ -148,13 +148,13 @@ fn write_all(
 /// 「与 `[?1, ?2)` 相交、并把起止裁剪到该区间」的投影与判定。
 ///
 /// 时间线（`get_segments_in_range`）与节奏（`get_segment_spans_in_range`）
-/// 共用这一份 SQL 片段：**两条查询的口径必须同源**（A2），复制粘贴会漂。
+/// 共用这一份 SQL 片段：两条查询的口径必须同源（A2），复制粘贴会漂。
 /// `pacing_spans_match_the_timeline_spans` 钉住这一点。
 const CLIPPED_SPANS_SELECT: &str = "SELECT MAX(start_at, ?1) AS start_at, \
                                     MIN(end_at, ?2) AS end_at, category";
 /// `get_segment_spans_in_range` 专用：多带 `application`，好让读侧对重叠段
 /// 按应用也去重（`top_apps` 的分组键）。
-/// **不与 `CLIPPED_SPANS_SELECT` 合并** —— 后者被 `get_segments_in_range`
+/// 不与 `CLIPPED_SPANS_SELECT` 合并 —— 后者被 `get_segments_in_range`
 /// 复用，那边自己已经取 application，合并会让下标错位。
 const CLIPPED_SPANS_WITH_APP_SELECT: &str =
     "SELECT MAX(start_at, ?1) AS start_at, MIN(end_at, ?2) AS end_at, category, application";
@@ -162,7 +162,7 @@ const CLIPPED_SPANS_FROM: &str = "FROM activities \
                                   WHERE start_at < ?2 AND end_at > ?1 \
                                   ORDER BY start_at ASC";
 
-/// 与 `[start_ms, end_ms)` **相交**的段，且起止**裁剪到该区间**。
+/// 与 `[start_ms, end_ms)` 相交的段，且起止裁剪到该区间。
 ///
 /// 为什么是相交而不是 `start_at` 落在区间内（A2）：跨零点的段 `start_at` 在前一天，
 /// 按 `start_at` 查会让它在第二天整个消失——时间线缺一块、汇总是 0。
@@ -171,7 +171,7 @@ const CLIPPED_SPANS_FROM: &str = "FROM activities \
 /// 汇总口径要的是「落在区间内的那部分时长」。裁剪让两者算出同一个数。
 /// 已在 `EngineRuntime::segments_for_day` 上确立过同一条规矩（正在生长的当前段就裁）。
 ///
-/// **注意这是重的那条路**：除段本身外，它还对**每个段**再跑一次 evidence 查询
+/// 注意这是重的那条路：除段本身外，它还对每个段再跑一次 evidence 查询
 /// （`SELECT event_id FROM activity_evidence WHERE activity_id = ?`），
 /// 所以是 N+1。只在真的要展示证据时用（时间线、段详情）；
 /// 只需要区间与类别的调用方请走 `get_segment_spans_in_range`（B1）。
@@ -216,7 +216,7 @@ pub fn get_segments_in_range(
     Ok(segments)
 }
 
-/// 段在某个区间内的**跨度**（已裁剪）与类别。
+/// 段在某个区间内的跨度（已裁剪）与类别。
 ///
 /// `range_pacing`（切换次数 + 24h 分布）只需要这三个字段，原来却借道
 /// `get_segments_in_range`，于是每个段都白跑一次 evidence 查询（B1）。

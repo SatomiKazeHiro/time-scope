@@ -101,9 +101,9 @@ fn migrate_is_a_noop_when_already_at_current_version() {
 fn migrate_lifts_a_version_0_database_to_current() {
     // 模拟「还没记录版本的老库」（user_version 默认 0）。
     //
-    // **必须把 activities 也删掉**（2026-10-13）：`open_in_memory()` 自己已经
+    // 必须把 activities 也删掉（2026-10-13）：`open_in_memory()` 自己已经
     // 跑过一次 migrate，`activities` 上已经有 v2 加的 `active_ms` 列。
-    // 只把 user_version 改回 0 而留着那张表，得到的是一个**真实库不会有的状态**
+    // 只把 user_version 改回 0 而留着那张表，得到的是一个真实库不会有的状态
     // —— v2 再 ALTER 一次就撞 `duplicate column name: active_ms`。
     // 真实的 v0 库是「这些表压根不存在」。
     let conn = open_in_memory();

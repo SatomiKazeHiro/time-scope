@@ -1,7 +1,7 @@
 /**
  * 视觉检查用：把汇总页渲染成静态 HTML，供 headless Chrome 截图。
  *
- * 不是测试，也不进 CI —— 它存在的理由是**校验器只管颜色不管排版**：
+ * 不是测试，也不进 CI —— 它存在的理由是校验器只管颜色不管排版：
  * 标签碰撞、几何溢出、面板比例这些问题必须用眼睛看。
  *
  * 跑法：pnpm build && pnpm vitest run src/preview-summary.test.tsx
@@ -22,7 +22,7 @@ const CSS_BUNDLE = existsSync("dist/assets")
   : undefined;
 
 /**
- * 造**最坏情况**的数据（STATUS §4.6：用 mock 数据验收 UI 的教训）——
+ * 造最坏情况的数据（STATUS §4.6：用 mock 数据验收 UI 的教训）——
  * 5 个月、碎片为主、含 8 天完全没活动、含一整段连续空白。
  *
  * 用干净数据是看不出来的：14 个整块的漂亮数据在真实场景里不可读。
@@ -65,7 +65,7 @@ const TITLES: MergedTitle[] = [
 ];
 
   /**
- * **必须尊重 from/to。** 之前这个 mock 无视入参、永远返回全年汇总，
+ * 必须尊重 from/to。 之前这个 mock 无视入参、永远返回全年汇总，
  * 于是页面显示「范围：2026-09-15」（一天）配的是全年数字 —— 预览自己
  * 就自相矛盾，而预览是用来发现矛盾的。
  */
@@ -118,7 +118,7 @@ beforeAll(() => {
   invoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
     if (cmd === "get_daily_calendar") return Promise.resolve(CAL);
     if (cmd === "get_summary") {
-      // **真的按传进来的范围算。** 之前这里无视入参、永远返回全年汇总，于是
+      // 真的按传进来的范围算。 之前这里无视入参、永远返回全年汇总，于是
       // 页面显示「范围：2026-09-15」（一天）配的是全年数字 —— 预览自己就
       // 自相矛盾，而预览存在的理由恰恰是发现矛盾。
       return Promise.resolve(

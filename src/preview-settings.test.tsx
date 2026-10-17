@@ -2,7 +2,7 @@
  * 设置页视觉预览 —— 两种主题各一张，外加「正在归类」展开态。
  *
  * 为什么单独一个文件：预览*.test.tsx 只覆盖监控页与汇总页，
- * 设置页改了却**没有截图可比**，就只能靠读 diff 猜排版对不对 ——
+ * 设置页改了却没有截图可比，就只能靠读 diff 猜排版对不对 ——
  * 而 STATUS §2 明说「校验器只管颜色不管排版」，标签碰撞、面板比例
  * 这类问题只有眼睛能看出来。补上这一份。
  *
@@ -47,7 +47,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...
 const OUT = ".preview";
 
 /**
- * 预览要的是**产物**里的 CSS，不是源码 ——
+ * 预览要的是产物里的 CSS，不是源码 ——
  * Tailwind v4 的 token 与工具类要 `pnpm build` 之后才在 dist 里。
  * 与其余三个 preview 测试同款：找不到就空字符串（预览图没样式，
  * 总比整个测试文件失败强）。
@@ -84,8 +84,8 @@ function html(theme: string, body: string): string {
 }
 
 describe("设置页预览", () => {
-  // **一次只挂一个面板**。两个面板同时挂载时都会动态 import 同一个被
-  // mock 的模块，vitest 的 `vi.mock` 对**同时**发起的重复 import 会让
+  // 一次只挂一个面板。两个面板同时挂载时都会动态 import 同一个被
+  // mock 的模块，vitest 的 `vi.mock` 对同时发起的重复 import 会让
   // 第二个拿到 undefined —— 于是有一半内容渲染成错误态，四张图长得
   // 一模一样，看着像「页面坏了」。分开挂就避开它。
   //

@@ -655,7 +655,7 @@ fn heartbeats_during_a_lock_do_not_produce_active_time() {
         &rules(),
         &emit_now(),
     );
-    // 只看锁屏**之后**开始的段：锁屏前那段 work 是真实存在的
+    // 只看锁屏之后开始的段：锁屏前那段 work 是真实存在的
     for s in segs.iter().filter(|s| s.start_at >= 400_000) {
         assert_ne!(
             s.category.as_str(),
@@ -704,13 +704,13 @@ fn a_missing_unlock_does_not_invent_extra_time() {
 
 #[test]
 fn a_held_back_short_segment_does_not_produce_overlapping_segments() {
-    // A1 的现代版。旧实现里 `pending` 是一个**要按时间排序的列表**：
+    // A1 的现代版。旧实现里 `pending` 是一个要按时间排序的列表：
     // 一个够老但等不到邻居的短段被 append 到末尾，顺序一破，
     // `absorb` 用 `pending.last()` 取到十几秒前的老段、把它拉到当前时刻，
     // 于是产出重叠。
     //
     // 现在缓冲里最多只有一段（`EngineState.tail`），没有「排序」可被打乱 ——
-    // 这条测试守的不再是那个 bug，而是**同一串真实时序下段仍然不重叠**。
+    // 这条测试守的不再是那个 bug，而是同一串真实时序下段仍然不重叠。
     let events = vec![
         focus(0, "Code.exe"),       // 开 A
         focus(5_000, "chrome.exe"), // 关 A（5s，短段）；开 B
@@ -776,7 +776,7 @@ fn overlapping_segments_never_invent_time() {
 #[test]
 fn a_backwards_clock_never_merges_into_an_earlier_segment() {
     // 系统时钟被校正 / NTP 跳变时，新段的时间戳可能落在前一段的跨度里。
-    // 那时**不许并**：并了就等于用这一小段替换掉一段真实时间，
+    // 那时不许并：并了就等于用这一小段替换掉一段真实时间，
     // 被替换的部分从账本上整个消失（B10 的教训）。前一段照常定稿。
     let mut tail = Some(mk("a", 0, 50_000, "work"));
     let mut out = Vec::new();
@@ -871,14 +871,14 @@ fn an_idle_short_segment_is_not_merged_into_work() {
 // --- 空档守卫：引擎不得凭空造出时间 ---
 //
 // 下面这组是 2026-10-12 那天的真实事故：两条 explorer.exe 的 unknown 段
-// 分别长 7.31h 与 10.98h，而那两段时间里**一条事件都没有**（采集侧如实
-// 什么都没记）。段的起止与事件空档的边界**误差 0.0 秒** —— 它不是观测到的，
+// 分别长 7.31h 与 10.98h，而那两段时间里一条事件都没有（采集侧如实
+// 什么都没记）。段的起止与事件空档的边界误差 0.0 秒 —— 它不是观测到的，
 // 是 `extend` 的 `end_at.max(ts)` 从「上一条事件」一路拉到「下一条事件」造出来的。
 //
 // 一天 24 小时因此被记成 18.29 小时 unknown，界面随之说谎：
 // 24h 时段分布 18/24 根柱子满格，专注度大片 100%。
 
-/// 观测空档超过阈值时，把段收在**最后一条证据**处，空档本身不产生任何段。
+/// 观测空档超过阈值时，把段收在最后一条证据处，空档本身不产生任何段。
 #[test]
 fn a_long_observation_gap_does_not_get_stretched_into_the_segment() {
     let hour = 3_600_000i64;
@@ -887,7 +887,7 @@ fn a_long_observation_gap_does_not_get_stretched_into_the_segment() {
     let segs = all_segments(&events, &rules(), &emit_now());
 
     // 两条零长度的段，各自在自己的那条证据上，另一条是「正在生长」的那个。
-    // 关键不是段数，是**时长**：空档那 11 小时没有分到任何一段上。
+    // 关键不是段数，是时长：空档那 11 小时没有分到任何一段上。
     assert_eq!(segs.len(), 2, "空档把同应用的连续使用切成了两段");
     assert_eq!(
         segs[0].end_at, 0,
@@ -899,7 +899,7 @@ fn a_long_observation_gap_does_not_get_stretched_into_the_segment() {
     );
 }
 
-/// 空档超过阈值时，空档应当**真的空着** —— 不是补一段 unknown。
+/// 空档超过阈值时，空档应当真的空着 —— 不是补一段 unknown。
 #[test]
 fn a_gap_longer_than_the_threshold_leaves_no_time_accounted_for() {
     let hour = 3_600_000i64;
@@ -912,7 +912,7 @@ fn a_gap_longer_than_the_threshold_leaves_no_time_accounted_for() {
     );
 }
 
-/// 阈值以内的正常间隔**不受影响** —— 这是绝大多数真实场景。
+/// 阈值以内的正常间隔不受影响 —— 这是绝大多数真实场景。
 #[test]
 fn a_short_gap_still_extends_the_segment() {
     let events = vec![focus(0, "Code.exe"), focus(5_000, "Code.exe")];
@@ -951,11 +951,11 @@ fn the_gap_guard_follows_its_own_threshold() {
 
 // --- 重叠：切回来不许越过中间已经收尾的那一段 ---
 
-/// 复现真实事故（2026-10-12）：09:07:14 开的那一段被**复活三次**，而期间
+/// 复现真实事故（2026-10-12）：09:07:14 开的那一段被复活三次，而期间
 /// msedge 已经另开又关闭了 09:07:46→09:08:29 这一段。最终复活段
 /// [09:07:14, 09:09:52] 与它真实相交 43.4 秒。
 ///
-/// 引擎**不该产出重叠段**：时间线上的每一段都代表「这段时间在做什么」，
+/// 引擎不该产出重叠段：时间线上的每一段都代表「这段时间在做什么」，
 /// 两段重叠等于同一段时间有两个答案。
 #[test]
 fn coming_back_does_not_swallow_the_segment_in_between() {
@@ -986,7 +986,7 @@ fn coming_back_does_not_swallow_the_segment_in_between() {
     }
 }
 
-/// 不管归一化怎么判定，**引擎产出的段两两不得重叠**。
+/// 不管归一化怎么判定，引擎产出的段两两不得重叠。
 /// 这条是「时间线上一段时间只能有一个答案」的形式化。
 #[test]
 fn segments_never_overlap_each_other() {
@@ -1015,12 +1015,12 @@ fn segments_never_overlap_each_other() {
     }
 }
 
-/// 短段合并**不许跨过已经存在的时间**。
+/// 短段合并不许跨过已经存在的时间。
 ///
 /// 归一化允许「相交或首尾相接」就并 —— 这是为了让 3 秒的抖动
 /// 能并进邻居。但如果 `extra` 比 target 长、且它跨过了别的时间，
 /// `merge_into` 的 `min(start)/max(end)` 会把 target 撑大到覆盖那段，
-/// 于是 target 与它中间的真实段**重叠**。
+/// 于是 target 与它中间的真实段重叠。
 ///
 /// 生产默认（`min_segment_duration_s = 30`）下真实重放 2026-10-10
 /// 复现出 9 对重叠、2026-10-07 复现出 14 对，与库里逐条吻合；
@@ -1059,7 +1059,7 @@ fn merging_a_short_segment_never_widens_the_target_across_other_time() {
 // 往哪边取 min/max。空档守卫只加在 close_current 一处，另外几处照样越界。
 //
 // 这条测试钉住「任意两条段不得重叠」这个全局不变式。它不是为了复现某个
-// 具体 bug（那种合成用例会被绕过，见 STATUS §4.3），而是为了让**任何改动**
+// 具体 bug（那种合成用例会被绕过，见 STATUS §4.3），而是为了让任何改动
 // 之后它都得是绿的。
 // ===========================================================================
 
@@ -1136,7 +1136,7 @@ fn segments_of_a_whole_day_never_overlap() {
     );
 }
 
-/// 把正在生长的段**往前拽**之前，必须确认它与缓冲里那一段真的相接。
+/// 把正在生长的段往前拽之前，必须确认它与缓冲里那一段真的相接。
 ///
 /// 2026-10-13 的重叠事故：旧 `fold_short_segments` 并进 `open` 的分支没查相邻，
 /// 于是 `o.start_at = min(...)` 把正在生长的段拽过中间已落库的段，产出重叠。
@@ -1191,8 +1191,8 @@ fn reopening_a_matching_segment_right_after_it_ends_is_allowed() {
 // --- 「有输入时长」（2026-10-13，专注度的新分母）---
 //
 // 用户拍板的口径：`focus = 主导类别时长 / 有输入时长`。
-// 关键实测：看视频时心跳是 0 与非 0 **交替**（报 0 比例 14–74%），
-// 但**从不连续 300 秒** —— 所以这个量能区分「人不在」与「人在但不专注」。
+// 关键实测：看视频时心跳是 0 与非 0 交替（报 0 比例 14–74%），
+// 但从不连续 300 秒 —— 所以这个量能区分「人不在」与「人在但不专注」。
 
 #[test]
 fn a_segment_accumulates_the_time_the_user_actually_had_input() {
@@ -1274,7 +1274,7 @@ fn input_time_is_counted_only_within_the_segment() {
     let cfg = EngineConfig::default().with_min_segment_duration_s(0);
     let base = 1_700_000_000_000i64;
     // 段 [0, 20s]。三个心跳的窗口分别是 [0,10s] / [5s,15s] / [10s,20s]，
-    // **全都落在段内**，各报 8 秒。
+    // 全都落在段内，各报 8 秒。
     // 合计 24 秒 > 段墙钟 20 秒 —— 所以结果就是 20 秒（被总量夹住）。
     let events = vec![
         focus(base, "Code.exe"),
@@ -1294,7 +1294,7 @@ fn input_time_is_counted_only_within_the_segment() {
 /// 「有输入时长」不可能超过段的墙钟时长。
 ///
 /// 三个窗口各报 8 秒 = 24 秒，但段只开了 20 秒 —— 装不下。
-/// 这是「没有证据就没有时间」那条原则在**总量**上的体现：
+/// 这是「没有证据就没有时间」那条原则在总量上的体现：
 /// 分母不能大于它衡量的那个东西。
 #[test]
 fn input_time_never_exceeds_the_segments_own_duration() {

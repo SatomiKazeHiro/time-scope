@@ -21,7 +21,7 @@ function bars(container: HTMLElement) {
   return [...container.querySelectorAll("[data-bar]")] as SVGRectElement[];
 }
 
-/** SVG 的 height 是**属性**不是内联样式，要读 attribute。 */
+/** SVG 的 height 是属性不是内联样式，要读 attribute。 */
 const hOf = (b: SVGRectElement) => Number(b.getAttribute("height"));
 
 describe("DayPartChart", () => {

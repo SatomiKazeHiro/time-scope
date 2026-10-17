@@ -1,11 +1,11 @@
 //! 输入活动与空闲检测（spec §5.3）。
 //!
-//! 每 1s 轮询一次 `GetLastInputInfo`，**状态变化才发信号**——不轮询写库。
+//! 每 1s 轮询一次 `GetLastInputInfo`，状态变化才发信号——不轮询写库。
 //!
 //! Win32 两个坑（spec §15 风险表）：
 //! 1. `LASTINPUTINFO.cbSize` 必须显式设置，否则 API 直接失败、`dwTime` 恒为 0，
 //!    表现为 idle_seconds 永远是 0、永远不会触发 SystemIdle。
-//! 2. `dwTime` 是 **u32** 的 `GetTickCount`，每 ~49.7 天回绕；拿它和 u64 的
+//! 2. `dwTime` 是 u32 的 `GetTickCount`，每 ~49.7 天回绕；拿它和 u64 的
 //!    `GetTickCount64` 直接相减，回绕后会算出天文数字，等于"永不 idle"。
 
 use crate::signals::RawSignal;

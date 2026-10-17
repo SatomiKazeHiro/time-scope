@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 /**
  * 主题：跟随系统 / 浅色 / 深色。
  *
- * 解析**完全交给 CSS**：这里只把用户的选择写成 `<html data-theme="...">`，
+ * 解析完全交给 CSS：这里只把用户的选择写成 `<html data-theme="...">`，
  * 实际切换靠 theme.css 里的媒体查询和 `[data-theme]` 覆盖块。
  * 所以系统主题在运行中变化时不需要 JS 监听 —— 媒体查询自己会跟上。
  *

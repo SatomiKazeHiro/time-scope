@@ -2,7 +2,7 @@
 //!
 //! 覆盖三件真实的事：
 //! 1. watcher 线程起来、`SetWinEventHook` 注册成功、消息泵在跑（hook 会派发信号）
-//! 2. `window_info` 能把一个**真实前台窗口**的 HWND 换算成可用的 Event
+//! 2. `window_info` 能把一个真实前台窗口的 HWND 换算成可用的 Event
 //!    （含 OpenProcess / QueryFullProcessImageNameW / GetWindowTextW 全链路）
 //! 3. `make_title_event` 会把非前台窗口的 HWND 过滤掉（spec §5.2）
 //!

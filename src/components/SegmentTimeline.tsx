@@ -32,7 +32,7 @@ const MIN_WIDTH = 2.5;
  * 两种缝，分得很要紧：
  *
  *  - `GAP` 不同活动段之间。1.5 单位，让"这里结束、那里开始"读得出来。
- *  - `SPLIT_GAP` **首尾相接、又是同一类别**的相邻段之间。1 单位，更细 ——
+ *  - `SPLIT_GAP` 首尾相接、又是同一类别的相邻段之间。1 单位，更细 ——
  *    那不是活动边界，只是引擎把它们分成了两段（比如标题变了），
  *    视觉上应该读成"同一个活动的两截"而不是"两件事"。
  */
@@ -61,8 +61,8 @@ export type MetricMode = "category" | "focus" | "switch";
 export const METRIC_LABEL: Record<MetricMode, string> = {
   category: "类别",
   focus: "专注度",
-  // 「专注切换」而不是「切换次数」（2026-10-13）：这个模式数的是**相邻窗口
-  // 之间**的切换，一眼能对上「我在几个程序之间跳」。汇总页原先也有一个叫
+  // 「专注切换」而不是「切换次数」（2026-10-13）：这个模式数的是相邻窗口
+  // 之间的切换，一眼能对上「我在几个程序之间跳」。汇总页原先也有一个叫
   // 「切换次数」的数（数相邻段之间空了 ≥5 分钟，实测 0–4 次），定义不同、
   // 量级差 48 倍，已一并删掉 —— 见 MetricRow 的诊断行。
   switch: "专注切换",
@@ -79,7 +79,7 @@ interface Props {
   /**
    * 指标模式下被点中的那一格。
    *
-   * 类别模式下一段就是一个色块，选中它就够；指标模式下**一段横跨十几个桶**，
+   * 类别模式下一段就是一个色块，选中它就够；指标模式下一段横跨十几个桶，
    * 把它们全圈上会画出一道白栅栏。指标模式的选中语义是「我在看哪一格」，
    * 所以只圈被点的那一格。
    */
@@ -87,7 +87,7 @@ interface Props {
   /** 正在看今天时画「此刻」游标。历史日期上没有"现在"，画了是错的。 */
   showNow?: boolean;
   /**
-   * 粒度（毫秒）。**类别模式下它只管底部刻度尺的大刻度**，不碰色块；
+   * 粒度（毫秒）。类别模式下它只管底部刻度尺的大刻度，不碰色块；
    * 指标模式下它就是桶宽。spec §8.2：切换粒度只改前端参数，不重查后端。
    */
   intervalMs?: number;
@@ -120,18 +120,18 @@ const NAV_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
 /**
  * 可聚焦色块的公共契约（B8）。
  *
- * 时间线上"点一块看详情"是**核心操作**，所以每个色块都必须：
+ * 时间线上"点一块看详情"是核心操作，所以每个色块都必须：
  * `role="button"`（读屏知道它是可激活的）、可聚焦、`aria-label`
  * （把时间/类别/时长念出来）、Enter/Space 触发（只有 `onClick` 的
  * 元素对键盘等于死的）。
  *
- * **可聚焦 ≠ 每个都占一个 Tab 位。** 真实的一天有 125 个段、指标模式下
+ * 可聚焦 ≠ 每个都占一个 Tab 位。 真实的一天有 125 个段、指标模式下
  * 最多 144 个桶，全都 `tabIndex=0` 的话，键盘用户要按 125 次才能穿过
- * 时间线，点完色块按 Tab 也一样出不来。所以用 **roving tabindex**：
+ * 时间线，点完色块按 Tab 也一样出不来。所以用 roving tabindex：
  * 整条时间线只有当前那一个是 `0`，其余是 `-1`，方向键在色块间移动
  * （标准模式，见 WAI-ARIA 的 Composite Widget）。
  *
- * 焦点样式**不在这里定**：全局 `:focus-visible` 已经给了 2px 中性亮环
+ * 焦点样式不在这里定：全局 `:focus-visible` 已经给了 2px 中性亮环
  * （theme.css；MASTER 记着「不用浏览器默认蓝环，蓝是 work 的色相」），
  * 这里再画一遍就会叠成两条环。
  */
@@ -194,11 +194,11 @@ function bucketLabel(b: BucketMetric, metric: MetricMode): string {
  *
  * 用 viewBox + width:100%，容器再窄（高 DPI、小窗口）也不会把 x/width 算坏。
  *
- * **所有文字都走 HTML 覆盖层，不放进 SVG。** `preserveAspectRatio="none"` 会把
+ * 所有文字都走 HTML 覆盖层，不放进 SVG。 `preserveAspectRatio="none"` 会把
  * viewBox 非等比拉伸，放进去的 <text> 会跟着横向变形。轨道本身仍留在 SVG 里，
  * 因为它就是需要铺满宽度的色块。
  *
- * **轨道是可见的。** 之前轨道背景与面板同色，浅色下三者是同一个白 ——
+ * 轨道是可见的。 之前轨道背景与面板同色，浅色下三者是同一个白 ——
  * 于是"这段没活动"和"这里什么都没画"读起来一模一样，整条时间线没有边框可依。
  * 现在轨道用 surface-2 + 描边 + 圆角，空白时段明确读作"无活动"。
  */
@@ -213,13 +213,13 @@ export default function SegmentTimeline({
   metric = "category",
 }: Props) {
   const [hoverX, setHoverX] = useState<number | null>(null);
-  // `hoverIndex` 的含义**跟着模式变**：类别模式下是**段**下标，指标模式下
-  // 是**桶**下标。而鼠标悬停着不动时，键盘切模式/粒度不会触发 onMouseLeave，
+  // `hoverIndex` 的含义跟着模式变：类别模式下是段下标，指标模式下
+  // 是桶下标。而鼠标悬停着不动时，键盘切模式/粒度不会触发 onMouseLeave，
   // 旧下标就原样留着 —— 于是指标模式下拿「第 120 段」当「第 120 桶」去读，
   // 报出来的是另一个时间范围的数值（B9）。语义一变就清掉。
   //
-  // **故意不把 `segments` 放进依赖**：App 每 5 秒轮询一次，每次都是**新的
-  // 数组**，挂上它会让悬停提示每 5 秒消失一次 —— 那比它要修的问题更招摇。
+  // 故意不把 `segments` 放进依赖：App 每 5 秒轮询一次，每次都是新的
+  // 数组，挂上它会让悬停提示每 5 秒消失一次 —— 那比它要修的问题更招摇。
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   useEffect(() => {
     setHoverX(null);
@@ -234,9 +234,9 @@ export default function SegmentTimeline({
   /**
    * 方向键可以走过的格子下标（roving tabindex 的行走序列）。
    *
-   * 只收**有内容**的格子：指标模式下没有任何活动的格子属于「空白区 /
+   * 只收有内容的格子：指标模式下没有任何活动的格子属于「空白区 /
    * 未监测」，不是一段活动 —— 方向键走过去没东西可看。
-   * 判据是 `readout !== "empty"`，**不是**「有没有涂色」：
+   * 判据是 `readout !== "empty"`，不是「有没有涂色」：
    * 专注度模式把「全是空闲」也涂成空，而全空闲那段是有数据的
    * （读屏念得出「这段时间是空闲」），不该跳。
    */
@@ -250,7 +250,7 @@ export default function SegmentTimeline({
 
   const [roving, setRoving] = useState(0);
   // 格的列表变了（切模式/切粒度）就复位 —— 否则下标会指向不存在或
-  // 含义已变的格子。**故意不依赖 `segments`**：App 每 5 秒轮询一次，
+  // 含义已变的格子。故意不依赖 `segments`：App 每 5 秒轮询一次，
   // 挂上它会让用户正走着的焦点被反复重置。
   useEffect(() => {
     setRoving(0);
@@ -302,7 +302,7 @@ export default function SegmentTimeline({
   const isMetric = metric !== "category";
 
   /**
-   * 类别模式：一个段就是一个色块，**不按桶切**。
+   * 类别模式：一个段就是一个色块，不按桶切。
    *
    * 段是引擎判定的活动边界，它是什么就是什么 —— 按时间格切一刀只会把一段
    * 连续活动切碎，既不增加信息（宽度已经表示时长），又让"这段到底多长"
@@ -311,7 +311,7 @@ export default function SegmentTimeline({
   const placed: Placed[] = segments.map((s, i) => {
     const start = Math.max(s.startAt, dayStartMs);
     const end = Math.min(s.endAt, dayEnd);
-    // **只挡倒挂段**（end < start）。负宽度会让 x 飞到视图外把轨道画歪。
+    // 只挡倒挂段（end < start）。负宽度会让 x 飞到视图外把轨道画歪。
     // 零长段（end === start）要走正常路径拿 MIN_WIDTH 缝隙 —— 那是一个真实事件，
     // 画成 0 宽用户会以为数据丢了，这正是最早那条测试守住的东西。
     if (end < start) {
@@ -345,7 +345,7 @@ export default function SegmentTimeline({
   const bucketCells = buckets.map((b, i) => {
     const rawW = WIDTH / buckets.length;
     // 专注度模式下不涂色的情况：这一格没有可读的数 —— 桶里没活动（既不是专注
-    // 也不是分心，是"没在工作"），或者**完全没动**（涂最低档会被读成"在做事但
+    // 也不是分心，是"没在工作"），或者完全没动（涂最低档会被读成"在做事但
     // 很分心"，那是假的）。判据由 `metrics.ts` 一处给出（`readout`）。
     // 注意 `no-input` 与「历史数据没有这个量」不同：后者照常涂色（详见 metrics.ts）。
     //
@@ -385,7 +385,7 @@ export default function SegmentTimeline({
     isMetric && hoverIndex !== null ? buckets[hoverIndex] : null;
 
   return (
-    /* 外层只负责定位，不裁剪 —— 提示框在轨道**上方**，放进裁剪容器会被切掉 */
+    /* 外层只负责定位，不裁剪 —— 提示框在轨道上方，放进裁剪容器会被切掉 */
     <div className="relative">
       <div className="group overflow-hidden rounded-md border border-line bg-surface-2">
         <svg
@@ -550,7 +550,7 @@ export default function SegmentTimeline({
         </svg>
 
         {/* 段内直标：能不能打是结构决策（inlineLabel），什么颜色由 CSS 随主题决定。
-            **左对齐贴在块的开头**，不居中：时间从左往右流，标签在块开头读作
+            左对齐贴在块的开头，不居中：时间从左往右流，标签在块开头读作
             "从这里开始是 X"；居中会飘在宽块中间，而且离左右边界都远。
             宽度不够（< 46 单位 ≈ 66 分钟）就不打，两个字塞不下会盖到邻居上。
             这层覆盖层只盖轨道那部分，直接相对整个容器 top-1/2 会把标签

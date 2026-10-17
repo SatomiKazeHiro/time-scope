@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 
 /// 跨线程共享的连接。
 ///
-/// `rusqlite::Connection` 是 `Send` 但**不是** `Sync`，所以不能直接 `Arc<Connection>`
+/// `rusqlite::Connection` 是 `Send` 但不是 `Sync`，所以不能直接 `Arc<Connection>`
 /// 丢给后台写盘线程。Mutex 是单文件、单写入者场景下最省事且正确的包法。
 pub type SharedConn = Arc<Mutex<Connection>>;
 
