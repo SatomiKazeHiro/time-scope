@@ -90,10 +90,10 @@ pnpm tauri dev
 
 ```bash
 # Rust：必须带 --workspace，否则只跑根包、core/engine/storage/collector 全部被跳过
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 408 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 417 passed
 
 # 前端
-pnpm test                                                       # 367 passed
+pnpm test                                                       # 374 passed
 ```
 
 ## 代码结构
@@ -116,13 +116,17 @@ src/                     React 前端
   views/SummaryPage.tsx  汇总页
   lib/                   bucket 切片+汇总 / metrics 每桶指标 / summary 热力图布局
                        （同名 .test.ts 里有「每个 var(--x) 都必须在 theme.css 有定义」的守卫）
-  types.ts               StoredEvent 的 TS 镜像 + IPC 封装 + 日期工具
+  types.ts               全部 IPC 封装（9 条命令）+ Segment 类型镜像 + 日期工具
 src-tauri/               Rust workspace
   crates/core            Event / EventType / 序列化（无 IO）
   crates/engine          规则分类 + Segmenter（纯库，零 IO / 零 Tauri）
   crates/storage         SQLite schema、批量写入、按天范围查询
   crates/collector       Windows 采集：窗口 hook、输入 idle
-  src/                   Tauri 应用壳：命令、线程编排、规则、留存期
+  src/                   Tauri 应用壳：
+    lib.rs               插件顺序 / 启动 / 退出钩子（只管这三件事）
+    boot.rs              启动六步（开库 → 清理 → 重放 → 起线程 → 托盘 → manage）
+    ipc.rs               9 条命令；state.rs 共享状态；maintenance.rs 挂轮询的维护
+                        另有 config / rules / redact / title_norm / retention / residency 等
 design-system/time-scope/MASTER.md   UI 规范（色板推导 + 组件约定）
 ```
 

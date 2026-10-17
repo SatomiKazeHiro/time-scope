@@ -18,29 +18,38 @@ use std::path::PathBuf;
 /// 至少要有这么多条命令，否则这个检查可能因为"文件被清空"而空转。
 const MIN_COMMANDS: usize = 5;
 
+/// 命令可能住在这两个文件里：`ipc.rs` 是现在的家，`lib.rs` 是搬家前的家。
+/// **两个都扫** —— 搬一半回去会是最坏的情况，那样这条测试会悄悄空转。
+const COMMAND_FILES: [&str; 2] = ["src/ipc.rs", "src/lib.rs"];
+
 #[test]
 fn every_ipc_command_is_marked_async() {
-    let lib_rs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
-    let src = std::fs::read_to_string(&lib_rs).expect("read src/lib.rs");
-
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut checked = 0usize;
     let mut bare = Vec::new();
-    for (i, line) in src.lines().enumerate() {
-        let t = line.trim();
-        // 只认真正的属性行，不认注释或字符串里出现的同名字样
-        if !t.starts_with("#[tauri::command") {
+
+    for rel in COMMAND_FILES {
+        let path = root.join(rel);
+        let Ok(src) = std::fs::read_to_string(&path) else {
             continue;
-        }
-        checked += 1;
-        if t != "#[tauri::command(async)]" {
-            bare.push(format!("{}:{}  {}", lib_rs.display(), i + 1, t));
+        };
+        for (i, line) in src.lines().enumerate() {
+            let t = line.trim();
+            // 只认真正的属性行，不认注释或字符串里出现的同名字样
+            if !t.starts_with("#[tauri::command") {
+                continue;
+            }
+            checked += 1;
+            if t != "#[tauri::command(async)]" {
+                bare.push(format!("{}:{}  {}", path.display(), i + 1, t));
+            }
         }
     }
 
     assert!(
         checked >= MIN_COMMANDS,
         "只扫到 {checked} 条 #[tauri::command]，少于预期的 {MIN_COMMANDS} —— \
-         这条测试可能已经空转（lib.rs 被改名或命令换了写法？）"
+         这条测试可能已经空转（命令换了文件或换了写法？扫的是 {COMMAND_FILES:?}）"
     );
     assert!(
         bare.is_empty(),

@@ -10,7 +10,7 @@
 
 ```
 Rust  38 文件    TS/TSX  24 文件      （均不含测试）
-测试  408 Rust + 367 前端 = 775 条，全绿
+测试  417 Rust + 374 前端 = 791 条，全绿
 分支  phase1-polish 已 fast-forward 合入 main（2026-10-15）
 推送  main 已与 origin/main 同步（2026-10-15）；phase1-polish 本地与远端都还在
 ```
@@ -81,9 +81,9 @@ Rust  38 文件    TS/TSX  24 文件      （均不含测试）
 ### 自动化（可随时重跑，全绿）
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 408 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace    # 417 passed
 cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets   # 0 warning
-pnpm test                                                       # 367 passed
+pnpm test                                                       # 374 passed
 pnpm build                                                      # 无 tsc 报错
 node design-system/time-scope/verify-palette.mjs                # 色板校验，exit 0
 ```
@@ -297,12 +297,35 @@ day          重叠(旧→新)   总时长(旧→新)
 | ~~**两处「切换次数」定义不同却同名**~~ | ✅ 已修（2026-10-13）。删掉汇总页那个（数「间隔 ≥5 分钟」，实测 0–4 次、没有信息量、且与紧邻的「N 段」重复），时间线那个改名「专注切换」并保留。`switch_count` 字段一路删干净 |
 | ~~**重叠段被双计**~~ | ✅ 两侧都修（2026-10-13）。引擎侧不再产出（`fold_short_segments` 的 open 分支缺相邻检查，已补）；读侧去重保留作**兜底**，且去重时会报日志 |
 | **库里的历史重叠尚未重放** | 引擎已修，但 `activities` 表里那 84 处重叠**还在**（12 天里 10 天有）。读侧兜底让数字正确，日志会报出「本次藏起几段/多少毫秒」。真要清干净需逐天 `replace_day_segments`（**先删当天再重写**，不可逆） |
-| **`daily_calendar`（热力图每格）未去重** | 与其余聚合处形状不同（逐日递归 CTE 的 `SUM`）。有意留口：影响是每格最多多算几十秒（全库 95 分钟摊到 12 天）。将来要改一并处理 |
+| ~~**`daily_calendar`（热力图每格）未去重**~~ | ✅ 已修（2026-10-17）。原来它是唯一没做重叠去重的一处，于是「某天的格子 ≡ `range_totals` 对那一天算出的 `total_ms`」这条注释里的不变式**早已不成立**（真实库 15 天里 5 天对不上，单日最大差 23 分钟）。现在日边界仍由 SQL 的 `localtime` 给，裁剪与按日切分走 `clip_to_uncovered`，与 `range_totals` / `range_pacing` 同一份实现 |
 | **段的时间边界仍有三处直接写** | 都在 `fold_short_segments` 内部，且都是**合并**语义（open 分支、`merge_into`）—— 合并本就该扩大跨度，要防的是「扩大后越过邻居」，由相邻检查把关。往后推边界的路径已全部走 `advance_end` |
-| **`session_lock` 事件全库 0 条** | 锁屏监听模块（`collector::session`）已实现但没产出任何事件，所以「锁屏」目前只能靠 heartbeat 的连续 0 推断。独立的采集侧缺口 |
+| **`session_lock` 事件全库 0 条** | 锁屏监听模块（`collector::session`）已实现但没产出任何事件，所以「锁屏」目前只能靠 heartbeat 的连续 0 推断。独立的采集侧缺口。**2026-10-17 复核**：本机库里其实有 3 条 lock + 3 条 unlock，这条记录已过期 —— 待确认是换了机器/系统版本，还是那次记录只针对当时的库 |
 | 101 项验证清单未勾 | §2 |
 | CI 只跑过基线配置 | 长期没变过依赖，改依赖时要盯一眼 |
 | `docs/superpowers/specs/` 三份里引用的 `ThemeToggle.tsx` 已不存在 | 2026-10-08 删掉了这个死组件（无任何引用，Sidebar 内联了同一个按钮）。spec 是冻结快照，**不动** —— 见 §6 |
+
+### 4.6 段边界的归一化（未来方向，2026-10-17 记档，**暂不动**）
+
+「一个段什么时候切、能有多短」现在由**两套机制**共同决定：
+
+| 机制 | 在哪 | 判定 |
+|---|---|---|
+| grace 抖动吸收 | `is_absorption` / `absorb` / `absorption_candidate*` | 距上次切换在 `grace_period_s` 内，且新 context 等于「再前一个」应用 |
+| 短段合并 | `fold_short_segments` | 短于 `min_segment_duration_s` 的段并进**紧邻**的长段 |
+
+两者做的是同一件事（「一闪而过不该成为一个段」），只是作用时刻不同：
+grace 在事件到达时就地取消这次切换，fold 在落库前把短段并进邻居。为此多养了
+`previous_application`、`last_switch_at` 两个状态字段和一整套候选段定位逻辑。
+
+更粗、更统一的写法：**取消 grace 这一层，只留一条规则** —— 「落库前，短于 N 的
+段并进时间上紧邻的长段；相邻且同类的段合并成一段」。口径只有一条，两个状态字段
+可以删掉，A1 / B12 那两次重叠事故所在的路径也随之消失。
+
+**为什么现在不做**：`absorb`（复活前驱、留下一段）与 fold（并进目标、可能留下
+两段相邻同类）在结果上不等价，换掉会改变历史数据的形状；而
+`crates/engine/src/tests/segmenter.rs` 有一大批用例围着这两套机制写。收益是
+「少一套机制」，代价是一次引擎级重写 —— 不该和别的改动混在同一次提交里。
+动手前先读 §4.2（那一轮踩了五轮才定位）。
 
 ---
 
