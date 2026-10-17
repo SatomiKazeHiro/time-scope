@@ -723,3 +723,34 @@ fn dedup_reports_when_it_has_to_hide_overlapping_time() {
     // 重叠段仍被计入 segment_count（用户看得见），真正的日志
     // 走 eprintln，在 stderr 上。
 }
+
+#[test]
+fn heatmap_day_equals_range_totals_on_overlapping_data() {
+    // 「某天的格子 ≡ range_totals 对那一天算出的 total_ms」这条不变式，
+    // 以前只是注释里的愿望：热力图用一条 SQL 逐段相加，range_totals 走
+    // `clip_to_uncovered`，重叠数据上两者对不上 —— 实测真实库 15 天里
+    // 5 天不一致，单日最大差 23 分钟（10-05：19.77h vs 19.39h）。
+    // 现在两处走同一份实现，等式才真的成立。
+    let conn = open_in_memory();
+    let (d0, d1, _) = three_days(&conn);
+    let h: i64 = 3_600_000;
+    // 同一天里两段重叠：a 占 [1h,3h)、b 占 [2h,4h)。并集 3h，逐段相加是 4h。
+    put(
+        &conn,
+        vec![
+            seg("a", d0 + h, d0 + 3 * h),
+            seg("b", d0 + 2 * h, d0 + 4 * h),
+        ],
+    );
+
+    let totals = range_totals(&conn, d0, d1).unwrap();
+    assert_eq!(totals.total_ms, 3 * h, "并集：重叠部分只算一次");
+
+    let cal = daily_calendar(&conn).unwrap().expect("有段就该有日历");
+    assert_eq!(cal.days.len(), 1);
+    assert_eq!(
+        cal.days[0].total_ms, totals.total_ms,
+        "热力图那一格必须等于 range_totals 算出的当天总时长"
+    );
+    assert_ne!(cal.days[0].total_ms, 4 * h, "逐段相加的旧口径会把重叠算两遍");
+}

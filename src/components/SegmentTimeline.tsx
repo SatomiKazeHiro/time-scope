@@ -179,10 +179,10 @@ function segmentLabel(seg: Segment): string {
  */
 function bucketLabel(b: BucketMetric, metric: MetricMode): string {
   const span = `${clockOf(b.start)} – ${clockOf(b.end)}`;
-  if (b.segmentCount === 0) return `${span} · 无活动`;
+  if (b.readout === "empty") return `${span} · 无活动`;
   const reading =
     metric === "focus"
-      ? b.activeMs === 0
+      ? b.readout === "idle"
         ? "空闲"
         : `专注度 ${Math.round(b.focus * 100)}%`
       : `${b.switches} 次切换`;
@@ -234,17 +234,17 @@ export default function SegmentTimeline({
   /**
    * 方向键可以走过的格子下标（roving tabindex 的行走序列）。
    *
-   * 只收**有内容**的格子：指标模式下没有任何活动的那几格属于「空白区 /
+   * 只收**有内容**的格子：指标模式下没有任何活动的格子属于「空白区 /
    * 未监测」，不是一段活动 —— 方向键走过去没东西可看。
-   * 注意判据是 `segmentCount === 0`，**不是** `bucketCells[].blank`：
-   * 后者在专注度模式下把「全是空闲」也算 blank，而全空闲那段是有数据的
+   * 判据是 `readout !== "empty"`，**不是**「有没有涂色」：
+   * 专注度模式把「全是空闲」也涂成空，而全空闲那段是有数据的
    * （读屏念得出「这段时间是空闲」），不该跳。
    */
   const walkable = useMemo(() => {
     if (metric === "category") return Array.from({ length: segments.length }, (_, i) => i);
     return buckets
       .map((b, i) => ({ b, i }))
-      .filter(({ b }) => b.segmentCount > 0)
+      .filter(({ b }) => b.readout !== "empty")
       .map(({ i }) => i);
   }, [metric, buckets, segments.length]);
 
@@ -344,15 +344,14 @@ export default function SegmentTimeline({
   /** 指标模式下，一个桶就是一个色块。 */
   const bucketCells = buckets.map((b, i) => {
     const rawW = WIDTH / buckets.length;
-    // 专注度模式下不涂色的两种情况：
-    //   - 桶里没有活动：既不是专注也不是分心，是"没在工作"
-    //   - 桶里**完全没动**（inputMs === 0）：同上，涂最低档会被读成
-    //     "在做事但很分心"，那是假的
-    // 注意 `inputMs === null`（2026-10-13 之前的历史数据）**照常涂色**：
-    // 那时退回旧口径算，数字有意义就不该藏。详见 metrics.ts 的 focus 注释。
-    const blank =
-      b.segmentCount === 0 || (metric === "focus" && b.activeMs === 0) ||
-      (metric === "focus" && b.inputMs === 0);
+    // 专注度模式下不涂色的情况：这一格没有可读的数 —— 桶里没活动（既不是专注
+    // 也不是分心，是"没在工作"），或者**完全没动**（涂最低档会被读成"在做事但
+    // 很分心"，那是假的）。判据由 `metrics.ts` 一处给出（`readout`）。
+    // 注意 `no-input` 与「历史数据没有这个量」不同：后者照常涂色（详见 metrics.ts）。
+    //
+    // 切换模式不看 `readout`：全空闲的桶确实发生过「没换过程序」，
+    // 那是最低档而不是空 —— 空与「值为 0」是两件事。
+    const blank = b.readout === "empty" || (metric === "focus" && b.readout !== "value");
     const step = metric === "focus" ? focusStep(b.focus) : switchStep(b.switches);
     return {
       metric: b,
@@ -428,7 +427,7 @@ export default function SegmentTimeline({
                       onNavigate: (key) => navigate(c.index, key),
                       // 没有任何活动的格子：鼠标点它没反应，别让读屏念一个
                       // "按了不响"的按钮
-                      inert: c.metric.segmentCount === 0,
+                      inert: c.metric.readout === "empty",
                     })}
                     style={{
                       pointerEvents: "all",
@@ -603,7 +602,7 @@ export default function SegmentTimeline({
               /* 没涂色的格子不能报读数 —— 报了就是在编一个不存在的数值 */
               <>
                 <span className="font-medium text-ink-muted">
-                  {hoverBucket.segmentCount === 0
+                  {hoverBucket.readout === "empty"
                     ? "无活动"
                     : metric === "focus"
                       ? "这段时间是空闲"
@@ -612,7 +611,7 @@ export default function SegmentTimeline({
                 <div className="tnum mt-0.5 text-ink-muted">
                   {clockOf(hoverBucket.start)} – {clockOf(hoverBucket.end)}
                 </div>
-                {hoverBucket.segmentCount > 0 && metric === "focus" && (
+                {hoverBucket.readout !== "empty" && metric === "focus" && (
                   <div className="mt-0.5 text-ink-faint">没在用电脑，不计入专注度</div>
                 )}
               </>

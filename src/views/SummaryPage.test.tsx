@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import SummaryPage from "./SummaryPage";
 import { wallWindow } from "../lib/summary";
 import { shiftDate, todayString } from "../types";
@@ -335,6 +335,30 @@ describe("SummaryPage", () => {
     // 「少 … 多」两端要有字
     expect(screen.getByText("少")).toBeTruthy();
     expect(screen.getByText("多")).toBeTruthy();
+  });
+
+  it("标题取完确实为空时说「这个范围没有记录」，不说让人去滚", async () => {
+    // 原来用 `titles.length === 0` 冒充「还没取过」，于是取完的空列表仍在说
+    // 「向下滚动加载」（让人去滚一个已加载完的面板），而「这个范围没有记录」
+    // 那一条永远不可达。三态之后四条分支都走得通。
+    visible = true;
+    getTopTitles.mockResolvedValue([]);
+    render(<SummaryPage />);
+    await waitFor(() => expect(getTopTitles).toHaveBeenCalled());
+
+    const panel = screen.getByText("窗口标题 Top").closest("div")!;
+    await waitFor(() => expect(within(panel).getByText("这个范围没有记录")).toBeTruthy());
+    expect(within(panel).queryByText("向下滚动加载")).toBeNull();
+  });
+
+  it("还没滚到底时提示「向下滚动加载」—— 那时确实一次都没取", async () => {
+    visible = false;
+    render(<SummaryPage />);
+    await waitFor(() => expect(callsTo("get_summary")).toBeGreaterThan(0));
+
+    const panel = screen.getByText("窗口标题 Top").closest("div")!;
+    expect(within(panel).getByText("向下滚动加载")).toBeTruthy();
+    expect(getTopTitles).not.toHaveBeenCalled();
   });
 
   it("标题失败时显示空状态而不是崩", async () => {

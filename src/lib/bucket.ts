@@ -1,4 +1,5 @@
 import type { Category, Segment } from "../types";
+import { clipToUncovered } from "./clip";
 
 /** 可选粒度（分钟）。spec §10：10 / 30（默认）/ 60 / 120。 */
 export const GRANULARITIES = [10, 30, 60, 120] as const;
@@ -29,28 +30,25 @@ export interface SummaryRow {
  *
  * 每段先被截到 `[dayStartMs, dayStartMs+24h)`，所以跨零点的段不会把时长算爆。
  *
- * **重叠段去重**（2026-10-13 补上）。这里原来逐段独立相加，而
- * `metrics.ts` 与后端 `clip_to_uncovered` 都做了去重 —— 三处口径不一致，
- * 违反 STATUS §1 第 22 条「三处必须同源」。当时没出事只是因为引擎刚修完、
- * 数据里没有重叠段；一旦重叠再现，「当日汇总」就会与「时间线指标」对不上。
- *
- * 规则与另两处**完全相同**：**先开始的段拥有重叠部分**（first-wins by startAt）。
+ * 重叠去重走 `clip.ts` 的 `clipToUncovered` —— **不再在这里内联一遍**。
+ * 这条规则原来也被 `metrics.ts` 内联了一次，两处金额一致靠人看着；2026-10-13
+ * 那次 `summarize` 漏掉去重，正好证明「同一条口径抄两遍」迟早分叉
+ * （STATUS 第 22 条「三处必须同源」）。后端的对等实现是
+ * `storage::summary::clip_to_uncovered`。
  */
 export function summarize(segments: Segment[], dayStartMs: number): SummaryRow[] {
   const dayEnd = dayStartMs + DAY_MS;
-  const clipped = segments
-    .map((s) => ({ ...s, startAt: Math.max(s.startAt, dayStartMs), endAt: Math.min(s.endAt, dayEnd) }))
-    .filter((s) => s.endAt > s.startAt)
-    .sort((a, z) => a.startAt - z.startAt);
+  const { kept } = clipToUncovered(
+    segments.map((s) => ({
+      ...s,
+      startAt: Math.max(s.startAt, dayStartMs),
+      endAt: Math.min(s.endAt, dayEnd),
+    })),
+  );
 
   const totals = new Map<Category, number>();
-  let coveredUntil = Number.NEGATIVE_INFINITY;
-  for (const s of clipped) {
-    const from = Math.max(s.startAt, coveredUntil);
-    const d = s.endAt - from;
-    if (d <= 0) continue;
-    coveredUntil = s.endAt;
-    totals.set(s.category, (totals.get(s.category) ?? 0) + d);
+  for (const { seg, start, end } of kept) {
+    totals.set(seg.category, (totals.get(seg.category) ?? 0) + (end - start));
   }
 
   const total = Array.from(totals.values()).reduce((a, b) => a + b, 0);

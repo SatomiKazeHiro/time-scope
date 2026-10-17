@@ -1,8 +1,12 @@
-import type { Category, Segment } from "../types";
 import { DEFAULT_GRANULARITY } from "./bucket";
+import { clipToUncovered } from "./clip";
+import type { Category, Segment } from "../types";
 
 const MINUTE = 60_000;
 const DAY_MS = 86_400_000;
+
+/** 一格有没有可读的数。见 `BucketMetric.readout`。 */
+export type BucketReadout = "empty" | "idle" | "no-input" | "value";
 
 /**
  * 一个时间桶上的聚合指标。
@@ -43,6 +47,25 @@ export interface BucketMetric {
    * 把「没数据」说成「完全分心」是在编造。
    */
   inputMs: number | null;
+  /**
+   * **这一格有没有可读的数** —— 数据层面的结论，不是「该不该涂色」。
+   *
+   * 为什么它必须由 metrics 给出：同一个判断原来在 `SegmentTimeline` 里写了四遍，
+   * 而且四处的判据互不相同（导航用 `segmentCount > 0`、涂色用
+   * `segmentCount === 0 || inputMs === 0`、无障碍名用 `activeMs === 0`、
+   * 浮层又拼一次）—— 于是「这一格是空的吗」在不同交互里答案不一样。
+   * 判据一旦分散，就没人能回答「为什么这一格点得动、却画不出颜色」。
+   *
+   * 四种状态，边界互斥且齐全：
+   * - `empty`：桶里一段都没有（无人监测 / 空白区）
+   * - `idle`：有段但**全是空闲**（人不在，不是"零分"）
+   * - `no-input`：**有活动但没有任何输入**（inputMs 恰好为 0）
+   * - `value`：有活动且有输入，可以报读数
+   *
+   * 注意 `inputMs === null`（历史数据）**不算 `no-input`**，仍然落到 `value` ——
+   * 「没有这个量」和「这个量是 0」是两件事（STATUS 第 37 条）。
+   */
+  readout: BucketReadout;
   /**
    * 专注度 = 主导类别时长 / **分母**，0..1。
    *
@@ -133,6 +156,7 @@ export function bucketMetrics(
     switches: 0,
     activeMs: 0,
     inputMs: null,
+    readout: "empty",
     focus: 0,
     dominantCategory: null,
     allIdle: false,
@@ -148,12 +172,7 @@ export function bucketMetrics(
     const from = Math.max(0, Math.floor((start - dayStartMs) / width));
     const to = Math.min(count - 1, Math.floor((end - 1 - dayStartMs) / width));
     for (let i = from; i <= to; i++) {
-      const b = buckets[i];
-      const bStart = dayStartMs + i * width;
-      const bEnd = bStart + width;
-      b.segments.push(seg);
-      // 段被桶边界切开时只算落在本桶的那一段
-      b.coveredMs += Math.min(end, bEnd) - Math.max(start, bStart);
+      buckets[i].segments.push(seg);
     }
   }
 
@@ -161,58 +180,57 @@ export function bucketMetrics(
     b.segmentCount = b.segments.length;
     if (b.segmentCount === 0) continue;
 
-    // 覆盖时长截到桶宽：兜底（去重之后不该再超 1，见下）
-    b.coveredMs = Math.min(b.coveredMs, width);
-    b.coverage = b.coveredMs / width;
-
+    // 覆盖时长与逐类别时长都从**同一个裁剪结果**来：
+    // 段先裁到桶内，再走 `clipToUncovered`（全仓唯一的重叠口径）。
+    //
+    // 原来这里是「逐段独立累加 → 夹到桶宽」，那个夹是去重之前的兜底：
+    // 它只保证数字不超过 1，重叠时是**多算**。而同一个函数里另有一段
+    // first-wins 的去重循环在算 `activeMs` —— 于是同一个桶有两种覆盖口径，
+    // 覆盖率与专注度在重叠数据上互相矛盾（STATUS 第 22 条）。
+    //
+    // **去掉的量必须可见**（2026-10-13）：静默去重会让「引擎又产出坏数据」
+    // 完全隐形 —— 数字仍然对，排查时看不出问题出在读侧还是引擎。宁可吵，不可静。
     b.segments.sort((a, z) => a.startAt - z.startAt);
     const apps = new Set<string>();
     const byCategory = new Map<Category, number>();
 
-    // **重叠去重**：逐段独立累加会把同一段时间数两遍，`activeMs` 被抬高、
-    // 于是 `focus` 这个「主导类别占比」的分母虚高、专注度被稀释。
-    //
-    // 规则与后端 `clip_to_uncovered` 一致：**先开始的段拥有重叠部分**
-    // （first-wins by startAt）。两处必须同规则，否则汇总页与时间线
-    // 对同一个重叠会给出不同的解释（STATUS 第 22 条「三处同源」）。
-    //
-    // **去掉的量必须可见**，与后端同理（2026-10-13）：静默去重会让
-    // 「引擎又产出坏数据」这件事完全隐形 —— 数字仍然对，但排查时
-    // 根本看不出问题出在读侧还是引擎。宁可吵，不可静。
-    let coveredUntil = Number.NEGATIVE_INFINITY;
-    let hiddenMs = 0;
-    let hiddenCount = 0;
+    const { kept, hiddenCount, hiddenMs } = clipToUncovered(
+      // 段被桶边界切开时只算落在本桶的那一段
+      b.segments.map((s) => ({
+        ...s,
+        startAt: Math.max(s.startAt, b.start),
+        endAt: Math.min(s.endAt, b.end),
+      })),
+    );
+
     // `inputMs` 从 null 起：**一个段都没有这个量的桶保持 null**，
     // 表示「这是 2026-10-13 之前的数据」，而不是「这段时间没人动」。
     let sawInputField = false;
-    for (let i = 0; i < b.segments.length; i++) {
-      const s = b.segments[i];
+    for (const { seg: s, start: segStart, end: segEnd } of kept) {
       apps.add(s.application ?? "（未知）");
-      const from = Math.max(s.startAt, coveredUntil);
-      const clamped = Math.max(0, Math.min(s.endAt, b.end) - from);
-      if (clamped > 0) {
-        coveredUntil = Math.min(s.endAt, b.end);
-      } else {
-        // 整段被更早的段盖住 —— 只可能是重叠造成的数据缺陷
-        hiddenMs += Math.min(s.endAt, b.end) - Math.max(s.startAt, b.start);
-        hiddenCount += 1;
-      }
+      const inside = segEnd - segStart;
+      b.coveredMs += inside;
       if (s.category !== "idle") {
-        b.activeMs += clamped;
-        byCategory.set(s.category, (byCategory.get(s.category) ?? 0) + clamped);
+        b.activeMs += inside;
+        byCategory.set(s.category, (byCategory.get(s.category) ?? 0) + inside);
       }
       // 桶内「有输入时长」：按段在桶内占据的比例摊分。
       // 段跨桶时不能把整段算进某一个桶。
       if (typeof s.activeMs === "number") {
         sawInputField = true;
         const span = Math.max(1, s.endAt - s.startAt);
-        const inside = Math.max(0, Math.min(s.endAt, b.end) - Math.max(s.startAt, b.start));
         b.inputMs = (b.inputMs ?? 0) + (s.activeMs * inside) / span;
       }
-      if (i > 0 && (b.segments[i - 1].application ?? "（未知）") !== (s.application ?? "（未知）")) {
-        b.switches++;
-      }
     }
+    b.coverage = b.coveredMs / width;
+
+    // 切换次数按**原始段序**算，不受去重影响 —— 时间线上看得见两条就数两次
+    for (let i = 1; i < b.segments.length; i++) {
+      const prev = b.segments[i - 1].application ?? "（未知）";
+      const cur = b.segments[i].application ?? "（未知）";
+      if (prev !== cur) b.switches++;
+    }
+
     if (!sawInputField) b.inputMs = null;
     if (hiddenCount > 0) {
       reportOverlap(hiddenCount, hiddenMs);
@@ -242,6 +260,16 @@ export function bucketMetrics(
         ? b.activeMs
         : b.inputMs;
     b.focus = denom > 0 && bestMs > 0 ? Math.min(1, bestMs / denom) : 0;
+    // 「这一格有没有可读的数」在这里算一次，别让每个调用方各自重推
+    // （判据分散时，同一个「空」在导航、涂色、读屏、浮层里会给出四种答案）。
+    b.readout =
+      b.segmentCount === 0
+        ? "empty"
+        : b.activeMs === 0
+          ? "idle"
+          : b.inputMs === 0
+            ? "no-input"
+            : "value";
     // 「只有空闲」必须在循环外判定：桶里既有 idle 也有 work 时它不是全空闲
     b.allIdle = b.coveredMs > 0 && b.activeMs === 0;
   }

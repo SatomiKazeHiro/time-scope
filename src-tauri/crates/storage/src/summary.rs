@@ -38,25 +38,28 @@ pub struct DailyCalendar {
 /// **跨零点的段按本地午夜切分到两天**（A2）。按 `start_at` 分组的话，
 /// 23:57 起的段整段落给第一天，第二天那格是空的——于是「昨天最后一格」
 /// 和「今天第一格」对不上，与时间线/汇总页看到的事实矛盾。
-/// 切分保证：某一天的格子 ≡ `range_totals` 对那一天算出的 `total_ms`。
+///
+/// 切分保证：某一天的格子**恒等于** `range_totals` 对那一天算出的 `total_ms`。
+/// 这条以前只是注释里的愿望 —— 两处各自用 SQL 求和，热力图那边没做重叠去重，
+/// 于是 15 天里 5 天对不上（最大单日差 23 分钟）。现在两边都走
+/// `clip_to_uncovered`，等式由**同一份实现**保证（2026-10-17）。
 ///
 /// 两天用固定 86,400,000ms 递推，是跟随全项目既有的单固定 offset 假设
 /// （前端 `+86_400_000`、`date_range::day_range_ms`、本文件的 `localtime` 同款）。
-/// 夏令时切换日会差一小时，见 STATUS #16——本项目登记为已知取舍。
+/// 夏令时切换日会差一小时，见 STATUS #21——本项目登记为已知取舍。
 ///
 /// 库为空时返回 `Ok(None)`：那是「刚装完还没跑满一天」的真实状态，
 /// 调用方据此显示空状态，而不是拿到一个 first/last 为空串的半成品。
 pub fn daily_calendar(conn: &Connection) -> Result<Option<DailyCalendar>, rusqlite::Error> {
-    // 递归 CTE 把「数据跨了哪几天」列出来，再把每个段与每一天求交集。
+    // ① 本地日边界与日期标签交给 SQL：`localtime` 的口径与全项目一致，
+    //    在 Rust 里重算一遍 offset 会多出第二个真相来源。
+    //
     // 锚点是最早那个段所在**本地日**的真零点：`date(...,'localtime')` 拿到本地
     // 日期标签，拼上 ` 00:00:00` 得到本地墙上时间，再用 `'utc'` 修饰符换算回
     // 真正的 Unix 时刻（少写 `'utc'` 会差一个 UTC offset）。
     // **不能用** `datetime(...,'localtime','start of day')` 再 `strftime('%s',...)`：
-    // 那是把本地零点当 UTC 读，得到的不是零点而是「零点 + UTC offset」，
-    // 与下面 `+86400000` 的递推对不齐，会让每天 00:00–offset 那段落不进任何格子。
-    // 库为空时 span 的 lo/hi 都是 NULL，days 只产出一行 NULL，
-    // JOIN 不上任何段，于是 days 为空 → 走下面的 `Ok(None)` 分支。
-    let mut stmt = conn.prepare(
+    // 那是把本地零点当 UTC 读，得到的不是零点而是「零点 + UTC offset」。
+    let mut day_stmt = conn.prepare(
         "WITH RECURSIVE
              span AS (SELECT MIN(start_at) AS lo, MAX(end_at) AS hi FROM activities),
              days(day_ms) AS (
@@ -65,27 +68,54 @@ pub fn daily_calendar(conn: &Connection) -> Result<Option<DailyCalendar>, rusqli
                  UNION ALL
                  SELECT day_ms + 86400000 FROM days, span WHERE day_ms + 86400000 < hi
              )
-         SELECT date(days.day_ms/1000,'unixepoch','localtime') AS d,
-                SUM(MIN(a.end_at, days.day_ms + 86400000) - MAX(a.start_at, days.day_ms)) AS ms
-         FROM days
-         JOIN activities a
-           ON a.start_at < days.day_ms + 86400000
-          AND a.end_at  > days.day_ms
-         GROUP BY days.day_ms
-         HAVING ms > 0
-         ORDER BY d ASC",
+         SELECT day_ms, date(day_ms/1000,'unixepoch','localtime') FROM days
+          WHERE day_ms IS NOT NULL
+          ORDER BY day_ms",
     )?;
-    let mut days = Vec::new();
-    for row in stmt.query_map([], |row| {
-        Ok(DayCell {
-            date: row.get(0)?,
-            total_ms: row.get::<_, i64>(1)?,
-        })
-    })? {
-        days.push(row?);
+    let day_starts: Vec<(i64, String)> = day_stmt
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if day_starts.is_empty() {
+        return Ok(None);
     }
 
-    // 一行都没有 = 库空。不给半成品（first/last 为空串的 DailyCalendar）。
+    // ② 裁剪走 `clip_to_uncovered`：与 `range_totals`、`range_pacing` 同一份实现。
+    //    要全库、不要被查询区间裁，所以传一个足够大的范围。
+    let spans = crate::activity::get_segment_spans_in_range(conn, 0, i64::MAX)?;
+    let clipped = clip_to_uncovered(&spans);
+
+    // ③ 把裁剪后的区间按本地日切分。`clipped` 已按 start_at 升序，
+    //    所以每天只需要从「还没结束的那一段」往后扫。
+    let mut days: Vec<DayCell> = Vec::new();
+    let mut cursor = 0usize;
+    for (i, (day_ms, label)) in day_starts.iter().enumerate() {
+        let day_end = day_starts
+            .get(i + 1)
+            .map(|(d, _)| *d)
+            .unwrap_or(day_ms + 86_400_000);
+        while cursor < clipped.len() && clipped[cursor].1 <= *day_ms {
+            cursor += 1;
+        }
+        let mut total: i64 = 0;
+        for (start, end, _cat, _app) in &clipped[cursor..] {
+            if *start >= day_end {
+                break;
+            }
+            let lo = (*start).max(*day_ms);
+            let hi = (*end).min(day_end);
+            if hi > lo {
+                total += hi - lo;
+            }
+        }
+        if total > 0 {
+            days.push(DayCell {
+                date: label.clone(),
+                total_ms: total,
+            });
+        }
+    }
+
+    // 一行都没有 = 库空（或全被更早的段盖住）。不给半成品。
     let Some(first_cell) = days.first() else {
         return Ok(None);
     };

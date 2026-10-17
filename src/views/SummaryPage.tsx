@@ -61,7 +61,15 @@ export default function SummaryPage() {
    */
   const [trackedFrom, setTrackedFrom] = useState<string | null>(null);
   const [titles, setTitles] = useState<MergedTitle[]>([]);
-  const [titleBusy, setTitleBusy] = useState(false);
+  /**
+   * 标题排名这次取数走到哪一步了。
+   *
+   * 三态而不是「有没有数据」：空列表既可能是「还没开始取」（用户还没滚到底），
+   * 也可能是「取完了确实没有」。原来用 `titles.length === 0` 冒充「没取过」，
+   * 于是取完的空列表仍在说「向下滚动加载」（让人去滚一个已经加载完的面板），
+   * 而「这个范围没有记录」那一条**永远不可达**。
+   */
+  const [titleStatus, setTitleStatus] = useState<"idle" | "loading" | "done">("idle");
 
   // ① 热力图数据：挂载时取一次。依赖数组**故意是空的**——
   //    范围变化时绝不能重取（spec §2.3）。
@@ -134,11 +142,11 @@ export default function SummaryPage() {
   useEffect(() => {
     if (!from || !to || !titleVisible) return;
     let dead = false;
-    setTitleBusy(true);
+    setTitleStatus("loading");
     getTopTitles(from, to, TITLE_LIMIT)
       .then((t) => { if (!dead) setTitles(t); })
       .catch(() => { if (!dead) setTitles([]); })
-      .finally(() => { if (!dead) setTitleBusy(false); });
+      .finally(() => { if (!dead) setTitleStatus("done"); });
     return () => { dead = true; };
   }, [from, to, titleVisible]);
 
@@ -170,13 +178,21 @@ export default function SummaryPage() {
       note: t.redacted ? "已脱敏" : undefined,
     }));
   }, [titles]);
-  const titleEmpty = titleBusy
-    ? "统计中…"
-    : !range
-      ? "还没有采集数据"
-      : titles.length === 0
-        ? "向下滚动加载"
-        : "这个范围没有记录";
+  /**
+   * 标题面板的空文案。四条分支**都必须可达**：
+   * - 取数中 → 统计中…
+   * - 库空（连日历都没有）→ 还没有采集数据
+   * - 取完了 → 这个范围没有记录
+   * - 还没开始取（用户没滚到底）→ 向下滚动加载
+   */
+  const titleEmpty =
+    titleStatus === "loading"
+      ? "统计中…"
+      : !range
+        ? "还没有采集数据"
+        : titleStatus === "done"
+          ? "这个范围没有记录"
+          : "向下滚动加载";
 
   const appItems: RankedItem[] = useMemo(() => {
     const apps = summary?.topApps ?? [];

@@ -476,3 +476,44 @@ describe("专注度的笼统口径", () => {
     expect(b.focus, "用旧口径算，不要显示成 0").toBeCloseTo(1, 5);
   });
 });
+
+// --- readout：这一格有没有可读的数（2026-10-17）---
+//
+// 这个判断原来在 SegmentTimeline 里写了四遍，判据各不相同（导航用段数、
+// 涂色用段数+两个 0、读屏用 activeMs、浮层再拼一次）。现在由 metrics 一处给出，
+// 组件只读结论。下面的四条边界就是那四种状态。
+
+describe("readout", () => {
+  const withInput = (id: string, startMin: number, endMin: number, activeMs?: number): Segment => ({
+    ...seg(id, startMin, endMin),
+    activeMs,
+  });
+
+  it("四种状态互斥且齐全", () => {
+    const m = bucketMetrics(
+      [
+        withInput("hist", 0, 60),                    // 历史数据：没有 activeMs
+        { ...seg("idle-only", 120, 180, "idle") },     // 全空闲
+        withInput("no-input", 240, 300, 0),          // 有活动、没输入
+        withInput("active", 360, 420, 30 * MIN),     // 有活动有输入
+      ],
+      DAY_START,
+      60 * MIN,
+    );
+    const at = (h: number) => m[h].readout;
+    expect(at(0), "inputMs 为 null（历史数据）仍算可读").toBe("value");
+    expect(at(2), "只有空闲段").toBe("idle");
+    expect(at(4), "有活动但 inputMs 恰好 0").toBe("no-input");
+    expect(at(6)).toBe("value");
+    expect(at(8), "桶里一段都没有").toBe("empty");
+  });
+
+  it("全空闲桶的 idle 与「没段」的 empty 必须分开 —— 前者点得动、读得出话", () => {
+    const [idleBucket] = bucketMetrics([{ ...seg("i", 0, 60, "idle"), activeMs: 0 }], DAY_START, DAY);
+    expect(idleBucket.readout).toBe("idle");
+    expect(idleBucket.segmentCount).toBe(1);
+    const [emptyBucket] = bucketMetrics([], DAY_START, DAY);
+    expect(emptyBucket.readout).toBe("empty");
+    expect(emptyBucket.segmentCount).toBe(0);
+  });
+});
