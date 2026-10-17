@@ -12,7 +12,6 @@ use crate::engine_thread;
 use crate::redact::Redactor;
 use crate::residency;
 use crate::retention;
-use crate::rules;
 use crate::state::AppState;
 use activity_collector::signals::RawSignal;
 use activity_storage::{BatchWriter, SharedConn};
@@ -25,7 +24,8 @@ pub fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
     // ① 打开数据库。B4：打不开就弹一句带路径/原因/下一步的说明，然后让
     //    setup 返回 Err，而不是 `.expect("open db")` panic ——
     //    那句话没有路径也没有原因，用户无从下手。
-    let db_path = rules::app_dir().join("time-scope.db");
+    let data_dir = config::data_dir();
+    let db_path = data_dir.join("time-scope.db");
     let conn: SharedConn = match db_open::open_db(&db_path) {
         Ok(conn) => conn,
         Err(e) => {
@@ -38,7 +38,7 @@ pub fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
     // spec §8.1：每 5s 或满 100 条单事务批量插入
     let writer = Arc::new(BatchWriter::new(Arc::clone(&conn), 5_000, 100));
 
-    // spec §5：行为参数来自 %APPDATA%/time-scope/config.toml，
+    // spec §5：行为参数来自数据目录里的 config.toml（`config::data_dir()`），
     // 文件缺失时生成默认模板，坏了就用默认值（都不影响启动）。
     let app_config = config::load_or_create(&config::config_path());
 
@@ -110,11 +110,13 @@ pub fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
     // ⑥ 托盘 + 关窗行为 + 自启同步。托盘建不起来时内部会退回"关窗即退出"，
     //    主链路不受影响（spec §7）。
     let tray_ok = residency::install(app, app_config);
+    // 账本在哪，启动日志里就要看得见 —— 数据跟着 exe 走，用户该一眼确认这件事
     eprintln!(
-        "[time-scope] db: {}（托盘 {}）",
-        db_path.display(),
+        "[time-scope] 数据目录: {}（托盘 {}）",
+        data_dir.display(),
         if tray_ok { "已就绪" } else { "不可用，关窗即退出" }
     );
+    eprintln!("[time-scope] db: {}", db_path.display());
 
     // ⑦ 交给 IPC 与退出钩子
     app.manage(AppState {

@@ -47,7 +47,7 @@ pub fn open_file_shared(path: &Path) -> rusqlite::Result<SharedConn> {
     Ok(Arc::new(Mutex::new(open_file(path)?)))
 }
 
-/// 生产用：文件库。父目录不存在时自动创建（spec §8.1 的 `%APPDATA%/time-scope/`）。
+/// 生产用：文件库。父目录不存在时自动创建（目录由 app 层决定：exe 同目录的 `time-scope-data\`）。
 pub fn open_file(path: &Path) -> rusqlite::Result<Connection> {
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {

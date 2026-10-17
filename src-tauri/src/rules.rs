@@ -16,13 +16,12 @@ pub enum RulesSource {
     FellBackToDefault,
 }
 
-pub fn app_dir() -> PathBuf {
-    let appdata = std::env::var("APPDATA").expect("APPDATA env var");
-    PathBuf::from(appdata).join("time-scope")
-}
-
+/// `rules.toml` 的路径 —— 与库、`config.toml` 同目录。
+///
+/// 目录本身由 `config::data_dir()` 一处决定（这里曾经重复实现过一遍 `app_dir()`，
+/// 改位置得记着改两处）。
 pub fn rules_path() -> PathBuf {
-    app_dir().join("rules.toml")
+    crate::config::data_dir().join("rules.toml")
 }
 
 /// 从 raw `rules.toml` 文本里找「已经给这个进程名配过类别」的那条，返回它的 category。
@@ -278,7 +277,7 @@ mod tests {
     fn rules_path_sits_next_to_the_database() {
         let p = rules_path();
         assert_eq!(p.file_name().unwrap(), "rules.toml");
-        assert_eq!(p.parent().unwrap(), app_dir().as_path());
+        assert_eq!(p.parent().unwrap(), crate::config::data_dir().as_path());
     }
 
     // ---- append_rule：设置页「加规则」的写回 ----

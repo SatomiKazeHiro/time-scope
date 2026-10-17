@@ -228,7 +228,7 @@ fn file_name_lower(p: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// 内置默认规则。首次启动时由 app 层拷到 `%APPDATA%/time-scope/rules.toml`。
+/// 内置默认规则。首次启动时由 app 层拷到 数据目录下的 `rules.toml`（exe 同目录的 `time-scope-data\`）。
 /// **只作为兜底**——用户改了之后以用户的文件为准（spec §7.2）。
 pub const DEFAULT_RULES_TOML: &str = r#"
 # Time Scope 分类规则

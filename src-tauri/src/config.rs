@@ -298,13 +298,46 @@ pub fn parse(src: &str) -> AppConfig {
     }
 }
 
-pub fn app_dir() -> PathBuf {
-    let appdata = std::env::var("APPDATA").expect("APPDATA env var");
-    PathBuf::from(appdata).join("time-scope")
+/// 数据目录的名字。**有前缀**，放在 exe 旁边一眼能认出是谁生成的，
+/// 也不会和别人的 `data\` 撞（2026-10-17 用户要求）。
+pub const DATA_DIR_NAME: &str = "time-scope-data";
+
+/// 库 / `config.toml` / `rules.toml` 住哪 —— **exe 所在目录下的 `time-scope-data\`**。
+///
+/// 一条规则：**程序在哪，账本就在哪**。不区分「安装版 / 便携版」——
+/// 它们是同一个软件，凭什么走两条路。拷贝一份 exe 到 U 盘，账本跟着走；
+/// 删掉目录 = 连数据一起删，这才是「便携」该有的样子。
+///
+/// 唯一例外是 `TIME_SCOPE_DATA` 显式覆盖：开发时把库指到别处（别让 dev
+/// 写真实账本）、或者你想把账本放在另一块盘上。它是一个开关，不是一条分支。
+///
+/// **前提**：exe 所在目录必须可写。用默认的 NSIS 安装（`installMode:
+/// currentUser`）它就在用户目录下，可写；但如果装进 `C:\Program Files`
+/// （per-machine 安装 / MSI），普通用户**写不进去** —— 那时启动会在
+/// 「建目录」这一步失败并弹出带路径的说明，而不是悄悄把数据放到别处。
+pub fn data_dir() -> PathBuf {
+    resolve_data_dir(std::env::var_os("TIME_SCOPE_DATA"), exe_dir().as_deref())
+}
+
+/// 纯逻辑部分（好测）：给定覆盖值与 exe 目录，算出数据目录。
+fn resolve_data_dir(override_dir: Option<std::ffi::OsString>, exe_dir: Option<&Path>) -> PathBuf {
+    if let Some(dir) = override_dir {
+        let p = PathBuf::from(dir);
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+    let base = exe_dir.expect("取不到 exe 所在目录（current_exe）—— 无法确定数据该放哪");
+    base.join(DATA_DIR_NAME)
+}
+
+fn exe_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.parent().map(Path::to_path_buf)
 }
 
 pub fn config_path() -> PathBuf {
-    app_dir().join("config.toml")
+    data_dir().join("config.toml")
 }
 
 /// 读配置；文件不存在则写默认模板。
@@ -879,6 +912,54 @@ mod retention_tests {
         assert!(render_value("autostart", "yes").is_err());
         assert!(render_value("close_behavior", "explode").is_err());
         assert!(render_value("no_such_key", "1").is_err(), "未知键必须拒绝");
+    }
+
+    // --- 数据目录：exe 旁边，一条规则（2026-10-17）---
+
+    #[test]
+    fn data_dir_sits_next_to_the_executable() {
+        // 一条规则：程序在哪，账本就在哪。不分安装版/便携版。
+        let dir = resolve_data_dir(None, Some(std::path::Path::new(r"D:\tools\时迹")));
+        assert_eq!(dir, std::path::PathBuf::from(r"D:\tools\时迹\time-scope-data"));
+    }
+
+    #[test]
+    fn the_data_dir_name_has_a_prefix_so_it_is_never_ambiguous() {
+        // 用户要求：别叫 `data` —— 目录里可能已经有一个 `data`；
+        // 而且看见 `time-scope-data` 就知道是谁生成的。
+        assert_eq!(DATA_DIR_NAME, "time-scope-data");
+        assert!(!DATA_DIR_NAME.is_empty());
+    }
+
+    #[test]
+    fn time_scope_data_overrides_the_exe_directory() {
+        let dir = resolve_data_dir(
+            Some(std::ffi::OsString::from(r"D:\ledgers\ts")),
+            Some(std::path::Path::new(r"C:\Program Files\时迹")),
+        );
+        assert_eq!(
+            dir,
+            std::path::PathBuf::from(r"D:\ledgers\ts"),
+            "显式覆盖必须优先 —— 这是给「放别的盘」「开发时别碰真实账本」用的"
+        );
+    }
+
+    #[test]
+    fn an_empty_override_is_ignored() {
+        // 环境变量存在但为空（`$env:TIME_SCOPE_DATA = ""`）不该把目录解析成空路径
+        let dir = resolve_data_dir(
+            Some(std::ffi::OsString::from("")),
+            Some(std::path::Path::new(r"D:\tools\时迹")),
+        );
+        assert_eq!(dir, std::path::PathBuf::from(r"D:\tools\时迹\time-scope-data"));
+    }
+
+    #[test]
+    fn missing_exe_dir_is_a_loud_failure() {
+        // 解析不出 exe 目录时**不静默落到当前工作目录** —— 那会让账本出现在
+        // 随机位置（比如从快捷方式启动时的 system32）。宁可在这里炸。
+        let r = std::panic::catch_unwind(|| resolve_data_dir(None, None));
+        assert!(r.is_err(), "没有 exe 目录时必须报错，不能悄悄换地方");
     }
 
     // --- 「改完要不要重启」的诚实性（2026-10-15）---

@@ -32,7 +32,7 @@ Windows 事件/输入 ─▶ collector ─▶ Event ─▶ SQLite(WAL)
 **行为参数**是 `config.toml` 的六个字段，其中两项立刻生效、
 四项要重启才生效（界面上标出来了）。
 
-`rules.toml` 在 `%APPDATA%/time-scope/`，首次启动自动生成 16 条默认规则，
+`rules.toml` 在**数据目录**里（见下），首次启动自动生成 16 条默认规则，
 可自由编辑。改坏了也不会崩——退回内置默认并保留你的文件。
 
 窗口标题在**入库前**按同一文件里的 `[[redact]]` 正则脱敏（默认不预置规则，需自己按需添加；写正则要用 TOML 单引号）：
@@ -44,7 +44,7 @@ pattern = '客户\d+'
 
 托盘常驻、开机自启（默认关）、单实例、锁屏采集、行为参数配置化均已完成。
 
-行为参数在 `%APPDATA%/time-scope/config.toml`（首次启动自动生成；坏了会用默认值，且**不覆盖**你的文件）：
+行为参数在数据目录的 `config.toml`（首次启动自动生成；坏了会用默认值，且**不覆盖**你的文件）：
 
 ```toml
 idle_threshold_s = 300   # 无输入多少秒算空闲（最小 10）
@@ -84,7 +84,28 @@ pnpm install
 pnpm tauri dev
 ```
 
-首次运行会在 `%APPDATA%\time-scope\time-scope.db` 建库。
+首次运行会在**数据目录**建库。
+
+## 数据在哪
+
+**exe 所在目录下的 `time-scope-data\`** —— 一条规则，不区分「安装版 / 便携版」：
+程序在哪，账本就在哪。启动日志第二行会打印这个绝对路径。
+
+```
+<exe 所在目录>\time-scope-data\
+  time-scope.db     库（含 -wal / -shm）
+  config.toml       行为参数
+  rules.toml        分类规则
+```
+
+- 目录名**有前缀**（不是 `data`）：不会和目录里已有的 `data\` 撞，也一眼看得出是谁生成的
+- 拷贝一份 exe 到别处 = 一份独立的账本；删掉目录 = 连数据一起删
+- **前提**：exe 所在目录必须可写。默认的 NSIS 安装是「当前用户」安装，
+  落在用户目录下，可写；**装进 `C:\Program Files` 就写不进去了**（那是 Windows 的权限规则，
+  不是产品选择）—— 那种情况启动会直接报错并说明，不会悄悄把数据换个地方
+- 想放到别的盘 / 别处：设环境变量 `TIME_SCOPE_DATA=<绝对路径>`。
+  开发时也建议这么用（`pnpm tauri dev` 的 exe 在 `src-tauri\target\debug\`，
+  数据会跟着落进去，`cargo clean` 会一并删掉）
 
 ## 测试
 

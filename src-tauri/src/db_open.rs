@@ -109,7 +109,10 @@ fn next_step(err: &rusqlite::Error) -> &'static str {
     match code {
         Some(ErrorCode::DiskFull) => "磁盘满了。清理出一些空间后重新启动 Time Scope。",
         Some(ErrorCode::ReadOnly | ErrorCode::PermissionDenied) => {
-            "没有写入权限。确认 %APPDATA%\\time-scope 目录可写，或以管理员身份运行一次。"
+            "没有写入权限。确认 exe 同目录下的 time-scope-data\\ 可写 —— \
+             如果程序装在 C:\\Program Files 里，普通用户写不进去：改用默认的 \
+             当前用户安装（NSIS installMode = currentUser），或用 TIME_SCOPE_DATA \
+             把数据目录指到别处。"
         }
         Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => {
             "数据库正被另一个进程占用。关掉可能残留的 Time Scope 进程（任务管理器里看），\
@@ -122,7 +125,7 @@ fn next_step(err: &rusqlite::Error) -> &'static str {
         // 打不开（目录不存在 / 路径是个目录 / 被别的程序占着但没报 busy）：
         // 剩下的可能都提一句，别按消息里的英文关键词去赌是哪一种
         _ => {
-            "检查 %APPDATA%\\time-scope\\ 目录是否存在且可写；\
+            "检查 exe 同目录下的 time-scope-data\\ 是否存在且可写；\
              若是文件损坏，把它改名备份后重启。"
         }
     }
