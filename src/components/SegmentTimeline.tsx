@@ -13,28 +13,21 @@ import type { Category, Segment } from "../types";
 const DAY_MS = 86_400_000;
 const WIDTH = 1000;
 const TRACK_H = 64;
-/** 底部刻度尺高度。游标和刻度都长在这条带上，不压数据。
-    8 单位（约 9px）已经够读出疏密，再高就成了和数据抢戏的装饰品。 */
+/** 底部刻度尺高度：游标与刻度都长在这条带上，不压数据。 */
 const RULER_H = 8;
 const SVG_H = TRACK_H + RULER_H;
 const MINUTES_PER_DAY = 24 * 60;
 const MINUTE_MS = 60_000;
 
 /**
- * 极短段也要看得见：0 宽的 rect 等于没画，用户会以为数据丢了。
- *
- * 2.5 单位 ≈ 铺满时 3px。真实的采集结果一天有上百个 1–3 分钟的短段，
- * 1 单位（≈1.2px）在两个主题里都只是发丝线，读起来像渲染噪点而不是数据。
- * 代价是最短的那批段被画得比实际宽 —— 与其看不见，宁可略失真。
+ * 极短段也要看得见：0 宽的 rect 等于没画。2.5 单位约 3px —— 1 单位只是发丝线，
+ * 读起来像渲染噪点。代价是短段被画得比实际宽，宁可略失真。
  */
 const MIN_WIDTH = 2.5;
 /**
- * 两种缝，分得很要紧：
- *
- *  - `GAP` 不同活动段之间。1.5 单位，让"这里结束、那里开始"读得出来。
- *  - `SPLIT_GAP` 首尾相接、又是同一类别的相邻段之间。1 单位，更细 ——
- *    那不是活动边界，只是引擎把它们分成了两段（比如标题变了），
- *    视觉上应该读成"同一个活动的两截"而不是"两件事"。
+ * 两种缝：`GAP` 是不同活动之间（读得出「这里结束、那里开始」）；
+ * `SPLIT_GAP` 更细，用于首尾相接的同类别段 —— 那不是活动边界，
+ * 只是引擎因标题变化把同一段切成了两截。
  */
 const GAP = 1.5;
 const SPLIT_GAP = 1;
@@ -118,22 +111,13 @@ function clockOf(ms: number): string {
 const NAV_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
 
 /**
- * 可聚焦色块的公共契约（B8）。
+ * 可聚焦色块的公共契约：`role="button"` + `aria-label` + Enter/Space 触发
+ * （只有 `onClick` 的元素对键盘等于死的）。
  *
- * 时间线上"点一块看详情"是核心操作，所以每个色块都必须：
- * `role="button"`（读屏知道它是可激活的）、可聚焦、`aria-label`
- * （把时间/类别/时长念出来）、Enter/Space 触发（只有 `onClick` 的
- * 元素对键盘等于死的）。
+ * 用 roving tabindex：一天有上百个段，全都 `tabIndex=0` 的话键盘用户要按上百次
+ * 才能穿过时间线。整条线只有当前那一个是 `0`，方向键在格子间移动。
  *
- * 可聚焦 ≠ 每个都占一个 Tab 位。 真实的一天有 125 个段、指标模式下
- * 最多 144 个桶，全都 `tabIndex=0` 的话，键盘用户要按 125 次才能穿过
- * 时间线，点完色块按 Tab 也一样出不来。所以用 roving tabindex：
- * 整条时间线只有当前那一个是 `0`，其余是 `-1`，方向键在色块间移动
- * （标准模式，见 WAI-ARIA 的 Composite Widget）。
- *
- * 焦点样式不在这里定：全局 `:focus-visible` 已经给了 2px 中性亮环
- * （theme.css；MASTER 记着「不用浏览器默认蓝环，蓝是 work 的色相」），
- * 这里再画一遍就会叠成两条环。
+ * 焦点环不在这里画：全局 `:focus-visible` 已给 2px 中性环，再画会叠成两条。
  */
 function cellA11yProps(opts: {
   label: string;
@@ -190,17 +174,13 @@ function bucketLabel(b: BucketMetric, metric: MetricMode): string {
 }
 
 /**
- * 24h 横向时间线：每个 ActivitySegment 一个矩形，按 category 着色，宽度正比于时长。
+ * 24h 横向时间线：每个段一个矩形，宽度正比于时长。viewBox + width:100%，
+ * 容器再窄也不会把 x/width 算坏。
  *
- * 用 viewBox + width:100%，容器再窄（高 DPI、小窗口）也不会把 x/width 算坏。
+ * 文字一律走 HTML 覆盖层，不进 SVG：`preserveAspectRatio="none"` 会把 viewBox
+ * 非等比拉伸，里面的 <text> 会跟着横向变形。
  *
- * 所有文字都走 HTML 覆盖层，不放进 SVG。 `preserveAspectRatio="none"` 会把
- * viewBox 非等比拉伸，放进去的 <text> 会跟着横向变形。轨道本身仍留在 SVG 里，
- * 因为它就是需要铺满宽度的色块。
- *
- * 轨道是可见的。 之前轨道背景与面板同色，浅色下三者是同一个白 ——
- * 于是"这段没活动"和"这里什么都没画"读起来一模一样，整条时间线没有边框可依。
- * 现在轨道用 surface-2 + 描边 + 圆角，空白时段明确读作"无活动"。
+ * 轨道要可见（surface-2 + 描边）：与面板同色时「没活动」和「没画」读起来一样。
  */
 export default function SegmentTimeline({
   segments,
@@ -213,13 +193,9 @@ export default function SegmentTimeline({
   metric = "category",
 }: Props) {
   const [hoverX, setHoverX] = useState<number | null>(null);
-  // `hoverIndex` 的含义跟着模式变：类别模式下是段下标，指标模式下
-  // 是桶下标。而鼠标悬停着不动时，键盘切模式/粒度不会触发 onMouseLeave，
-  // 旧下标就原样留着 —— 于是指标模式下拿「第 120 段」当「第 120 桶」去读，
-  // 报出来的是另一个时间范围的数值（B9）。语义一变就清掉。
-  //
-  // 故意不把 `segments` 放进依赖：App 每 5 秒轮询一次，每次都是新的
-  // 数组，挂上它会让悬停提示每 5 秒消失一次 —— 那比它要修的问题更招摇。
+  // `hoverIndex` 的含义随模式变（段下标 / 桶下标）。切模式时旧下标会按新语义
+  // 被读成另一段时间（B9），所以语义一变就清掉。
+  // 不把 `segments` 放进依赖：5 秒轮询会换新数组，悬停提示会跟着闪。
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   useEffect(() => {
     setHoverX(null);
@@ -232,13 +208,9 @@ export default function SegmentTimeline({
   );
 
   /**
-   * 方向键可以走过的格子下标（roving tabindex 的行走序列）。
-   *
-   * 只收有内容的格子：指标模式下没有任何活动的格子属于「空白区 /
-   * 未监测」，不是一段活动 —— 方向键走过去没东西可看。
-   * 判据是 `readout !== "empty"`，不是「有没有涂色」：
-   * 专注度模式把「全是空闲」也涂成空，而全空闲那段是有数据的
-   * （读屏念得出「这段时间是空闲」），不该跳。
+   * 方向键能走到的格子下标。只收有内容的格子：空桶是「未监测」，走过去没东西可看。
+   * 判据是 `readout !== "empty"` 而不是「有没有涂色」——专注度模式把全空闲也涂成空，
+   * 但那格有数据（读屏念得出「这段时间是空闲」）。
    */
   const walkable = useMemo(() => {
     if (metric === "category") return Array.from({ length: segments.length }, (_, i) => i);
@@ -249,9 +221,8 @@ export default function SegmentTimeline({
   }, [metric, buckets, segments.length]);
 
   const [roving, setRoving] = useState(0);
-  // 格的列表变了（切模式/切粒度）就复位 —— 否则下标会指向不存在或
-  // 含义已变的格子。故意不依赖 `segments`：App 每 5 秒轮询一次，
-  // 挂上它会让用户正走着的焦点被反复重置。
+  // 切模式/粒度就复位：下标会指向不存在或含义已变的格子。
+  // 不依赖 `segments`，否则 5 秒轮询会把用户走着的焦点反复重置。
   useEffect(() => {
     setRoving(0);
   }, [metric, intervalMs]);
@@ -302,18 +273,15 @@ export default function SegmentTimeline({
   const isMetric = metric !== "category";
 
   /**
-   * 类别模式：一个段就是一个色块，不按桶切。
-   *
-   * 段是引擎判定的活动边界，它是什么就是什么 —— 按时间格切一刀只会把一段
-   * 连续活动切碎，既不增加信息（宽度已经表示时长），又让"这段到底多长"
-   * 变得要靠心算。粒度在类别模式下只管底部的刻度尺。
+   * 类别模式：一个段一个色块，不按桶切 —— 段是引擎判定的活动边界，
+   * 切碎既不增加信息（宽度已经表示时长），又让「这段多长」要靠心算。
+   * 粒度在这种模式下只管底部刻度尺。
    */
   const placed: Placed[] = segments.map((s, i) => {
     const start = Math.max(s.startAt, dayStartMs);
     const end = Math.min(s.endAt, dayEnd);
-    // 只挡倒挂段（end < start）。负宽度会让 x 飞到视图外把轨道画歪。
-    // 零长段（end === start）要走正常路径拿 MIN_WIDTH 缝隙 —— 那是一个真实事件，
-    // 画成 0 宽用户会以为数据丢了，这正是最早那条测试守住的东西。
+    // 只挡倒挂段（负宽度会把轨道画歪）。零长段走正常路径拿 MIN_WIDTH ——
+    // 那是真实事件，画成 0 宽会被当成数据丢了。
     if (end < start) {
       return {
         seg: s,
@@ -344,13 +312,9 @@ export default function SegmentTimeline({
   /** 指标模式下，一个桶就是一个色块。 */
   const bucketCells = buckets.map((b, i) => {
     const rawW = WIDTH / buckets.length;
-    // 专注度模式下不涂色的情况：这一格没有可读的数 —— 桶里没活动（既不是专注
-    // 也不是分心，是"没在工作"），或者完全没动（涂最低档会被读成"在做事但
-    // 很分心"，那是假的）。判据由 `metrics.ts` 一处给出（`readout`）。
-    // 注意 `no-input` 与「历史数据没有这个量」不同：后者照常涂色（详见 metrics.ts）。
-    //
-    // 切换模式不看 `readout`：全空闲的桶确实发生过「没换过程序」，
-    // 那是最低档而不是空 —— 空与「值为 0」是两件事。
+    // 专注度模式下没涂色 = 这一格没有可读的数（空桶或完全没动）。判据由
+    // `metrics.ts` 的 `readout` 一处给出；`no-input` 与「历史数据没这个量」不同，
+    // 后者照常涂色。切换模式不看 readout：全空闲确实「没换过程序」，那是 0 档不是空。
     const blank = b.readout === "empty" || (metric === "focus" && b.readout !== "value");
     const step = metric === "focus" ? focusStep(b.focus) : switchStep(b.switches);
     return {
