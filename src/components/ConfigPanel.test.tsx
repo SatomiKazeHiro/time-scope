@@ -16,7 +16,6 @@ const CFG = {
   // 后端给的判定。角标读它，前端自己不再列一份。
   needsRestart: {
     idle_threshold_s: true,
-    grace_period_s: true,
     min_segment_duration_s: true,
     heartbeat_every_s: true,
     events_retention_days: false,
@@ -48,13 +47,14 @@ describe("ConfigPanel", () => {
     render(<ConfigPanel />);
     await waitFor(() => expect(screen.getByDisplayValue("300")).toBeTruthy());
 
-    // 五个：四个绑在采集线程/EngineConfig 上，加一个开机自启 ——
-    // 它的托盘勾选态与系统注册表都是启动时定的，set_config 碰不到。
+    // 四个：三个绑在采集线程/EngineConfig 上（空闲阈值、短段门槛、心跳窗口），
+    // 加一个开机自启 —— 它的托盘勾选态与系统注册表都是启动时定的，
+    // set_config 碰不到。
     // 不标的话用户会以为界面坏了 —— 这是「读数就该长得像读数」的延伸。
     const marks = Array.from(document.querySelectorAll("dt")).filter((dt) =>
       dt.textContent?.includes("重启后生效"),
     );
-    expect(marks.length).toBe(5);
+    expect(marks.length).toBe(4);
   });
 
   it("热生效的项不标重启 —— 标了就成了假警告", async () => {

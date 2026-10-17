@@ -1,6 +1,7 @@
 use crate::classifier::RuleSet;
 use crate::config::EngineConfig;
 use crate::context::ContextBuilder;
+use crate::normalize;
 use crate::{ActivityContext, ActivitySegment, Category, OpenSegment, CLASSIFIER_RULE};
 use activity_core::{Event, EventType};
 
@@ -10,16 +11,12 @@ pub struct EngineState {
     pub current_segment: Option<OpenSegment>,
     pub current_context: Option<ActivityContext>,
     pub is_idle: bool,
-    /// 已切掉但还没到"可落库年龄"的段。
-    /// 同时是 grace 抖动时**可回溯复活**的来源——已落库的段无法复活。
-    pub pending: Vec<ActivitySegment>,
-    /// 上一次**真正**切段时离开的那个应用。spec §7.3 的"再前一个"就是它。
+    /// 已关闭、但**还可能被下一个段并掉**的那一段。
     ///
-    /// 必须独立于 `pending`：`min_segment_duration = 0` 时 pending 会被立刻清空，
-    /// 若拿它当"再前一个"，grace 判定就永远失效。
-    pub previous_application: Option<String>,
-    /// 上一次**真正**切段的时刻。被判为抖动的吸收不更新它。
-    pub last_switch_at: Option<i64>,
+    /// 归一化只需要一段前瞻：短段要并进前驱（前驱已知），或并进后继（等下一条）。
+    /// 所以这里最多一个段 —— 不再是旧版那个需要保持时间序的 `pending` 列表，
+    /// 也就没有「顺序被打乱 → 复活错误的那一段」（A1）那类问题。
+    pub tail: Option<ActivitySegment>,
 }
 
 impl EngineState {
@@ -124,6 +121,9 @@ pub fn reduce(
     new_ctx.is_idle = st.is_idle;
     ContextBuilder::apply(&mut new_ctx, event);
 
+    // 本次 reduce 里刚关闭的段：交给下面的归一化步骤，不直接落库
+    let mut just_closed: Vec<ActivitySegment> = Vec::new();
+
     match event.event_type {
         // --- idle 分支 ---
         EventType::SystemIdle | EventType::SessionLock => {
@@ -134,18 +134,21 @@ pub fn reduce(
                     extend(&mut st, cur, ts, event.id.clone(), config);
                 }
                 _ => {
-                    close_current(&mut st, rules, ts, config);
+                    if let Some(seg) = close_current(&mut st, rules, ts, config) {
+                        just_closed.push(seg);
+                    }
                     let mut open = new_open_segment(ts, Category::Idle, None, 0.0);
                     open.evidence_event_ids.push(event.id.clone());
                     st.current_segment = Some(open);
                     st.current_context = Some(new_ctx);
-                    st.last_switch_at = Some(ts);
                 }
             }
         }
         EventType::SystemResume | EventType::SessionUnlock => {
             // idle 段在 resume 时收尾；下一条事件会开新的 context 段
-            close_current(&mut st, rules, ts, config);
+            if let Some(seg) = close_current(&mut st, rules, ts, config) {
+                just_closed.push(seg);
+            }
             st.current_context = Some(new_ctx);
         }
         // --- context 分支 ---
@@ -172,7 +175,6 @@ pub fn reduce(
                         );
                         open.evidence_event_ids.push(event.id.clone());
                         st.current_segment = Some(open);
-                        st.last_switch_at = Some(ts);
                     }
                 }
                 Some(cur) => {
@@ -184,16 +186,15 @@ pub fn reduce(
 
                     // **空档守卫在这里生效**：跨过观测空档时，
                     // 当前段在自己的最后一条证据处收尾，这条事件另开一段。
-                    // 放在 extend/absorb **之前**判定，是因为那两条路都会把段
-                    // 用 `max(ts)` 拉到下一条事件 —— 那正是凭空造时间的入口。
+                    // 放在 extend 之前判定，因为 extend 会把段用 `max(ts)`
+                    // 拉到下一条事件 —— 那正是凭空造时间的入口。
                     let crossed_gap = crossed_observation_gap(cur.last_evidence_at, ts, config);
                     if same && !crossed_gap {
                         extend(&mut st, cur, ts, event.id.clone(), config);
-                    } else if is_absorption(&st, &new_ctx, ts, config) && !crossed_gap {
-                        absorb(&mut st, ts, event.id.clone(), config);
                     } else {
-                        close_current(&mut st, rules, ts, config);
-                        st.previous_application = cur.application.clone();
+                        if let Some(seg) = close_current(&mut st, rules, ts, config) {
+                            just_closed.push(seg);
+                        }
                         let mut open = new_open_segment(
                             ts,
                             category,
@@ -202,7 +203,6 @@ pub fn reduce(
                         );
                         open.evidence_event_ids.push(event.id.clone());
                         st.current_segment = Some(open);
-                        st.last_switch_at = Some(ts);
                     }
                 }
             }
@@ -210,162 +210,36 @@ pub fn reduce(
         }
     }
 
-    // 3. 释放够老的 pending 段，并把过短的段并进相邻的长段（spec §7.3）
-    let hold_ms = (config
-        .min_segment_duration_s
-        .max(config.grace_period_s) as i64)
-        * 1000;
-    let mut ready: Vec<ActivitySegment> = Vec::new();
-    let mut still: Vec<ActivitySegment> = Vec::new();
-    for seg in st.pending.drain(..) {
-        if ts - seg.end_at >= hold_ms {
-            ready.push(seg);
-        } else {
-            still.push(seg);
-        }
-    }
-    let still_empty = still.is_empty();
-    st.pending = still;
-
+    // 3. 归一化：短段并进邻居、相邻同类段合并，攒够的段定稿放行。
+    //
+    // 这一步取代了旧版「等 hold_ms 的 pending 队列 + fold 短段合并」两段流水。
+    // 现在只有一条缓冲（`st.tail`）与两条规则，规则本身住在 `normalize.rs`。
     let min_ms = (config.min_segment_duration_s as i64) * 1000;
-    // 上限：等了两轮落库门槛还没等到长邻居，就认了、原样放出去，
-    // 免得一个孤立的短段永远卡在 pending 里。
-    let give_up_ms = hold_ms * 3;
-    let pending_empty = still_empty;
-    let (mut closed, keep, open_after) = fold_short_segments(
-        ready,
-        st.current_segment.take(),
-        min_ms,
-        ts,
-        give_up_ms,
-        pending_empty,
-    );
-    st.current_segment = open_after;
-    st.pending.extend(keep);
-    // `keep` 是比 `still` **更老**的段，append 到末尾会打乱时间序。
-    // pending 的不变量是"按时间有序"：`fold_short_segments` 靠下标找前驱/后继，
-    // `absorb` 也靠它认"刚离开的那一段"。A1：顺序一破，absorb 会复活错误的那一段。
-    st.pending.sort_by_key(|s| s.start_at);
+    let mut closed: Vec<ActivitySegment> = Vec::new();
+    if min_ms == 0 {
+        // 0 = 关掉归一化（与旧语义一致：段一关闭就立即可落库）
+        closed.append(&mut just_closed);
+        if let Some(t) = st.tail.take() {
+            closed.push(t);
+        }
+    } else {
+        for seg in just_closed {
+            normalize::settle(&mut st.tail, &mut closed, seg, min_ms);
+        }
+        // 把缓冲里的段并进正在生长的当前段：切回来（同应用）或前驱太短
+        // 又没有更前面的段可并（并进后继）。必须在「超时释放」之前做。
+        if let Some(open) = st.current_segment.as_mut() {
+            normalize::absorb_tail_into_open(&mut st.tail, open, min_ms);
+        }
+        // 等不到后继的尾巴也要定稿，否则数据永远不落库
+        normalize::release_if_stale(&mut st.tail, &mut closed, ts, min_ms);
+    }
     closed.sort_by_key(|s| s.start_at);
 
     EngineOutput {
         state: st,
         closed_segments: closed,
     }
-}
-
-/// 把短于 `min_ms` 的段并进相邻的长段（spec §7.3 的 min_segment_duration）。
-///
-/// 为什么必须在这里做：段一旦落库就改不了。裁定 A 只是把落库**往后推**，
-/// 并没有实现"并入"——本函数才是那一半。
-///
-/// 规则：
-/// - 优先并入**前驱**长段；没有前驱则并入**后继**长段
-/// - 正在生长的当前段也可作为后继目标，但**仅当**该短段是 ready 的最后一个
-///   且没有别的段还卡在 pending 里——否则会跨过中间那段时间被并错
-/// - 两侧都找不到长邻居时**放回 pending 等下一轮**，而不是硬并（宁可不并，不可并错）
-/// - 等满 `give_up_ms` 仍无邻居，则原样放行
-pub(crate) fn fold_short_segments(
-    ready: Vec<ActivitySegment>,
-    mut open: Option<OpenSegment>,
-    min_ms: i64,
-    now: i64,
-    give_up_ms: i64,
-    pending_empty: bool,
-) -> (Vec<ActivitySegment>, Vec<ActivitySegment>, Option<OpenSegment>) {
-    if ready.is_empty() {
-        return (Vec::new(), Vec::new(), open);
-    }
-    let is_long = |s: &ActivitySegment| (s.end_at - s.start_at) >= min_ms;
-    let long_positions: Vec<usize> = ready
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| is_long(s))
-        .map(|(i, _)| i)
-        .collect();
-
-    let mut out = ready.clone();
-    let mut dropped: Vec<usize> = Vec::new();
-    let mut keep: Vec<ActivitySegment> = Vec::new();
-
-    for (i, seg) in ready.iter().enumerate() {
-        if is_long(seg) {
-            continue;
-        }
-        let prev = long_positions.iter().rev().find(|p| **p < i).copied();
-        let next = long_positions.iter().find(|p| **p > i).copied();
-
-        if let Some(t) = prev.or(next) {
-            // **必须真的紧邻才并**（B12）。`prev`/`next` 是按**下标**找的，
-            // 而 `ready` 的顺序只在 pending 有序时才等于时间序；两者一旦
-            // 不一致，下标邻居可能隔着几分钟空档。`merge_into` 取
-            // min/max 会把那段空档一起吞进来 —— 空档被记成了 work。
-            // 宁可不并（退回 pending 等下一轮），不可凭空造出时间。
-            if mergeable(&out[t], seg) {
-                merge_into(&mut out[t], seg);
-                dropped.push(i);
-                continue;
-            }
-        }
-
-        // 唯一的候选是正在生长的段。三个条件缺一不可：
-        //   - 它是 ready 的最后一个，且没有别的段还卡在 pending 里
-        //   - **它与 open 真正相邻**（相交或首尾相接）
-        //
-        // 第二个条件原来没有（B12 的 `mergeable` 有，这里漏了），
-        // 于是 `o.start_at = min(...)` 会把正在生长的段**往前拽**，
-        // 拽过中间那些已经 release 出去的段 —— 产出重叠，
-        // 而且全库的重叠基本都来自这一行。
-        //
-        // 证据：把这一行改成 no-op（不往前拽）后，真实数据 8 天全部
-        // **重叠 0 处**，时长还从 22.34h 降到 21.63h（不再凭空造时间）。
-        if open.is_some() && i + 1 == ready.len() && pending_empty {
-            let adjacent = open
-                .as_ref()
-                .is_some_and(|o| seg.end_at >= o.start_at && seg.start_at <= o.end_at);
-            if let (Some(o), true) = (open.as_mut(), adjacent) {
-                o.start_at = o.start_at.min(seg.start_at);
-                o.evidence_event_ids.splice(0..0, seg.evidence_event_ids.clone());
-                dropped.push(i);
-                continue;
-            }
-            // 不相邻就不并：退回 pending 等下一轮有更合适的邻居。
-            // 与 `mergeable` 失败时的取舍同款 —— 宁可不并，不可凭空造时间。
-        }
-
-        // 等下一轮再看有没有长邻居出现
-        if now - seg.end_at < give_up_ms {
-            keep.push(seg.clone());
-            dropped.push(i);
-        }
-        // 否则原样放行（不进 dropped）
-    }
-
-    let closed = out
-        .into_iter()
-        .enumerate()
-        .filter(|(i, _)| !dropped.contains(i))
-        .map(|(_, s)| s)
-        .collect();
-    (closed, keep, open)
-}
-
-/// 这两段能不能并进同一段里（B12）。**两个条件都要满足**：
-///
-/// 1. **时间上相邻**（相交或首尾相接）。否则 `merge_into` 的 min/max 会把
-///    中间那段空档一起吞进来，凭空造出一段并不存在的时间。
-/// 2. **idle 与非 idle 不并**。idle 是"没在工作"，并进 work 段等于把空闲
-///    时间算成工作时间。
-fn mergeable(target: &ActivitySegment, extra: &ActivitySegment) -> bool {
-    let adjacent = extra.end_at >= target.start_at && extra.start_at <= target.end_at;
-    let same_idleness = (target.category == Category::Idle) == (extra.category == Category::Idle);
-    adjacent && same_idleness
-}
-
-fn merge_into(target: &mut ActivitySegment, extra: &ActivitySegment) {
-    target.start_at = target.start_at.min(extra.start_at);
-    target.end_at = target.end_at.max(extra.end_at);
-    target.evidence_event_ids.extend(extra.evidence_event_ids.clone());
 }
 
 // ===========================================================================
@@ -410,93 +284,6 @@ pub fn ranges_overlap(start: i64, end: i64, other_start: i64, other_end: i64) ->
     other_start < end && start < other_end
 }
 
-/// spec §7.3 的 grace 判定：距上次切换在宽限窗口内，**且新 context 与"再前一个"相同**。
-///
-/// 附加条件：前一段还留在 `pending` 里（没落库）。已落库的段无法复活，
-/// 那时再判定为抖动也来不及了——落库门槛是 `max(min_segment_duration, grace_period)`，
-/// 正好覆盖整个宽限窗口，所以正常情况下这个条件恒成立。
-fn is_absorption(
-    st: &EngineState,
-    new_ctx: &ActivityContext,
-    ts: i64,
-    config: &EngineConfig,
-) -> bool {
-    if st.previous_application.as_deref() != new_ctx.application.as_deref() {
-        return false;
-    }
-    let revisitable = absorption_candidate(st)
-        .map(|p| p.application == st.previous_application)
-        .unwrap_or(false);
-    if !revisitable {
-        return false;
-    }
-    st.last_switch_at
-        // 只认**向前**的间隔。原来写 `(ts - t).abs()`，于是时钟回退
-        // （系统时间被校正、NTP 跳变）也会落进宽限窗口被判成抖动 ——
-        // 而 `absorb` 的 `prev.end_at = max(prev.end_at, ts)` 不会把被丢弃段
-        // 的末尾补回来，那段时间就从账本上整个消失（B10）。
-        .map(|t| ts >= t && ts - t < (config.grace_period_s as i64) * 1000)
-        .unwrap_or(false)
-}
-
-/// 抖动吸收要复活的那一段在 `pending` 里的下标：**时间上紧邻当前段的前驱**
-/// （`end_at` 最大且 `<= 当前段起点`）。
-///
-/// 曾经写成 `pending.last()` —— 那是"假定 pending 按时间排序、且末位就是刚离开的那段"。
-/// A1：`keep` 段（够老但无长邻居的更老短段）会 append 到 pending 末尾，把顺序打破，
-/// 于是这里取到十几秒前的老段，拉到当前时刻就**产出互相重叠的段**。
-/// 按"相邻"定位而不是按位置猜，这条路径就对顺序不敏感了。
-fn absorption_candidate_idx(st: &EngineState) -> Option<usize> {
-    let cur_start = st.current_segment.as_ref()?.start_at;
-    st.pending
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| p.end_at <= cur_start)
-        .max_by_key(|(_, p)| p.end_at)
-        .map(|(i, _)| i)
-}
-
-fn absorption_candidate(st: &EngineState) -> Option<&ActivitySegment> {
-    absorption_candidate_idx(st).map(|i| &st.pending[i])
-}
-
-/// 抖动吸收：丢弃刚开的那段（错误的 context），**复活**紧邻的前一段并延长。
-///
-/// 关键：如果只是"不切段"而把当前段留着，活下来的会是那个一闪而过的错误 context
-/// （Code -> chrome(2s) -> Code 会留下一个 chrome 段），与用户实际经历不符。
-fn absorb(st: &mut EngineState, ts: i64, evidence_id: String, config: &EngineConfig) {
-    let Some(idx) = absorption_candidate_idx(st) else {
-        return;
-    };
-    let mut prev = st.pending.remove(idx);
-    let dropped = st.current_segment.take();
-
-    // 走唯一的收尾入口。**这条路径原来没有空档守卫**（裸的 `max(ts)`），
-    // 于是它是最后一个还可能「凭空造时间」的写边界路径 ——
-    // `extend` 与 `close_current` 在 2026-10-13 都已收进 `advance_end`。
-    //
-    // 实测它不是重叠的来源（关掉 absorb 仍有 33 处重叠，重叠来自
-    // fold 的 open 分支），但「所有写边界都过同一个守卫」这条不变量
-    // 要成立，就得把它一起收进来。
-    advance_end(&mut prev.end_at, ts, ts, config);
-    prev.evidence_event_ids.push(evidence_id);
-    if let Some(d) = dropped {
-        // 被丢弃段的证据并回来，别凭空消失
-        prev.evidence_event_ids.extend(d.evidence_event_ids);
-    }
-    st.current_segment = Some(OpenSegment {
-        start_at: prev.start_at,
-        end_at: prev.end_at,
-        category: prev.category,
-        application: prev.application,
-        confidence: prev.confidence,
-        evidence_event_ids: prev.evidence_event_ids,
-        last_evidence_at: ts,
-        active_ms: prev.active_ms,
-    });
-    // 抖动不是真切换：last_switch_at 与 previous_application 都保持不动
-}
-
 fn new_open_segment(
     ts: i64,
     category: Category,
@@ -532,9 +319,7 @@ fn new_open_segment(
  * 记成 idle）；这条是「**没有观测**」（压根没事件，可能是进程没跑），
  * 正确处理是**什么都不记**，而不是补一段 idle 或 unknown。
  *
- * 这个原则在 `fold_short_segments` 里早就写着（「不可凭空造出时间」，
- * 守卫是 `mergeable()`）—— 当时只加在了短段合并路径上，
- * extend/close 这两条路径漏了。两条路径现在口径一致。
+ * 这个原则现在有两处守卫：这里（收尾）与 `normalize.rs`（合并只认首尾相接）。
  */
 fn extend(
     st: &mut EngineState,
@@ -552,14 +337,18 @@ fn extend(
     st.current_segment = Some(cur);
 }
 
-fn close_current(st: &mut EngineState, rules: &RuleSet, ts: i64, config: &EngineConfig) {
-    let Some(mut open) = st.current_segment.take() else {
-        return;
-    };
+/// 收尾当前段，返回它（交给归一化器）；没有当前段时返回 `None`。
+fn close_current(
+    st: &mut EngineState,
+    rules: &RuleSet,
+    ts: i64,
+    config: &EngineConfig,
+) -> Option<ActivitySegment> {
+    let mut open = st.current_segment.take()?;
     // 收尾以**最后一条证据**为准，而不是「这段一直活到 ts」。
     // `reduce` 里那些直接 `close_current` 的分支（切应用、resume）都过这里。
     advance_end(&mut open.end_at, open.last_evidence_at, ts, config);
-    st.pending.push(ActivitySegment {
+    Some(ActivitySegment {
         id: format!("seg-{}", open.start_at),
         start_at: open.start_at,
         end_at: open.end_at,
@@ -570,5 +359,5 @@ fn close_current(st: &mut EngineState, rules: &RuleSet, ts: i64, config: &Engine
         classifier_version: rules.version.clone(),
         evidence_event_ids: open.evidence_event_ids,
         active_ms: open.active_ms,
-    });
+    })
 }

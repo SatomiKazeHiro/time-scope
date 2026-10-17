@@ -227,7 +227,6 @@ pub fn add_rule(
 #[serde(rename_all = "camelCase")]
 pub struct ConfigOut {
     pub idle_threshold_s: u32,
-    pub grace_period_s: u32,
     pub min_segment_duration_s: u32,
     pub heartbeat_every_s: u32,
     pub autostart: bool,
@@ -244,7 +243,6 @@ pub fn get_config(state: tauri::State<'_, AppState>) -> Result<ConfigOut, String
     let cfg = config::load_or_create(&path);
     Ok(ConfigOut {
         idle_threshold_s: cfg.idle_threshold_s,
-        grace_period_s: cfg.grace_period_s,
         min_segment_duration_s: cfg.min_segment_duration_s,
         heartbeat_every_s: cfg.heartbeat_every_s,
         autostart: cfg.autostart,

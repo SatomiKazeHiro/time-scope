@@ -1,6 +1,7 @@
 pub mod classifier;
 pub mod config;
 pub mod context;
+mod normalize;
 pub mod segmenter;
 pub mod types;
 

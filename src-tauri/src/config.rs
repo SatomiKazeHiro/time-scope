@@ -105,12 +105,6 @@ pub const FIELDS: &[FieldSpec] = &[
         needs_restart: true,
     },
     FieldSpec {
-        key: "grace_period_s",
-        // 0 对这两个参数是有意义的（关掉该行为），所以下限就是 0
-        kind: FieldKind::Int { default: 60, min: 0, max: MAX_SECONDS },
-        needs_restart: true,
-    },
-    FieldSpec {
         key: "min_segment_duration_s",
         kind: FieldKind::Int { default: 30, min: 0, max: MAX_SECONDS },
         needs_restart: true,
@@ -227,8 +221,6 @@ pub struct SetOutcome {
 pub struct AppConfig {
     /// 无输入多少秒算空闲
     pub idle_threshold_s: u32,
-    /// 短暂上下文切换的宽限窗口
-    pub grace_period_s: u32,
     /// 短于此的段并入相邻段
     pub min_segment_duration_s: u32,
     /// 心跳聚合窗口
@@ -252,7 +244,6 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             idle_threshold_s: int_default("idle_threshold_s"),
-            grace_period_s: int_default("grace_period_s"),
             min_segment_duration_s: int_default("min_segment_duration_s"),
             heartbeat_every_s: int_default("heartbeat_every_s"),
             autostart: bool_default("autostart"),
@@ -267,7 +258,6 @@ impl AppConfig {
     pub fn to_engine_config(self) -> EngineConfig {
         EngineConfig::default()
             .with_idle_threshold_s(self.idle_threshold_s as u64)
-            .with_grace_period_s(self.grace_period_s as u64)
             .with_min_segment_duration_s(self.min_segment_duration_s as u64)
     }
 }
@@ -297,7 +287,6 @@ pub fn parse(src: &str) -> AppConfig {
 
     AppConfig {
         idle_threshold_s: int("idle_threshold_s").unwrap_or(d.idle_threshold_s),
-        grace_period_s: int("grace_period_s").unwrap_or(d.grace_period_s),
         min_segment_duration_s: int("min_segment_duration_s")
             .unwrap_or(d.min_segment_duration_s),
         heartbeat_every_s: int("heartbeat_every_s").unwrap_or(d.heartbeat_every_s),
@@ -414,9 +403,6 @@ pub const DEFAULT_CONFIG_TOML: &str = r#"# Time Scope 行为参数
 # 无输入多少秒判定为空闲。最小 10。
 idle_threshold_s = 300
 
-# 短暂上下文切换的宽限窗口。0 = 关掉抖动吸收。
-grace_period_s = 60
-
 # 短于这个时长的段会并入相邻段。0 = 关掉合并。
 min_segment_duration_s = 30
 
@@ -452,7 +438,6 @@ mod tests {
     fn defaults_match_the_spec() {
         let c = AppConfig::default();
         assert_eq!(c.idle_threshold_s, 300);
-        assert_eq!(c.grace_period_s, 60);
         assert_eq!(c.min_segment_duration_s, 30);
         assert_eq!(c.heartbeat_every_s, 10);
         assert!(!c.autostart);
@@ -464,7 +449,6 @@ mod tests {
         let c = parse(
             r#"
 idle_threshold_s = 120
-grace_period_s = 0
 min_segment_duration_s = 5
 heartbeat_every_s = 30
 autostart = true
@@ -472,7 +456,6 @@ close_behavior = "minimize"
 "#,
         );
         assert_eq!(c.idle_threshold_s, 120);
-        assert_eq!(c.grace_period_s, 0);
         assert_eq!(c.min_segment_duration_s, 5);
         assert_eq!(c.heartbeat_every_s, 30);
         assert!(c.autostart);
@@ -494,15 +477,15 @@ close_behavior = "minimize"
     fn missing_fields_keep_their_defaults() {
         let c = parse("idle_threshold_s = 42\n");
         assert_eq!(c.idle_threshold_s, 42, "写了的字段生效");
-        assert_eq!(c.grace_period_s, 60, "没写的字段用默认");
+        assert_eq!(c.heartbeat_every_s, 10, "没写的字段用默认");
     }
 
     #[test]
     fn a_wrongly_typed_field_falls_back_without_taking_the_file_down() {
         // 一个字段类型错，不该让其余字段也失效
-        let c = parse("idle_threshold_s = \"soon\"\ngrace_period_s = 15\n");
+        let c = parse("idle_threshold_s = \"soon\"\nheartbeat_every_s = 15\n");
         assert_eq!(c.idle_threshold_s, 300, "类型错的字段回退默认");
-        assert_eq!(c.grace_period_s, 15, "其余字段照常生效");
+        assert_eq!(c.heartbeat_every_s, 15, "其余字段照常生效");
     }
 
     #[test]
@@ -515,10 +498,10 @@ close_behavior = "minimize"
 
     #[test]
     fn zero_is_allowed_where_zero_is_meaningful() {
-        // grace=0 / min_segment=0 有明确含义（关掉该行为），不该被夹走
-        let c = parse("grace_period_s = 0\nmin_segment_duration_s = 0\n");
-        assert_eq!(c.grace_period_s, 0);
+        // min_segment=0 / retention=0 有明确含义（关掉该行为），不该被夹走
+        let c = parse("min_segment_duration_s = 0\nevents_retention_days = 0\n");
         assert_eq!(c.min_segment_duration_s, 0);
+        assert_eq!(c.events_retention_days, 0);
     }
 
     #[test]
@@ -554,7 +537,6 @@ close_behavior = "minimize"
 
         for (key, raw) in [
             ("idle_threshold_s", "120"),
-            ("grace_period_s", "0"),
             ("min_segment_duration_s", "45"),
             ("heartbeat_every_s", "5"),
             ("events_retention_days", "180"),
@@ -566,7 +548,6 @@ close_behavior = "minimize"
 
         let back = parse(&std::fs::read_to_string(&path).unwrap());
         assert_eq!(back.idle_threshold_s, 120);
-        assert_eq!(back.grace_period_s, 0);
         assert_eq!(back.min_segment_duration_s, 45);
         assert_eq!(back.heartbeat_every_s, 5);
         assert_eq!(back.events_retention_days, 180);
@@ -579,13 +560,11 @@ close_behavior = "minimize"
     fn engine_config_carries_the_three_segment_params() {
         let c = AppConfig {
             idle_threshold_s: 111,
-            grace_period_s: 22,
             min_segment_duration_s: 33,
             ..AppConfig::default()
         };
         let e = c.to_engine_config();
         assert_eq!(e.idle_threshold_s, 111);
-        assert_eq!(e.grace_period_s, 22);
         assert_eq!(e.min_segment_duration_s, 33);
     }
 
@@ -832,12 +811,11 @@ mod retention_tests {
     /// 默认值写死在这里是故意的：改默认值应当是个显眼的动作。
     #[test]
     fn the_field_table_matches_the_struct() {
-        assert_eq!(FIELDS.len(), 7, "config.toml 的可改键变了就同步这里");
+        assert_eq!(FIELDS.len(), 6, "config.toml 的可改键变了就同步这里");
         assert_eq!(
             AppConfig::default(),
             AppConfig {
                 idle_threshold_s: 300,
-                grace_period_s: 60,
                 min_segment_duration_s: 30,
                 heartbeat_every_s: 10,
                 autostart: false,

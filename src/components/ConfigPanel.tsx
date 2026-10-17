@@ -70,13 +70,6 @@ const FIELDS: {
     hint: "最小 10 秒。调小会让时间线更碎",
   },
   {
-    key: "gracePeriodS",
-    tomlKey: "grace_period_s",
-    kind: "number",
-    label: "短暂切换的宽限窗口（秒）",
-    hint: "0 = 关掉抖动吸收。改它会明显改变切段的颗粒度",
-  },
-  {
     key: "minSegmentDurationS",
     tomlKey: "min_segment_duration_s",
     kind: "number",

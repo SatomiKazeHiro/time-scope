@@ -132,7 +132,7 @@ mod tests {
     fn cfg() -> EngineConfig {
         EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0)
+
     }
 
     fn rt() -> EngineRuntime {
@@ -322,7 +322,7 @@ mod day_replay_tests {
     fn cfg() -> EngineConfig {
         EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0)
+
     }
 
     fn persist_segments(conn: &SharedConn, closed: &[activity_engine::ActivitySegment]) {
@@ -417,7 +417,7 @@ mod midnight_tests {
         let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
         let cfg = EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0);
+;
         let mut rt = EngineRuntime::new(rules, cfg);
 
         // 前一天 23:50 开段
@@ -436,7 +436,7 @@ mod midnight_tests {
         let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
         let cfg = EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0);
+;
         let mut rt = EngineRuntime::new(rules, cfg);
         rt.ingest(&focus(DAY + 3_600_000, "Code.exe"));
 
@@ -452,7 +452,7 @@ mod midnight_tests {
         let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
         let cfg = EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0);
+;
         let mut rt = EngineRuntime::new(rules, cfg);
         // 昨天 23:00 开段，最后一个事件正好在 00:00:00
         rt.ingest(&focus(DAY - 3_600_000, "Code.exe"));
@@ -479,7 +479,7 @@ mod midnight_tests {
         let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
         let cfg = EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0);
+;
         // 重放到一半停下：只喂了 DAY 09:15 那一条，open 段没收到尾事件
         let (rt, _) = EngineRuntime::bootstrap(&[focus(DAY + 9 * 3_600_000, "explorer.exe")], rules, cfg);
 
@@ -508,7 +508,7 @@ mod midnight_tests {
         let rules = RuleSet::from_toml(activity_engine::DEFAULT_RULES_TOML).unwrap();
         let cfg = EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0);
+;
         // 启动时只重放了 09:15 那条
         let (mut rt, _) =
             EngineRuntime::bootstrap(&[focus(DAY + 9 * hour, "explorer.exe")], rules, cfg);

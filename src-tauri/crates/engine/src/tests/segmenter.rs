@@ -56,13 +56,12 @@ fn cats(events: &[Event]) -> Vec<String> {
         .collect()
 }
 
-/// 立即落库：min 和 grace 都设 0，落库门槛 max(0,0)=0。
-/// 只想验证"分段的形状"而不涉及抖动语义时用它。
-/// 涉及 grace 的测试必须保留默认 grace（见下面那几个）。
+/// 关掉归一化：段一关闭就立即可落库。
+/// 只想验证「分段的形状」而不涉及归一化语义时用它。
 fn emit_now() -> EngineConfig {
     EngineConfig::default()
         .with_min_segment_duration_s(0)
-        .with_grace_period_s(0)
+
 }
 
 // --- 基本：同应用延长 ---
@@ -144,15 +143,13 @@ fn segments_are_ordered_and_non_overlapping() {
     }
 }
 
-// --- grace period（spec §7.3）---
+// --- 归一化：短段并进邻居（取代原 grace 抖动吸收，spec §7.3）---
 
 #[test]
-fn grace_period_absorbs_a_quick_switch_back() {
-    // Code -> chrome(2s) -> Code，三段应合并成一个 Code 段。
-    // 关键是"复活"前一个 Code 段，而不是把 chrome 段留下来。
-    let cfg = EngineConfig::default()
-        .with_min_segment_duration_s(0)
-        .with_grace_period_s(60);
+fn a_quick_switch_back_stays_one_segment() {
+    // Code → chrome(2s) → Code：那 2 秒不足以成为一段活动，
+    // 并进它打断的 Code 段，切回来再把 tail 重新长回当前段 —— 一段。
+    let cfg = EngineConfig::default().with_min_segment_duration_s(5);
     let segs = all_segments(
         &[
             focus(0, "Code.exe"),
@@ -162,19 +159,21 @@ fn grace_period_absorbs_a_quick_switch_back() {
         &rules(),
         &cfg,
     );
-    assert_eq!(segs.len(), 1, "grace 内的往返切换不该留下多段，实际 {:?}", cats(&[
-        focus(0, "Code.exe"), focus(2_000, "chrome.exe"), focus(4_000, "Code.exe")
-    ]));
+    assert_eq!(
+        segs.len(),
+        1,
+        "2 秒的往返不该留下多段，实际 {:?}",
+        segs.iter().map(|s| s.category.as_str()).collect::<Vec<_>>()
+    );
     assert_eq!(segs[0].application.as_deref(), Some("Code.exe"));
     assert_eq!(segs[0].start_at, 0);
     assert_eq!(segs[0].end_at, 4_000);
 }
 
 #[test]
-fn grace_period_does_not_absorb_a_slow_switch_back() {
-    let cfg = EngineConfig::default()
-        .with_min_segment_duration_s(0)
-        .with_grace_period_s(60);
+fn a_longer_switch_back_stays_separate_segments() {
+    // 190 秒的 chrome 是真实活动，不是抖动 —— 它不该被并掉。
+    let cfg = EngineConfig::default().with_min_segment_duration_s(5);
     let segs = all_segments(
         &[
             focus(0, "Code.exe"),
@@ -184,28 +183,34 @@ fn grace_period_does_not_absorb_a_slow_switch_back() {
         &rules(),
         &cfg,
     );
-    assert!(segs.len() >= 2, "超出 grace 的往返应保留为多段，实际 {}", segs.len());
+    assert!(segs.len() >= 2, "超过 N 的往返应保留为多段，实际 {}", segs.len());
+    assert!(
+        cats(&[
+            focus(0, "Code.exe"),
+            focus(10_000, "chrome.exe"),
+            focus(200_000, "Code.exe"),
+        ])
+        .contains(&"browsing".to_string()),
+        "chrome 那一段应当真的存在"
+    );
 }
 
 #[test]
-fn zero_grace_disables_absorption() {
-    let cfg = EngineConfig::default()
-        .with_min_segment_duration_s(0)
-        .with_grace_period_s(0);
+fn min_zero_disables_normalization() {
+    // 0 = 关掉归一化：每次切换都切段，段一关闭就立即可落库。
+    let cfg = EngineConfig::default().with_min_segment_duration_s(0);
     let segs = all_segments(
         &[focus(0, "Code.exe"), focus(1_000, "chrome.exe"), focus(2_000, "Code.exe")],
         &rules(),
         &cfg,
     );
-    assert_eq!(segs.len(), 3, "grace=0 时每次切换都切段");
+    assert_eq!(segs.len(), 3, "min=0 时每次切换都切段");
 }
 
 #[test]
-fn grace_absorbs_the_evidence_of_the_dropped_segment() {
-    // 被判为抖动的那个段，其证据应并回复活段，而不是凭空消失
-    let cfg = EngineConfig::default()
-        .with_min_segment_duration_s(0)
-        .with_grace_period_s(60);
+fn the_merged_short_segment_keeps_its_evidence() {
+    // 被并掉的那个段，其证据应并进留下的段，而不是凭空消失
+    let cfg = EngineConfig::default().with_min_segment_duration_s(5);
     let segs = all_segments(
         &[
             focus(0, "Code.exe"),
@@ -343,42 +348,39 @@ fn open_segment_snapshot_is_none_when_idle_and_empty() {
     assert!(EngineState::initial().open_segment_snapshot(&rs, &cfg).is_none());
 }
 
-// --- min_segment_duration 缓冲 ---
+// --- 归一化缓冲（原 min_segment_duration 缓冲）---
 
 #[test]
-fn short_segments_stay_pending_until_min_duration_elapses() {
+fn the_previous_segment_is_held_until_the_next_one_arrives() {
+    // 归一化只需要一段前瞻：前一段压着，等下一个段决定「并」还是「定稿」。
+    // 这里用 60 秒的 Code（够长，不会被并进后继），所以它确实「压着等」。
     let (rs, cfg) = (rules(), EngineConfig::default().with_min_segment_duration_s(30));
     let mut st = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg).state;
-    st = reduce(&st, &focus(1_000, "chrome.exe"), &rs, &cfg).state;
+    st = reduce(&st, &focus(60_000, "chrome.exe"), &rs, &cfg).state;
     assert!(st.current_segment.is_some(), "应该有正在生长的 chrome 段");
     let snapshot = st.open_segment_snapshot(&rs, &cfg).unwrap();
     assert_eq!(snapshot.application.as_deref(), Some("chrome.exe"));
-    assert_eq!(st.pending.len(), 1);
-    assert_eq!(st.pending[0].application.as_deref(), Some("Code.exe"));
+    let held = st.tail.as_ref().expect("前一段应压在缓冲里等下一个段");
+    assert_eq!(held.application.as_deref(), Some("Code.exe"));
 }
 
 #[test]
-fn pending_segments_are_released_once_old_enough() {
-    // 落库门槛 = max(min, grace) = max(0, 5s) = 5s。
-    // min=0 表示不会被"太短"卡住，纯粹验证门槛本身。
-    let (rs, cfg) = (
-        rules(),
-        EngineConfig::default()
-            .with_min_segment_duration_s(0)
-            .with_grace_period_s(5),
-    );
+fn the_held_segment_is_released_once_it_is_stale() {
+    // N = 30s：够长的段切走之后先压着（等下一个段来决定要不要并），
+    // 满 30 秒没有新段就定稿落库 —— 否则数据会永远留在内存里。
+    let (rs, cfg) = (rules(), EngineConfig::default().with_min_segment_duration_s(30));
     let mut st = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg).state;
-    let after_switch = reduce(&st, &focus(1_000, "chrome.exe"), &rs, &cfg);
+    let after_switch = reduce(&st, &focus(60_000, "chrome.exe"), &rs, &cfg);
     assert!(
         after_switch.closed_segments.is_empty(),
-        "刚切段还没到 5s 门槛，不该释放"
+        "刚切段，还在等下一段来决定并进谁"
     );
     st = after_switch.state;
 
     let out = reduce(&st, &heartbeat(100_000, 3), &rs, &cfg);
     assert!(
         !out.closed_segments.is_empty(),
-        "超过 5s 落库门槛后应被释放"
+        "超过 N 秒没有后继就该定稿"
     );
 }
 
@@ -390,7 +392,7 @@ fn heartbeat_before_any_window_event_does_not_open_a_segment() {
     // 这类事件无法归因，不该凭空开一个 "unknown / 无应用" 的段。
     let cfg = EngineConfig::default()
         .with_min_segment_duration_s(0)
-        .with_grace_period_s(0);
+;
     let (rs, cfg) = (rules(), cfg);
     let mut st = EngineState::initial();
     for ts in [1_000, 11_000, 21_000] {
@@ -409,7 +411,7 @@ fn heartbeat_with_no_known_app_still_extends_an_existing_segment() {
     // 已经有段之后，心跳（application 不变）应正常延长它
     let cfg = EngineConfig::default()
         .with_min_segment_duration_s(0)
-        .with_grace_period_s(0);
+;
     let (rs, cfg) = (rules(), cfg);
     let mut st = reduce(&EngineState::initial(), &focus(0, "Code.exe"), &rs, &cfg).state;
     st = reduce(&st, &heartbeat(5_000, 1), &rs, &cfg).state;
@@ -420,12 +422,11 @@ fn heartbeat_with_no_known_app_still_extends_an_existing_segment() {
 
 // --- B. min_segment_duration 真的要把短段并掉 ---
 
-/// 落库门槛 = max(min, grace)。这里 min=2s、grace=0 => 门槛 2s，
-/// 小时间线就能让段真正"就绪"，专心验证合并行为。
+/// N = 2 秒：小时间线就能看清「短段并进邻居」的行为。
 fn merge_cfg() -> EngineConfig {
     EngineConfig::default()
         .with_min_segment_duration_s(2)
-        .with_grace_period_s(0)
+
 }
 
 /// 喂完所有事件，返回 (已释放的段, 最终状态)。
@@ -568,27 +569,29 @@ fn a_short_segment_surrounded_by_two_long_ones_chooses_the_preceding() {
 }
 
 #[test]
-fn a_lone_short_segment_is_held_rather_than_emitted() {
-    // 两侧都没有长邻居时，宁可先压着，也不要硬并进不相邻的段。
-    // 这正是 min_segment_duration 在起作用：宁可不落库，也不要留一段噪声。
+fn a_short_segment_waits_for_its_neighbour_rather_than_becoming_a_sliver() {
+    // Code 只闪了 1 秒就切到 explorer：它不是一段活动，等它的邻居出现再决定。
+    // 这里 explorer 紧接在后面，于是那 1 秒并进 explorer —— 没有任何段落库，
+    // 也没有一根 2px 的刺留在时间线上。
     let cfg = merge_cfg();
     let (closed, st) = run_cfg(
         &[
             focus(0, "Code.exe"),
-            focus(1_000, "msedge.exe"),
+            focus(1_000, "explorer.exe"),
             focus(5_000, "QQ.exe"),
         ],
         &cfg,
     );
     assert!(
         apps_of(&closed).is_empty(),
-        "孤立的 1s 短段不该被发出去，实际 {:?}",
+        "还没有段定稿：短段与它的邻居都压在缓冲里，实际 {:?}",
         apps_of(&closed)
     );
-    assert!(
-        st.pending.iter().any(|s| s.application.as_deref() == Some("Code.exe")),
-        "它应留在 pending 里等一个长邻居出现，实际 {:?}",
-        apps_of(&st.pending)
+    let held = st.tail.as_ref().expect("缓冲里应有一段");
+    assert_eq!(
+        (held.start_at, held.end_at),
+        (0, 5_000),
+        "1 秒的 Code 并进了后面的 explorer"
     );
 }
 
@@ -697,17 +700,17 @@ fn a_missing_unlock_does_not_invent_extra_time() {
     assert_eq!(work.end_at, 400_000, "锁屏后的时间不能算进工作段");
 }
 
-// --- pending 顺序（A1）---
+// --- 重叠（A1）---
 
 #[test]
-fn pending_order_survives_short_segments_being_held_back() {
-    // A1：`keep` 段（够老但无长邻居、压着等下一轮的短段）被 append 到 pending 末尾，
-    // 于是 pending 不再按时间排序，`absorb` 里的 `pending.last()` 取到的是
-    // **十几秒前的老段**而不是刚离开的那一段 —— 把它拉到当前时刻就产出重叠段。
+fn a_held_back_short_segment_does_not_produce_overlapping_segments() {
+    // A1 的现代版。旧实现里 `pending` 是一个**要按时间排序的列表**：
+    // 一个够老但等不到邻居的短段被 append 到末尾，顺序一破，
+    // `absorb` 用 `pending.last()` 取到十几秒前的老段、把它拉到当前时刻，
+    // 于是产出重叠。
     //
-    // 默认参数即可触发（min=30 / grace=60 → hold=max(30,60)=60s、give_up=180s），
-    // 所以这里用默认配置。带 min_segment_duration_s(0) 的测试里 keep 恒为空、
-    // 这条路径结构上不可达 —— 这正是漏网的原因。
+    // 现在缓冲里最多只有一段（`EngineState.tail`），没有「排序」可被打乱 ——
+    // 这条测试守的不再是那个 bug，而是**同一串真实时序下段仍然不重叠**。
     let events = vec![
         focus(0, "Code.exe"),       // 开 A
         focus(5_000, "chrome.exe"), // 关 A（5s，短段）；开 B
@@ -739,6 +742,8 @@ fn overlapping_segments_never_invent_time() {
     // A1 的直接后果：`SUM(end_at - start_at)` 重复计数。
     // 审计里那句「这段 85 s 的序列会算出 160 s」说的就是这个 ——
     // 旧段被拉到当前时刻，而中间真实的段照样落库，同一段时间被数了两遍。
+    // 归一化换了一整套实现之后这条不变式照旧要成立（而且更硬：任何合并都只
+    // 发生在首尾相接的两段之间）。
     //
     // 与上一条互补：那条查"有没有重叠"，这条查"总量有没有超出墙钟跨度"。
     let events = vec![
@@ -766,72 +771,39 @@ fn overlapping_segments_never_invent_time() {
 }
 // --- A1：重复计数 ---
 
-// --- B10：时钟回退不该被判成"在宽限窗口内" ---
+// --- 时钟异常（B10 的现代版）---
 
 #[test]
-fn a_backwards_clock_does_not_absorb_away_a_segment() {
-    // B10。判定原本写 `(ts - t).abs() < grace_ms` —— 时间戳**回退**
-    // （系统时钟被校正、NTP 跳变）时绝对值同样落在宽限窗口内，于是判成抖动
-    // 并触发吸收。而 `absorb` 只做 `prev.end_at = max(prev.end_at, ts)`，
-    // 不会把被丢弃的那一段补回来 —— 那段时间从账本上整个消失。
-    //
-    // 序列：Code@0 → chrome@50_000 → Code@40_000（时钟被往回拨 10 秒）。
-    // 旧写法：|40_000-50_000| = 10_000 < 60_000 → 判成抖动，chrome 被丢弃。
-    // 新写法：`ts >= t` 不成立 → 照常切段，chrome 作为自己的段留下。
-    let cfg = EngineConfig::default()
-        .with_min_segment_duration_s(0)
-        .with_grace_period_s(60);
-    let segs = all_segments(
-        &[
-            focus(0, "Code.exe"),
-            focus(50_000, "chrome.exe"),
-            focus(40_000, "Code.exe"), // 时钟回退
-            heartbeat(200_000, 5),    // 拖时间冲刷 pending
-        ],
-        &rules(),
-        &cfg,
+fn a_backwards_clock_never_merges_into_an_earlier_segment() {
+    // 系统时钟被校正 / NTP 跳变时，新段的时间戳可能落在前一段的跨度里。
+    // 那时**不许并**：并了就等于用这一小段替换掉一段真实时间，
+    // 被替换的部分从账本上整个消失（B10 的教训）。前一段照常定稿。
+    let mut tail = Some(mk("a", 0, 50_000, "work"));
+    let mut out = Vec::new();
+    crate::normalize::settle(&mut tail, &mut out, mk("b", 40_000, 40_000, "browsing"), 5_000);
+
+    assert_eq!(out.len(), 1, "前一段应当定稿");
+    assert_eq!(
+        (out[0].start_at, out[0].end_at),
+        (0, 50_000),
+        "A 的跨度不该被回退的时间戳改动"
     );
-    let apps: Vec<&str> = segs.iter().filter_map(|s| s.application.as_deref()).collect();
-    assert!(
-        apps.contains(&"chrome.exe"),
-        "时钟回退时 chrome 段被吞掉了，实际 {:?}",
-        segs.iter()
-            .map(|s| (s.start_at, s.end_at, s.application.as_deref().unwrap_or("-")))
-            .collect::<Vec<_>>()
-    );
-    let chrome = segs
-        .iter()
-        .find(|s| s.application.as_deref() == Some("chrome.exe"))
-        .unwrap();
-    assert_eq!((chrome.start_at, chrome.end_at), (50_000, 50_000));
+    assert_eq!(tail.as_ref().map(|s| s.id.clone()), Some("b".into()));
 }
 
 #[test]
-fn a_timestamp_exactly_on_the_grace_boundary_is_not_absorbed() {
-    // 边界守卫（**不是**本次修复的回归用例 —— 旧写法的 `<` 也是严格小于，
-    // 这条在修复前后都成立）。钉住的是 `<` 而不是 `<=`：恰好等于 grace
-    // 窗口宽度不算"在窗口内"。
-    // 既有的 `grace_period_does_not_absorb_a_slow_switch_back` 只测了远大于
-    // 边界的情形，没钉住边界本身。
-    let cfg = EngineConfig::default()
-        .with_min_segment_duration_s(0)
-        .with_grace_period_s(10);
-    let segs = all_segments(
-        &[
-            focus(0, "Code.exe"),
-            focus(2_000, "chrome.exe"),
-            focus(12_000, "Code.exe"), // 距上次切换正好 10_000 == grace 窗口
-            heartbeat(30_000, 5),
-        ],
-        &rules(),
-        &cfg,
-    );
-    let apps: Vec<&str> = segs.iter().filter_map(|s| s.application.as_deref()).collect();
-    assert_eq!(
-        apps,
-        vec!["Code.exe", "chrome.exe", "Code.exe"],
-        "恰好等于 grace 窗口宽度不该被吸收成两段"
-    );
+fn a_segment_is_released_exactly_when_it_has_waited_n_seconds() {
+    // 边界钉的是 `>=`：等满 N 秒就算「等不到后继」，该定稿了。
+    // 差一毫秒都不放 —— 否则数据在内存里多待一轮。
+    let mut tail = Some(mk("a", 0, 10_000, "work"));
+    let mut out = Vec::new();
+    crate::normalize::release_if_stale(&mut tail, &mut out, 10_000 + 4_999, 5_000);
+    assert!(out.is_empty(), "还差 1ms 就不该定稿");
+    assert!(tail.is_some());
+
+    crate::normalize::release_if_stale(&mut tail, &mut out, 10_000 + 5_000, 5_000);
+    assert_eq!(out.len(), 1, "等满 N 秒应当定稿");
+    assert!(tail.is_none());
 }
 
 // --- B12：合并短段必须真的紧邻 ---
@@ -853,92 +825,47 @@ fn mk(id: &str, start: i64, end: i64, cat: &str) -> crate::ActivitySegment {
 
 #[test]
 fn a_short_segment_is_never_merged_across_a_gap() {
-    // B12。原来 `merge_into` 直接取 `min(start)` / `max(end)`，
-    // **不校验两段是否相邻** —— 一旦中间有 4 分钟空档，那段空档就被
-    // 记进了合并后的长段（空档被算成 work）。
-    //
-    // 审计没能构造出经由 `reduce` 的可达路径，所以直接测这个纯函数：
-    // ready = [长 A 0–60s, 短 S 300–310s, 长 B 600–660s]。
-    // S 的"前驱长邻居"是 A，但两者相隔 240 秒 —— 不许并。
-    let (closed, keep, _open) = crate::segmenter::fold_short_segments(
-        vec![
-            mk("a", 0, 60_000, "work"),
-            mk("s", 300_000, 310_000, "work"),
-            mk("b", 600_000, 660_000, "work"),
-        ],
-        None,
-        30_000,   // min_ms：a/b 是长段，s 是短段
-        700_000,  // now
-        180_000,  // give_up_ms
-        true,
-    );
-    let all: Vec<_> = closed.iter().chain(keep.iter()).collect();
+    // B12。合并只认「首尾相接」：A 在 0–60s，S 在 300–310s，中间有 240 秒空档。
+    // 若按 min/max 硬并，那段空档就被记成了 work。
+    let mut tail = Some(mk("a", 0, 60_000, "work"));
+    let mut out = Vec::new();
+    crate::normalize::settle(&mut tail, &mut out, mk("s", 300_000, 310_000, "work"), 30_000);
 
-    let stretched = all
-        .iter()
-        .find(|s| s.start_at == 0 && s.end_at > 60_000);
-    assert!(
-        stretched.is_none(),
-        "A 被拉长到 {:?} —— 中间 240 秒的空档被记成了 work",
-        stretched.map(|s| (s.start_at, s.end_at))
+    assert_eq!(out.len(), 1, "不相接 → 前一段定稿");
+    assert_eq!(
+        (out[0].start_at, out[0].end_at),
+        (0, 60_000),
+        "A 被拉长到跨越空档了"
     );
-    assert!(
-        all.iter().any(|s| s.id == "s"),
-        "短段不该被吞掉：它要么原样放行、要么退回 pending 等下一轮"
+    assert_eq!(
+        tail.as_ref().map(|s| s.id.clone()),
+        Some("s".to_string()),
+        "短段自己进缓冲，等它自己的邻居"
     );
 }
 
 #[test]
 fn an_adjacent_short_segment_is_still_merged() {
-    // 与上一条互补：守住「紧邻的照并」。把合并一刀禁掉会让短段永远
-    // 单飞，spec §7.3 的"并入相邻长段"就没了。
-    let (closed, keep, _open) = crate::segmenter::fold_short_segments(
-        vec![mk("a", 0, 60_000, "work"), mk("s", 60_000, 61_000, "work")],
-        None,
-        30_000,
-        700_000,
-        180_000,
-        true,
-    );
-    let merged = closed
-        .iter()
-        .chain(keep.iter())
-        .find(|s| s.id == "a")
-        .expect("长段应当还在");
-    assert_eq!(
-        (merged.start_at, merged.end_at),
-        (0, 61_000),
-        "紧邻的短段仍然要并进去"
-    );
-    assert!(
-        !closed.iter().chain(keep.iter()).any(|s| s.id == "s"),
-        "并进去之后不该还留着一个 s"
-    );
+    // 与上一条互补：守住「紧邻的照并」。
+    let mut tail = Some(mk("a", 0, 60_000, "work"));
+    let mut out = Vec::new();
+    crate::normalize::settle(&mut tail, &mut out, mk("s", 60_000, 61_000, "work"), 30_000);
+
+    assert!(out.is_empty(), "还没有段定稿");
+    let t = tail.expect("缓冲里应还是那一段");
+    assert_eq!((t.start_at, t.end_at), (0, 61_000), "紧邻的短段要并进去");
 }
 
 #[test]
 fn an_idle_short_segment_is_not_merged_into_work() {
-    // B12 的第二半：idle 是「没在工作」，把它并进 work 段等于把空闲
-    // 时间算成工作时间。idle 段要么自己留下，要么并进另一个 idle 段。
-    let (closed, keep, _open) = crate::segmenter::fold_short_segments(
-        vec![mk("w", 0, 60_000, "work"), mk("i", 60_000, 61_000, "idle")],
-        None,
-        30_000,
-        700_000,
-        180_000,
-        true,
-    );
-    let all: Vec<_> = closed.iter().chain(keep.iter()).collect();
-    let work = all.iter().find(|s| s.id == "w").expect("work 段应当还在");
-    assert_eq!(
-        (work.start_at, work.end_at),
-        (0, 60_000),
-        "idle 短段不该把 work 段撑长"
-    );
-    assert!(
-        all.iter().any(|s| s.id == "i"),
-        "idle 段不该消失"
-    );
+    // B12 的第二半：idle 是「没在工作」，并进 work 等于把空闲算成工作。
+    let mut tail = Some(mk("w", 0, 60_000, "work"));
+    let mut out = Vec::new();
+    crate::normalize::settle(&mut tail, &mut out, mk("i", 60_000, 61_000, "idle"), 30_000);
+
+    assert_eq!(out.len(), 1, "work 段被撑长就意味着把空闲算成了工作");
+    assert_eq!((out[0].start_at, out[0].end_at), (0, 60_000));
+    assert_eq!(tail.as_ref().map(|s| s.category.as_str()), Some("idle"));
 }
 
 // --- 空档守卫：引擎不得凭空造出时间 ---
@@ -1007,7 +934,7 @@ fn the_gap_guard_follows_its_own_threshold() {
     // 阈值 4 小时 > 2 小时间隔 → 照常延长
     let loose = EngineConfig::default()
         .with_min_segment_duration_s(0)
-        .with_grace_period_s(0)
+
         .with_max_observation_gap_s(4 * 3600);
     let segs = all_segments(&events, &rules(), &loose);
     assert_eq!((segs[0].start_at, segs[0].end_at), (0, 2 * hour), "宽松阈值下应当延长");
@@ -1015,27 +942,27 @@ fn the_gap_guard_follows_its_own_threshold() {
     // 阈值 1 小时 < 2 小时间隔 → 收在最后一条证据
     let tight = EngineConfig::default()
         .with_min_segment_duration_s(0)
-        .with_grace_period_s(0)
+
         .with_max_observation_gap_s(3600);
     let segs = all_segments(&events, &rules(), &tight);
     assert_eq!((segs[0].start_at, segs[0].end_at), (0, 0), "严格阈值下应当收尾");
 }
 
 
-// --- 重叠：抖动吸收不许复活一个「中间已落库」的段 ---
+// --- 重叠：切回来不许越过中间已经收尾的那一段 ---
 
-/// 复现真实事故：16:07:14 开的段被 absorb **复活 3 次**，而期间
+/// 复现真实事故（2026-10-12）：09:07:14 开的那一段被**复活三次**，而期间
 /// msedge 已经另开又关闭了 09:07:46→09:08:29 这一段。最终复活段
 /// [09:07:14, 09:09:52] 与它真实相交 43.4 秒。
 ///
 /// 引擎**不该产出重叠段**：时间线上的每一段都代表「这段时间在做什么」，
 /// 两段重叠等于同一段时间有两个答案。
 #[test]
-fn absorb_does_not_resurrect_across_an_already_closed_sibling() {
+fn coming_back_does_not_swallow_the_segment_in_between() {
     let base = 1_791_767_234_996i64;
-    // A: 09:07:14 ���（work），被复活
-    // B: 09:07:46 开、09:08:29 关（browsing）—— 在 A 被复活**之前**就已经收尾
-    // C: 09:08:29 起（work）—— 回到 A 的应用，触发 absorb
+    // A: 09:07:14 起（work）
+    // B: 09:07:46 开、09:08:29 关（browsing）—— A 与 C 之间的那一段
+    // C: 09:08:29 起（work）—— 回到 A 的应用
     let events = vec![
         focus(base, "WindowsTerminal.exe"),
         focus(base + 32_000, "msedge.exe"),
@@ -1043,8 +970,7 @@ fn absorb_does_not_resurrect_across_an_already_closed_sibling() {
         focus(base + 76_000, "WindowsTerminal.exe"), // C 开 → 抖动 → absorb
     ];
 
-    // **必须保留默认 grace**：absorb 的门槛是 `grace_period_s`，
-    // 用 emit_now()（grace=0）会让 absorb 永不触发，测不到任何东西。
+    // 归一化关闭：这里的重点是切段形状本身不重叠，不借合并之力。
     let cfg = EngineConfig::default().with_min_segment_duration_s(0);
     let segs = all_segments(&events, &rules(), &cfg);
 
@@ -1060,7 +986,7 @@ fn absorb_does_not_resurrect_across_an_already_closed_sibling() {
     }
 }
 
-/// 不管 absorb 怎么判定，**引擎产出的段两两不得重叠**。
+/// 不管归一化怎么判定，**引擎产出的段两两不得重叠**。
 /// 这条是「时间线上一段时间只能有一个答案」的形式化。
 #[test]
 fn segments_never_overlap_each_other() {
@@ -1091,7 +1017,7 @@ fn segments_never_overlap_each_other() {
 
 /// 短段合并**不许跨过已经存在的时间**。
 ///
-/// `mergeable` 现在允许「相交或首尾相接」就并 —— 这是为了让 3 秒的抖动
+/// 归一化允许「相交或首尾相接」就并 —— 这是为了让 3 秒的抖动
 /// 能并进邻居。但如果 `extra` 比 target 长、且它跨过了别的时间，
 /// `merge_into` 的 `min(start)/max(end)` 会把 target 撑大到覆盖那段，
 /// 于是 target 与它中间的真实段**重叠**。
@@ -1140,7 +1066,7 @@ fn merging_a_short_segment_never_widens_the_target_across_other_time() {
 /// 一整天的段两两不得重叠，且时长不超过墙钟跨度。
 ///
 /// 「时长不超过墙钟跨度」比「不重叠」更强：它是引擎「不凭空造时间」这条
-/// 原则的可观测形式（合并与复活都可能把墙钟拉长，而不重叠未必能抓到）。
+/// 原则的可观测形式（合并也可能把墙钟拉长，而不重叠未必能抓到）。
 #[test]
 fn segments_of_a_whole_day_never_overlap() {
     let mut st = EngineState::initial();
@@ -1210,56 +1136,56 @@ fn segments_of_a_whole_day_never_overlap() {
     );
 }
 
-/// 短段并进「正在生长的当前段」时，**必须真的相邻**。
+/// 把正在生长的段**往前拽**之前，必须确认它与缓冲里那一段真的相接。
 ///
-/// 2026-10-13。`fold_short_segments` 里并进 `open` 的那条分支原来只检查
-/// 「open 存在 ∧ 它是 ready 最后一个 ∧ pending 空」，**没检查相邻**
-/// （`mergeable` 那条分支有，是 B12 加的，这里漏了）。
-/// 于是 `o.start_at = min(o.start_at, seg.start_at)` 会把正在生长的段
-/// 往前拽，拽过中间那些已经 release 出去的段 —— 产出重叠。
-///
-/// 真实数据：全库 12 天里 10 天有重叠、共 84 处；
-/// 把这一行改成 no-op（不往前拽）后 8 天全部 **0 处**，
-/// 时长还从 22.34h 降到 22.08h —— 不再凭空造时间。
+/// 2026-10-13 的重叠事故：旧 `fold_short_segments` 并进 `open` 的分支没查相邻，
+/// 于是 `o.start_at = min(...)` 把正在生长的段拽过中间已落库的段，产出重叠。
+/// 现在只有 `normalize::reopen` 会动 open 的起点，而它要求
+/// 「同应用同类 ∧ 首尾相接」。
 #[test]
-fn a_short_segment_merges_into_the_open_segment_only_when_adjacent() {
-    // 两个短段 + 一个正在生长的 open：
-    //   early [0, 30s)      与 open 不相邻
-    //   late  [50s, 70s)    与 open 紧邻（open 从 40s 开始）
-    // 只有 late 该被并进去。
-    let (closed, _keep, open_after) = crate::segmenter::fold_short_segments(
-        vec![
-            mk("early", 0, 30_000, "browsing"),
-            mk("late", 50_000, 70_000, "browsing"),
-        ],
-        Some(crate::OpenSegment {
-            start_at: 40_000,
-            end_at: 100_000,
-            category: crate::Category::Work,
-            application: Some("Code.exe".into()),
-            confidence: 1.0,
-            evidence_event_ids: vec!["ev-open".into()],
-            last_evidence_at: 100_000,
-            active_ms: 0,
-        }),
-        30_000,
-        200_000,
-        600_000,
-        true,
-    );
+fn reopening_the_held_segment_requires_adjacency() {
+    let mut tail = Some(mk("prev", 0, 40_000, "browsing"));
+    let mut open = crate::OpenSegment {
+        start_at: 100_000,
+        end_at: 120_000,
+        category: crate::Category::Browsing,
+        application: Some("msedge.exe".into()),
+        confidence: 1.0,
+        evidence_event_ids: vec!["ev-open".into()],
+        last_evidence_at: 120_000,
+        active_ms: 0,
+    };
 
-    let o = open_after.expect("当前段应当还在");
+    crate::normalize::absorb_tail_into_open(&mut tail, &mut open, 30_000);
+
     assert_eq!(
-        o.start_at, 40_000,
-        "不相邻的 early 段不该把当前段的起点拽到 40s 之前"
+        open.start_at, 100_000,
+        "中间隔着 60 秒空档，不许把当前段的起点拽回去"
     );
-    // late 是真相邻的，它的证据应当并进来了
-    assert!(
-        o.evidence_event_ids.len() >= 2,
-        "相邻的 late 段应当被并入（证据 {:?}）",
-        o.evidence_event_ids
-    );
-    let _ = closed;
+    assert!(tail.is_some(), "没并成就别把缓冲里的段吞掉");
+}
+
+#[test]
+fn reopening_a_matching_segment_right_after_it_ends_is_allowed() {
+    // 这才是「切回来」：Code → chrome(2s) → Code 应该长成一段，
+    // 而不是两根紧挨着的同应用段。
+    let mut tail = Some(mk("prev", 0, 40_000, "work"));
+    let mut open = crate::OpenSegment {
+        start_at: 40_000,
+        end_at: 40_000,
+        category: crate::Category::Work,
+        application: Some("Code.exe".into()),
+        confidence: 1.0,
+        evidence_event_ids: vec!["ev-open".into()],
+        last_evidence_at: 40_000,
+        active_ms: 0,
+    };
+
+    crate::normalize::absorb_tail_into_open(&mut tail, &mut open, 30_000);
+
+    assert_eq!(open.start_at, 0, "接得上的同应用段应当长成一段");
+    assert_eq!(open.evidence_event_ids.len(), 2, "两边的证据都要留下");
+    assert!(tail.is_none(), "它已经变成当前段了");
 }
 
 // --- 「有输入时长」（2026-10-13，专注度的新分母）---
@@ -1345,7 +1271,7 @@ fn active_ms_never_exceeds_the_segments_own_duration() {
 /// 这就是心跳必须带窗口起点（`window_start_ms`）的原因。
 #[test]
 fn input_time_is_counted_only_within_the_segment() {
-    let cfg = EngineConfig::default().with_min_segment_duration_s(0).with_grace_period_s(0);
+    let cfg = EngineConfig::default().with_min_segment_duration_s(0);
     let base = 1_700_000_000_000i64;
     // 段 [0, 20s]。三个心跳的窗口分别是 [0,10s] / [5s,15s] / [10s,20s]，
     // **全都落在段内**，各报 8 秒。
@@ -1372,7 +1298,7 @@ fn input_time_is_counted_only_within_the_segment() {
 /// 分母不能大于它衡量的那个东西。
 #[test]
 fn input_time_never_exceeds_the_segments_own_duration() {
-    let cfg = EngineConfig::default().with_min_segment_duration_s(0).with_grace_period_s(0);
+    let cfg = EngineConfig::default().with_min_segment_duration_s(0);
     let base = 1_700_000_000_000i64;
     let events = vec![
         focus(base, "Code.exe"),

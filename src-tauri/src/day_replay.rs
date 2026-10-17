@@ -196,7 +196,7 @@ mod tests {
     pub(super) fn cfg() -> EngineConfig {
         EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0)
+
     }
 
     /// day_index 决定落在哪一天（相对某个基准日）
@@ -312,7 +312,7 @@ mod replay_redaction_tests {
     fn config() -> EngineConfig {
         EngineConfig::default()
             .with_min_segment_duration_s(0)
-            .with_grace_period_s(0)
+
     }
 
     /// 唯一能看到窗口标题的地方是引擎的 `current_context`——落库的 segment 不存标题，

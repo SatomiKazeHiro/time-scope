@@ -98,7 +98,7 @@ confidence = 0.8
     .expect("parse rules");
     let cfg = EngineConfig::default()
         .with_min_segment_duration_s(0)
-        .with_grace_period_s(0);
+;
 
     let ev = |ts: i64, app: &str| {
         Event::new(

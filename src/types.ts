@@ -170,7 +170,6 @@ export async function addRule(application: string, category: Category): Promise<
 /** `config.toml` 的前端镜像。字段与 Rust 的 `AppConfig` 一一对应。 */
 export interface AppConfig {
   idleThresholdS: number;
-  gracePeriodS: number;
   minSegmentDurationS: number;
   heartbeatEveryS: number;
   autostart: boolean;

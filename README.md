@@ -29,8 +29,8 @@ Windows 事件/输入 ─▶ collector ─▶ Event ─▶ SQLite(WAL)
 
 **设置页**有两块：**规则覆盖**列出最近 30 天有时间但没落进任何类别的程序，
 点「归类…」选个类别就写回 `rules.toml` 并**立刻生效**；
-**行为参数**是 `config.toml` 的七个字段，其中两项立刻生效、
-五项要重启才生效（界面上标出来了）。
+**行为参数**是 `config.toml` 的六个字段，其中两项立刻生效、
+四项要重启才生效（界面上标出来了）。
 
 `rules.toml` 在 `%APPDATA%/time-scope/`，首次启动自动生成 16 条默认规则，
 可自由编辑。改坏了也不会崩——退回内置默认并保留你的文件。
@@ -53,7 +53,7 @@ close_behavior = "ask"  # ask = 每次都问 / minimize = 最小化到托盘 / q
 ```
 
 **改 `config.toml`**：现在可以在设置页改，也可以手改文件。
-四个采集/引擎参数（空闲阈值、宽限窗口、短段合并、心跳窗口）绑在进程构造上，
+三个采集/引擎参数（空闲阈值、短段门槛、心跳窗口）绑在进程构造上，
 `autostart` 也一样（托盘勾选态与系统注册表都是启动时定的）—— **改了要重启**。
 只有 `events_retention_days` 与 `close_behavior` 立刻生效（后者是关窗时现读
 `config.toml` 的）。判据见 `src-tauri/src/lib.rs` 的 `config_field_needs_restart`。
@@ -90,7 +90,7 @@ pnpm tauri dev
 
 ```bash
 # Rust：必须带 --workspace，否则只跑根包、core/engine/storage/collector 全部被跳过
-cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 417 passed
+cargo test --manifest-path src-tauri/Cargo.toml --workspace   # 418 passed
 
 # 前端
 pnpm test                                                       # 374 passed

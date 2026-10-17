@@ -5,9 +5,9 @@
 pub struct EngineConfig {
     /// 无输入多少秒判定为空闲
     pub idle_threshold_s: u64,
-    /// 短暂切换的宽限窗口
-    pub grace_period_s: u64,
-    /// 短于此的段并入相邻段
+    /// 归一化的门槛 N：**短于此的段并进紧邻的邻居**（见 `normalize.rs`）。
+    ///
+    /// 0 = 关掉归一化（段一关闭就立即可落库）。
     pub min_segment_duration_s: u64,
     /// 观测空档超过多少秒就认为「这段时间没有证据」，段在此收尾。
     ///
@@ -30,7 +30,6 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             idle_threshold_s: 300,
-            grace_period_s: 60,
             min_segment_duration_s: 30,
             max_observation_gap_s: 2 * 3600,
         }
@@ -40,11 +39,6 @@ impl Default for EngineConfig {
 impl EngineConfig {
     pub fn with_idle_threshold_s(mut self, v: u64) -> Self {
         self.idle_threshold_s = v;
-        self
-    }
-
-    pub fn with_grace_period_s(mut self, v: u64) -> Self {
-        self.grace_period_s = v;
         self
     }
 
