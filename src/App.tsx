@@ -212,6 +212,7 @@ export default function App() {
                   <DaySummary segments={segments} dayStartMs={dayStartMs} />
                   <SegmentDetail
                     segment={selected}
+                    hasSegments={segments.length > 0}
                     position={selectedPos}
                     onPrev={selectedPos && selectedPos.index > 0 ? () => selectAt(selectedPos.index - 1) : undefined}
                     onNext={

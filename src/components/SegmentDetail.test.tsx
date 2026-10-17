@@ -144,6 +144,19 @@ describe("SegmentDetail 的窗口标题", () => {
 
 // --- 详情卡片右上角：序号 + 原始 id + 上一个/下一个 ---
 
+describe("SegmentDetail 的空白日占位", () => {
+  it("有段时提示去点色块", () => {
+    render(<SegmentDetail segment={null} />);
+    expect(screen.getByText("点击时间线上的色块查看详情")).toBeTruthy();
+  });
+
+  it("这一天没有段时不说「点击色块」—— 没东西可点", () => {
+    render(<SegmentDetail segment={null} hasSegments={false} />);
+    expect(screen.getByText("这一天还没有可看的数据")).toBeTruthy();
+    expect(screen.queryByText("点击时间线上的色块查看详情")).toBeNull();
+  });
+});
+
 describe("SegmentDetail 的定位与前后段导航", () => {
   /** 卡片右上角那个「第几段 / 共几段」读数。 */
   function positionText(): string {

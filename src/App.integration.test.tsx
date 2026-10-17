@@ -218,8 +218,10 @@ describe("App integration (segments)", () => {
 
     expect(screen.getByLabelText("当日汇总")).toBeTruthy();
     expect(screen.getByText("这一天还没有数据。")).toBeTruthy();
-    // 详情面板的占位也还在 —— 两个面板都要在，网格才是两列
-    expect(screen.getByText("点击时间线上的色块查看详情")).toBeTruthy();
+    // 详情面板的占位也还在（两个面板都要在，网格才是两列），
+    // 但措辞要诚实：这一天没有色块可点，别让人去点一个不存在的东西
+    expect(screen.getByText("这一天还没有可看的数据")).toBeTruthy();
+    expect(screen.queryByText("点击时间线上的色块查看详情")).toBeNull();
   });
 
   it("renders the day summary with per-category totals", async () => {

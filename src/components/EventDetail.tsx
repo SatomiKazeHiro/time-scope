@@ -17,12 +17,18 @@ export default function SegmentDetail({
   position,
   onPrev,
   onNext,
+  hasSegments = true,
 }: {
   segment: Segment | null;
   /** 这一段在当天里的位置。`total === 0` 表示调用方没定位到，此时只显示 id。 */
   position?: { index: number; total: number };
   onPrev?: () => void;
   onNext?: () => void;
+  /**
+   * 当天有没有段。用来把占位文案说对 —— 空白日（明天、没跑过的日子）
+   * 时间线上一个色块都没有，再让人「点击色块」就是指着不存在的东西。
+   */
+  hasSegments?: boolean;
 }) {
   const [titles, setTitles] = useState<SegmentTitle[] | null>(null);
   const [titlesFailed, setTitlesFailed] = useState(false);
@@ -59,7 +65,7 @@ export default function SegmentDetail({
     return (
       <div className="panel p-4 flex items-center justify-center border-dashed">
         <div className="text-sm text-ink-faint">
-          点击时间线上的色块查看详情
+          {hasSegments ? "点击时间线上的色块查看详情" : "这一天还没有可看的数据"}
         </div>
       </div>
     );
