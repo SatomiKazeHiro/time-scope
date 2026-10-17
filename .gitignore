@@ -31,6 +31,11 @@ src-tauri/gen/schemas/
 # 视觉检查的临时产物（src/preview.test.tsx 生成）
 .preview/
 
+# 库的快照（VACUUM INTO 出来的单文件，手工热备用）
+# 活库跟着 exe 走（见 README「数据在哪」），所以备份放在 target/ 之外，
+# 否则 `cargo clean` 会把活库和备份一起删掉。
+.time-scope-backup/
+
 # Claude Code 本地配置与 skill
 .claude/
 .superpowers/
