@@ -316,123 +316,36 @@ fn get_config(state: tauri::State<'_, AppState>) -> Result<ConfigOut, String> {
         autostart: cfg.autostart,
         close_behavior: cfg.close_behavior.as_str().to_string(),
         events_retention_days: cfg.events_retention_days,
-        needs_restart: needs_restart_map(),
+        // 「哪些键要重启」是**配置项自己的属性**，住在 `config::FIELDS`。
+        // 这里只把它翻译成前端要的形状，不再维护第二份键名清单。
+        needs_restart: config::needs_restart_map(),
     })
 }
 
-/// 改配置的一个字段。
-///
-/// **只改磁盘上的那一行**（`patch_line`），不覆盖整份文件、不抹掉注释。
-/// 文件坏了就拒绝写入并把原因带回去 —— 与 `rules.toml` 的既定行为一致。
-///
-/// `needs_restart` 是返回值而不是让界面自己猜：**哪些字段热生效、
-/// 哪些必须重启，是后端的事实**（引擎参数构造注入、采集线程参数绑定），
-/// 让前端复制一份这个表，迟早会跟实现对不上。
+/// 改配置的一个字段。校验、夹取、写回、要不要重启的判定全在 `config::set_value`
+/// —— 这个命令只负责把「保留期」这一项的热生效接上。
 #[tauri::command(async)]
 fn set_config(
     state: tauri::State<'_, AppState>,
     key: String,
     value: String,
 ) -> Result<bool, String> {
-    // 保留期的数值单独带出来给热生效用 —— 不在下面把 `rendered` 重新
-    // parse 一遍：那是第二次解析、且解析失败只能静默忽略（`unwrap_or`）。
-    // 这里多带一个值，换掉一条「出错也看不见」的路。
-    let mut new_retention: Option<u32> = None;
-    let rendered = match key.as_str() {
-        // 数字：先解析再回写，让 clamp 与默认值逻辑只有一份（在 config::parse 里）
-        "idle_threshold_s" | "grace_period_s" | "min_segment_duration_s"
-        | "heartbeat_every_s" | "events_retention_days" => {
-            let n: i64 = value
-                .parse()
-                .map_err(|_| format!("`{value}` 不是数字"))?;
-            // clamp 在 parse 里做，这里复用一份默认值走同样的路
-            let probe = config::parse(&format!("{key} = {n}\n"));
-            let clamped = match key.as_str() {
-                "idle_threshold_s" => probe.idle_threshold_s,
-                "grace_period_s" => probe.grace_period_s,
-                "min_segment_duration_s" => probe.min_segment_duration_s,
-                "heartbeat_every_s" => probe.heartbeat_every_s,
-                "events_retention_days" => {
-                    new_retention = Some(probe.events_retention_days);
-                    probe.events_retention_days
-                }
-                // 具名而不是 `_`：上面那个 arm 加了数字键而这里忘了登记时，
-                // 一条 Err 会把疏漏说清楚。写 `_` 的话新键会被悄悄当成保留期。
-                other => {
-                    return Err(format!(
-                        "`{other}` 是数字键却没在 clamp 分支里登记 —— 外层 match 加了键这里要一起改"
-                    ))
-                }
-            };
-            clamped.to_string()
-        }
-        "autostart" => match value.as_str() {
-            "true" => "true".to_string(),
-            "false" => "false".to_string(),
-            other => return Err(format!("`{other}` 不是 true / false")),
-        },
-        "close_behavior" => {
-            let cb = config::CloseBehavior::from_str(&value)
-                .ok_or_else(|| "关窗行为只能是 ask / minimize / quit".to_string())?;
-            format!("\"{}\"", cb.as_str())
-        }
-        other => return Err(format!("未知配置项 `{other}`")),
-    };
+    let outcome = config::set_value(&state.config_path, &key, &value)?;
 
-    config::patch_line(&state.config_path, &key, &rendered).map_err(|e| e.to_string())?;
-
-    // 保留期改成热生效：下一次 5 秒轮询就按新值清理
-    if let Some(days) = new_retention {
-        if let Ok(mut cur) = state.retention_days.lock() {
-            *cur = days;
+    // 保留期改成热生效：下一次 5 秒轮询就按新值清理。
+    // 这是唯一一个「写完还要回写内存」的字段，所以由这里显式接一下，
+    // 而不是让 `set_value` 去认识 `AppState`。
+    if key == "events_retention_days" {
+        if let Some(days) = outcome.int {
+            if let Ok(mut cur) = state.retention_days.lock() {
+                *cur = days;
+            }
         }
     }
 
-    Ok(config_field_needs_restart(&key))
+    Ok(outcome.needs_restart)
 }
 
-/// `config.toml` 里全部可改的键。**加键时这里和 `set_config` 的 `match` 要一起改**。
-/// 漏改 `set_config` 的 `match` → 那条命令直接报「未知配置项」，写不进去。
-/// 漏改这里 → 判定表里没这个键，前端 `?? true` 按「要重启」保守显示：
-/// 热生效的键会多要求一次重启，但不会谎称已生效。角标不会消失。
-const CONFIG_KEYS: &[&str] = &[
-    "idle_threshold_s",
-    "grace_period_s",
-    "min_segment_duration_s",
-    "heartbeat_every_s",
-    "events_retention_days",
-    "autostart",
-    "close_behavior",
-];
-
-/// 每个键 → 改完是否要重启。**界面上那个「重启后生效」角标读的就是这张表。**
-fn needs_restart_map() -> BTreeMap<&'static str, bool> {
-    CONFIG_KEYS
-        .iter()
-        .map(|k| (*k, config_field_needs_restart(k)))
-        .collect()
-}
-
-/// 这个字段改完**必须重启**才生效吗？
-///
-/// 依据是各参数被绑到哪里 / 有没有被现读，不是界面偏好：
-/// - `events_retention_days` —— `set_config` 把新值写回 `AppState.retention_days`，
-///   `get_segments` 每次现读它（见上面 IPC），真热生效
-/// - `close_behavior` —— 关窗拦截**现读 `config.toml`**（`residency.rs` 的
-///   `effective_close_behavior`），设置页写完下一次关窗就照新的走
-/// - `autostart` —— **`Residency` 在 `install()` 时把它快照进 `AtomicBool`**
-///   （`residency.rs`），托盘勾选态也按启动值构造，而 `autostart::enable/disable`
-///   只在托盘菜单回调里被调过。`set_config` 一样都碰不到：改了要重启。
-///   （2026-10-15 更正：这里原来把 `autostart` / `close_behavior` 都算成
-///   「已经热生效」——**那是错的**，界面因此标着「已保存，立刻生效」而实际要等
-///   下次启动。`close_behavior` 后来改成现读磁盘才是真热生效，`autostart` 没有。）
-/// - 四个采集/引擎参数 —— 绑进 `spawn_input_poller` 的线程参数与
-///   `EngineConfig` 的构造注入，进程内改不了（STATUS §4.1「配置热重载」那条）
-fn config_field_needs_restart(key: &str) -> bool {
-    // **未知键一律当作要重启**（`!matches!` 的默认分支）。没登记过的键
-    // 宁可多提醒一次重启，也不要悄悄标成「已生效」。
-    !matches!(key, "events_retention_days" | "close_behavior")
-}
 
 pub fn run() {
     let app = tauri::Builder::default()
@@ -585,77 +498,3 @@ pub fn run() {
     });
 }
 
-#[cfg(test)]
-mod config_restart_honesty_tests {
-    use super::{config_field_needs_restart, needs_restart_map, CONFIG_KEYS};
-
-    /// 界面标「已保存，立刻生效」的字段**必须真的会热生效**。
-    ///
-    /// 2026-10-15 之前这里把 `autostart` / `close_behavior` 都算成热生效，
-    /// 但 `Residency` 是在 `install()` 时**快照**了这两个值，`set_config` 只
-    /// `patch_line` 写文件、不回写那份快照 —— 界面说「已保存」而行为要等
-    /// 下次启动。界面说谎比多要求一次重启更糟：用户会以为设置没生效。
-    ///
-    /// 两个键后来走了**不同的路**：`close_behavior` 改成关窗时现读磁盘，
-    /// 成了真热生效；`autostart` 只能诚实地要求重启 —— 托盘勾选态与
-    /// 系统注册表都要重过启动流程，`set_config` 一个都碰不到。
-    #[test]
-    fn close_behavior_claims_to_be_live_because_the_close_handler_re_reads_the_file() {
-        assert!(
-            !config_field_needs_restart("close_behavior"),
-            "关窗拦截现读 config.toml（residency::effective_close_behavior），真热生效"
-        );
-    }
-
-    #[test]
-    fn autostart_does_not_claim_to_be_live() {
-        assert!(
-            config_field_needs_restart("autostart"),
-            "Residency 是启动快照，托盘勾选态与系统注册表 set_config 都碰不到 —— 必须说要重启"
-        );
-    }
-
-    /// 保留期仍然热生效（`set_config` 回写 `AppState.retention_days`）。
-    #[test]
-    fn the_genuinely_live_fields_stay_live() {
-        assert!(!config_field_needs_restart("events_retention_days"));
-    }
-
-    /// 四个绑在采集线程/引擎构造上的参数仍然要重启。
-    #[test]
-    fn engine_and_collector_params_still_need_restart() {
-        for key in [
-            "idle_threshold_s",
-            "grace_period_s",
-            "min_segment_duration_s",
-            "heartbeat_every_s",
-        ] {
-            assert!(config_field_needs_restart(key), "{key} 绑在构造注入上");
-        }
-    }
-
-    /// 未知键不能被静默当成「立刻生效」。
-    #[test]
-    fn an_unknown_key_is_treated_as_needing_restart() {
-        assert!(
-            config_field_needs_restart("some_key_we_never_saw"),
-            "没登记过的键宁可说要多重启，别让它悄悄标成已生效"
-        );
-    }
-
-    /// `CONFIG_KEYS` 是「界面画不画角标」和「`set_config` 收不收这个键」的
-    /// 共同依据。加了键却忘了往这里加，那个控件的角标会保守地按「要重启」显示，
-    /// 也改不进去。数字写死是故意的 —— 加键应当是个显眼的动作。
-    ///
-    /// 表里带的判定就是界面渲染的东西。曾经前端另抄了一份 `FIELDS[].restart`，
-    /// 两边**一致地错** —— 那次界面说谎的机制。
-    #[test]
-    fn every_configurable_key_has_a_verdict() {
-        assert_eq!(CONFIG_KEYS.len(), 7, "config.toml 的可改键变了就同步这里");
-        let map = needs_restart_map();
-        assert_eq!(map.len(), CONFIG_KEYS.len());
-        assert_eq!(map.get("close_behavior"), Some(&false));
-        assert_eq!(map.get("events_retention_days"), Some(&false));
-        assert_eq!(map.get("autostart"), Some(&true));
-    }
-}

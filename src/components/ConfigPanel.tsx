@@ -29,6 +29,14 @@ type Editable = {
   [K in ConfigKey]: string;
 };
 
+/**
+ * 一项该用哪种控件。
+ *
+ * 类型信息在 `toEditable` 那一步被抹平成字符串（数值框要能编辑中间态），
+ * 所以**控件种类必须由声明给出**，不能渲染时再从值反推。
+ */
+type FieldKind = "number" | "bool" | "choice";
+
 /** 每一项：键名、标签、说明。
  *
  * **这里没有「要不要重启」那一栏** —— 它在 `cfg.needsRestart` 里，
@@ -43,42 +51,63 @@ const FIELDS: {
    *  同时也是 `needsRestart` 的连接点。 */
   tomlKey: string;
   label: string;
+  /**
+   * 该用哪种控件。**由声明给出，不从值反推。**
+   *
+   * 原来靠 `value === "true"` 与「在不在枚举选项里」嗅探，
+   * 那是把类型信息丢掉之后（`Editable` 全是 string）再猜回来：
+   * `closeBehavior` 只要出现第四个值，就会被静默画成数字框，
+   * 用户存回一个非法枚举。
+   */
+  kind: FieldKind;
   hint: string;
 }[] = [
   {
     key: "idleThresholdS",
     tomlKey: "idle_threshold_s",
+    kind: "number",
     label: "无输入多少秒算空闲",
     hint: "最小 10 秒。调小会让时间线更碎",
   },
   {
     key: "gracePeriodS",
     tomlKey: "grace_period_s",
+    kind: "number",
     label: "短暂切换的宽限窗口（秒）",
     hint: "0 = 关掉抖动吸收。改它会明显改变切段的颗粒度",
   },
   {
     key: "minSegmentDurationS",
     tomlKey: "min_segment_duration_s",
+    kind: "number",
     label: "短于此的段并入相邻（秒）",
     hint: "0 = 关掉合并",
   },
   {
     key: "heartbeatEveryS",
     tomlKey: "heartbeat_every_s",
+    kind: "number",
     label: "心跳聚合窗口（秒）",
     hint: "调小会让段的数量明显变多",
   },
   {
     key: "eventsRetentionDays",
     tomlKey: "events_retention_days",
+    kind: "number",
     label: "事件保留天数",
     hint: "只删原始窗口事件（约 5 MB/天），活动时间线不受影响。0 = 永不删",
   },
-  { key: "autostart", tomlKey: "autostart", label: "开机自启", hint: "默认关" },
+  {
+    key: "autostart",
+    tomlKey: "autostart",
+    kind: "bool",
+    label: "开机自启",
+    hint: "默认关",
+  },
   {
     key: "closeBehavior",
     tomlKey: "close_behavior",
+    kind: "choice",
     label: "点 ✕ 关窗时",
     // 「每次」由字段名「点 ✕ 关窗时」带着，选项里不必重复；也短得多，
     // 塞得进那个 128px 的下拉框
@@ -201,6 +230,7 @@ useEffect(() => {
             key={f.key}
             label={f.label}
             hint={f.hint}
+            kind={f.kind}
             restart={cfg.needsRestart[f.tomlKey] ?? true}
             value={draft[f.key]}
             disabled={busy}
@@ -224,6 +254,7 @@ useEffect(() => {
 function Field({
   label,
   hint,
+  kind,
   restart,
   value,
   disabled,
@@ -231,14 +262,12 @@ function Field({
 }: {
   label: string;
   hint: string;
+  kind: FieldKind;
   restart: boolean;
   value: string;
   disabled: boolean;
   onChange: (v: string) => void;
 }) {
-  const isBool = value === "true" || value === "false";
-  const isChoice = CLOSE_BEHAVIOR_OPTIONS.some((o) => o.value === value);
-
   return (
     <div className="grid grid-cols-1 items-baseline gap-x-4 gap-y-0.5 sm:grid-cols-[minmax(0,14rem)_auto_minmax(0,1fr)] sm:items-center">
       <dt className="text-label text-ink">
@@ -252,7 +281,7 @@ function Field({
         )}
       </dt>
       <dd className="contents">
-        {isBool ? (
+        {kind === "bool" ? (
           <input
             type="checkbox"
             aria-label={label}
@@ -261,7 +290,7 @@ function Field({
             onChange={(e) => onChange(String(e.target.checked))}
             className="size-4 justify-self-start accent-[var(--color-neutral-solid)]"
           />
-        ) : isChoice ? (
+        ) : kind === "choice" ? (
           <select
             aria-label={label}
             value={value}
@@ -305,14 +334,13 @@ function isUnchanged(key: ConfigKey, draft: Editable, cfg: AppConfig): boolean {
   return draft[key] === String(cfg[key]);
 }
 
+/** 把磁盘上的配置摊成可编辑的字符串草稿。
+ *
+ * 从 `FIELDS` 派生而不是逐字段手写：加一个配置项时**只需在表里加一行**，
+ * 这里不必再记得补一次（漏了会表现为「那个输入框永远显示旧值」）。
+ */
 function toEditable(c: AppConfig): Editable {
-  return {
-    idleThresholdS: String(c.idleThresholdS),
-    gracePeriodS: String(c.gracePeriodS),
-    minSegmentDurationS: String(c.minSegmentDurationS),
-    heartbeatEveryS: String(c.heartbeatEveryS),
-    eventsRetentionDays: String(c.eventsRetentionDays),
-    autostart: String(c.autostart),
-    closeBehavior: c.closeBehavior,
-  };
+  const out = {} as Editable;
+  for (const f of FIELDS) out[f.key] = String(c[f.key]);
+  return out;
 }

@@ -442,14 +442,20 @@ mod tests {
     /// 防回归：写进 config.toml 的值必须原样到达各层，而不是又回到硬编码默认。
     #[test]
     fn collector_gets_the_configured_thresholds() {
-        use crate::config::AppConfig;
-        // idle_threshold < MIN 时应被夹住，而不是原样传下去
-        let cfg = AppConfig {
-            idle_threshold_s: 0,
-            heartbeat_every_s: 1,
-            ..AppConfig::default()
-        };
-        let parsed = crate::config::parse(&cfg.to_toml());
+        // 走**界面那条真实路径**：原始字符串 → config.toml → parse → 各层。
+        // 以前这里用 `AppConfig::to_toml()` 拼文本再解析回来，那是第二个
+        // 序列化器；它删掉之后（配置项改从 `config::FIELDS` 派生）这条测试
+        // 顺便变强了：夹取发生在写回之前，而不是写完之后。
+        let dir = std::env::temp_dir().join(format!("ts-residency-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+
+        // idle_threshold < MIN 时应被夹住，而不是原样落盘
+        crate::config::set_value(&path, "idle_threshold_s", "0").unwrap();
+        crate::config::set_value(&path, "heartbeat_every_s", "1").unwrap();
+
+        let parsed = crate::config::parse(&std::fs::read_to_string(&path).unwrap());
         assert!(parsed.idle_threshold_s >= crate::config::MIN_IDLE_THRESHOLD_S);
         assert_eq!(parsed.heartbeat_every_s, 1);
         // 引擎侧拿到的是同一组值
@@ -457,5 +463,6 @@ mod tests {
             parsed.to_engine_config().idle_threshold_s,
             parsed.idle_threshold_s as u64
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

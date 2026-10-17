@@ -77,7 +77,7 @@ pub fn explain(path: &Path, err: &rusqlite::Error) -> DbOpenError {
     DbOpenError {
         path: path.display().to_string(),
         reason: describe(err),
-        next_step: next_step(path, err).to_string(),
+        next_step: next_step(err).to_string(),
     }
 }
 
@@ -94,27 +94,37 @@ fn describe(err: &rusqlite::Error) -> String {
 }
 
 /// 用户该做什么。**每一条都要能照着做**，别只说"请重试"。
-fn next_step(path: &Path, err: &rusqlite::Error) -> &'static str {
-    let reason = describe(err).to_lowercase();
-    // 顺序有意：磁盘满比权限更常见，先说最可能的那条
-    if reason.contains("disk") && reason.contains("full") {
-        "磁盘满了。清理出一些空间后重新启动 Time Scope。"
-    } else if reason.contains("readonly") || reason.contains("permission") || reason.contains("denied")
-    {
-        "没有写入权限。确认 %APPDATA%\\time-scope 目录可写，或以管理员身份运行一次。"
-    } else if reason.contains("locked") || reason.contains("busy") {
-        "数据库正被另一个进程占用。关掉可能残留的 Time Scope 进程（任务管理器里看），\
-         再重新启动。数据不会丢。"
-    } else if reason.contains("malformed") || reason.contains("corrupt") || reason.contains("not a database")
-    {
-        "数据库文件已损坏。把它改名备份（例如 time-scope.db.bak），\
-         然后重启 —— Time Scope 会新建一个空库重新开始采集。旧数据仍在备份文件里。"
-    } else if path.extension().map(|e| e.is_empty()).unwrap_or(true) {
-        "路径看起来不是一个数据库文件。检查 %APPDATA%\\time-scope\\time-scope.db \
-         是否被改成了别的文件或目录。"
-    } else {
-        "检查 %APPDATA%\\time-scope\\ 目录是否存在且可写；\
-         若是文件损坏，把它改名备份后重启。"
+///
+/// **按错误码判定，不按错误消息判**。错误码这一维在源头就有
+/// （`rusqlite::ffi::Error` 的 `code` / `extended_code`），原来却先 `describe()`
+/// 压成字符串、再 `contains("denied")` 猜回来 —— 五段猜测，而且 io 错误的消息
+/// 是**本地化**的：中文 Windows 上是「拒绝访问」，于是「没有写权限」那条建议
+/// 在中文系统上永远不出现。少一个维度去猜，就是把本来明确的判断变成了运气。
+fn next_step(err: &rusqlite::Error) -> &'static str {
+    use rusqlite::ErrorCode;
+    let code = match err {
+        rusqlite::Error::SqliteFailure(e, _) => Some(e.code),
+        _ => None,
+    };
+    match code {
+        Some(ErrorCode::DiskFull) => "磁盘满了。清理出一些空间后重新启动 Time Scope。",
+        Some(ErrorCode::ReadOnly | ErrorCode::PermissionDenied) => {
+            "没有写入权限。确认 %APPDATA%\\time-scope 目录可写，或以管理员身份运行一次。"
+        }
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => {
+            "数据库正被另一个进程占用。关掉可能残留的 Time Scope 进程（任务管理器里看），\
+             再重新启动。数据不会丢。"
+        }
+        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => {
+            "数据库文件已损坏。把它改名备份（例如 time-scope.db.bak），\
+             然后重启 —— Time Scope 会新建一个空库重新开始采集。旧数据仍在备份文件里。"
+        }
+        // 打不开（目录不存在 / 路径是个目录 / 被别的程序占着但没报 busy）：
+        // 剩下的可能都提一句，别按消息里的英文关键词去赌是哪一种
+        _ => {
+            "检查 %APPDATA%\\time-scope\\ 目录是否存在且可写；\
+             若是文件损坏，把它改名备份后重启。"
+        }
     }
 }
 
@@ -215,5 +225,39 @@ mod tests {
             ),
         );
         assert!(err.next_step.contains("不会丢"), "实际：{}", err.next_step);
+    }
+
+    /// 权限问题按**错误码**给出建议 —— 与错误消息是什么语言无关。
+    ///
+    /// 消息故意写成中文：按 `contains("denied")` 猜的那一版会让这条断言变红
+    /// （它会掉到兜底那句，只说「检查目录是否存在且可写」）。
+    #[test]
+    fn permission_is_judged_by_error_code_not_by_language() {
+        let err = explain(
+            Path::new(r"C:\x.db"),
+            &rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),
+                Some("尝试写入只读数据库".into()),
+            ),
+        );
+        assert!(err.next_step.contains("写入权限"), "实际：{}", err.next_step);
+    }
+
+    /// 中文的错误消息不该影响判定（io 错误在 rusqlite 里没有 sqlite 错误码，
+    /// 落到兜底那条；关键是**不能**因为它不含英文关键词就什么都不说）。
+    #[test]
+    fn a_localized_io_message_still_gets_an_actionable_next_step() {
+        let err = explain(
+            Path::new(r"C:\x.db"),
+            &rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "拒绝访问。"),
+            )),
+        );
+        assert!(!err.next_step.is_empty(), "兜底也要给一条能照着做的建议");
+        assert!(
+            err.next_step.contains("可写") || err.next_step.contains("备份"),
+            "实际：{}",
+            err.next_step
+        );
     }
 }

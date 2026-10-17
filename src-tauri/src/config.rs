@@ -8,6 +8,7 @@
 //! 「单个字段值非法 → 该字段用默认值，其余照常生效」。
 
 use activity_engine::EngineConfig;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const MIN_IDLE_THRESHOLD_S: u32 = 10;
@@ -54,6 +55,174 @@ impl CloseBehavior {
     }
 }
 
+// ===========================================================================
+// 「一个配置项」的唯一所有者
+//
+// 2026-10-17。在这之前，一个配置项的知识散在**八处**：结构体字段、`Default`、
+// `parse` 的逐字段夹取、`to_toml`、`set_config` 的外层 match、同一个函数里
+// 第二层 match（把夹取后的值再取回来一次）、`CONFIG_KEYS`、
+// `config_field_needs_restart`。代码自己都在报怨 —— 那个第二层 match 里有个
+// arm 的报错文案写着「外层 match 加了键这里要一起改」。
+//
+// 现在加一个字段只需要：① 结构体加字段（typed 边界，必须显式）；
+// ② 这张表加一行；③ 前端 `FIELDS` 加一项文案。判定不再各写一遍。
+// ===========================================================================
+
+/// 一项的类型、取值范围与默认值。
+pub enum FieldKind {
+    /// 整数（秒 / 天）。缺字段、类型不对、文件坏了都回退到 `default`。
+    Int { default: u32, min: u32, max: u32 },
+    Bool { default: bool },
+    /// 枚举。`values` 同时是**合法取值**与**报错文案**的一部分。
+    Enum {
+        values: &'static [&'static str],
+        default: &'static str,
+    },
+}
+
+pub struct FieldSpec {
+    /// `config.toml` 里的键名（snake_case）。也是前端 `needsRestart` 的键。
+    pub key: &'static str,
+    pub kind: FieldKind,
+    /// 改完是否**必须重启**才生效。依据是参数绑在哪里，不是界面偏好：
+    /// - 四个采集/引擎参数：绑进 `spawn_input_poller` 的线程参数与
+    ///   `EngineConfig` 的构造注入，进程内改不了（STATUS §4.1）
+    /// - `autostart`：`Residency` 启动时快照 + 系统注册表，`set_config` 碰不到
+    /// - `close_behavior`：关窗拦截**现读 config.toml**，真热生效
+    /// - `events_retention_days`：`set_config` 回写内存，下一次轮询就按新值清理
+    pub needs_restart: bool,
+}
+
+/// `close_behavior` 的合法取值。与 `CloseBehavior::from_str` 必须一致
+/// （有测试钉着）。
+pub const CLOSE_BEHAVIORS: &[&str] = &["ask", "minimize", "quit"];
+
+pub const FIELDS: &[FieldSpec] = &[
+    FieldSpec {
+        key: "idle_threshold_s",
+        // 下限 10：idle_threshold = 0 会让每条事件都切段，一天几万段
+        kind: FieldKind::Int { default: 300, min: MIN_IDLE_THRESHOLD_S, max: MAX_SECONDS },
+        needs_restart: true,
+    },
+    FieldSpec {
+        key: "grace_period_s",
+        // 0 对这两个参数是有意义的（关掉该行为），所以下限就是 0
+        kind: FieldKind::Int { default: 60, min: 0, max: MAX_SECONDS },
+        needs_restart: true,
+    },
+    FieldSpec {
+        key: "min_segment_duration_s",
+        kind: FieldKind::Int { default: 30, min: 0, max: MAX_SECONDS },
+        needs_restart: true,
+    },
+    FieldSpec {
+        key: "heartbeat_every_s",
+        kind: FieldKind::Int {
+            default: 10,
+            min: MIN_HEARTBEAT_S,
+            max: MAX_HEARTBEAT_S,
+        },
+        needs_restart: true,
+    },
+    FieldSpec {
+        key: "events_retention_days",
+        // 0 是有效取值（永不删），所以下限就是 0
+        kind: FieldKind::Int { default: DEFAULT_RETENTION_DAYS, min: 0, max: MAX_RETENTION_DAYS },
+        needs_restart: false,
+    },
+    FieldSpec {
+        key: "autostart",
+        kind: FieldKind::Bool { default: false },
+        needs_restart: true,
+    },
+    FieldSpec {
+        key: "close_behavior",
+        kind: FieldKind::Enum { values: CLOSE_BEHAVIORS, default: "ask" },
+        needs_restart: false,
+    },
+];
+
+pub fn field(key: &str) -> Option<&'static FieldSpec> {
+    FIELDS.iter().find(|f| f.key == key)
+}
+
+/// 这个键改完要重启吗？**未知键一律当作要重启** —— 没登记过的键宁可多提醒
+/// 一次重启，也不要悄悄标成「已生效」。
+pub fn needs_restart(key: &str) -> bool {
+    field(key).map(|f| f.needs_restart).unwrap_or(true)
+}
+
+/// 每个键 → 改完是否要重启。界面那个「重启后生效」角标读的就是它。
+pub fn needs_restart_map() -> BTreeMap<&'static str, bool> {
+    FIELDS.iter().map(|f| (f.key, f.needs_restart)).collect()
+}
+
+/// 全部可改键。`set_config` 收不收这个键、界面画不画角标，都以它为准。
+fn int_default(key: &str) -> u32 {
+    match field(key).map(|f| &f.kind) {
+        Some(FieldKind::Int { default, .. }) => *default,
+        _ => panic!("FIELDS 里 `{key}` 必须登记成 Int —— 表和结构体对不上"),
+    }
+}
+
+fn bool_default(key: &str) -> bool {
+    match field(key).map(|f| &f.kind) {
+        Some(FieldKind::Bool { default }) => *default,
+        _ => panic!("FIELDS 里 `{key}` 必须登记成 Bool —— 表和结构体对不上"),
+    }
+}
+
+fn enum_default(key: &str) -> &'static str {
+    match field(key).map(|f| &f.kind) {
+        Some(FieldKind::Enum { default, .. }) => default,
+        _ => panic!("FIELDS 里 `{key}` 必须登记成 Enum —— 表和结构体对不上"),
+    }
+}
+
+/// 把用户填的字符串变成**可以写回文件的 TOML 文本**。校验与夹取都在这里，
+/// 于是 `set_config` 不再需要「拼一份假 TOML 再解析回来再 match 一次」那两步。
+///
+/// 返回值第二项是数字键的新取值（保留期靠它热生效），非数字键为 `None`。
+pub fn render_value(key: &str, raw: &str) -> Result<(String, Option<u32>), String> {
+    let spec = field(key).ok_or_else(|| format!("未知配置项 `{key}`"))?;
+    match spec.kind {
+        FieldKind::Int { min, max, .. } => {
+            let n: i64 = raw.parse().map_err(|_| format!("`{raw}` 不是数字"))?;
+            let clamped = n.clamp(min as i64, max as i64) as u32;
+            Ok((clamped.to_string(), Some(clamped)))
+        }
+        FieldKind::Bool { .. } => match raw {
+            "true" => Ok(("true".to_string(), None)),
+            "false" => Ok(("false".to_string(), None)),
+            other => Err(format!("`{other}` 不是 true / false")),
+        },
+        FieldKind::Enum { values, .. } => {
+            if values.contains(&raw) {
+                Ok((format!("\"{raw}\""), None))
+            } else {
+                Err(format!("`{key}` 只能是 {}", values.join(" / ")))
+            }
+        }
+    }
+}
+
+/// 校验并写回一个键。**只改磁盘上的那一行**（`patch_line`），
+/// 不覆盖整份文件、不抹掉注释；文件坏了就拒绝写入并把原因带回去。
+pub fn set_value(path: &Path, key: &str, raw: &str) -> Result<SetOutcome, String> {
+    let (rendered, int) = render_value(key, raw)?;
+    patch_line(path, key, &rendered).map_err(|e| e.to_string())?;
+    Ok(SetOutcome {
+        needs_restart: needs_restart(key),
+        int,
+    })
+}
+
+pub struct SetOutcome {
+    pub needs_restart: bool,
+    /// 数字键的新取值 —— 保留期靠它热生效。
+    pub int: Option<u32>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppConfig {
     /// 无输入多少秒算空闲
@@ -78,15 +247,18 @@ pub struct AppConfig {
 }
 
 impl Default for AppConfig {
+    /// 各项默认值从 `FIELDS` 取，**不再各写一遍** —— 原来这里与 `parse` 里的
+    /// `unwrap_or(d.xxx)` 是同一批数字的两份副本。
     fn default() -> Self {
         Self {
-            idle_threshold_s: 300,
-            grace_period_s: 60,
-            min_segment_duration_s: 30,
-            heartbeat_every_s: 10,
-            autostart: false,
-            close_behavior: CloseBehavior::Ask,
-            events_retention_days: DEFAULT_RETENTION_DAYS,
+            idle_threshold_s: int_default("idle_threshold_s"),
+            grace_period_s: int_default("grace_period_s"),
+            min_segment_duration_s: int_default("min_segment_duration_s"),
+            heartbeat_every_s: int_default("heartbeat_every_s"),
+            autostart: bool_default("autostart"),
+            close_behavior: CloseBehavior::from_str(enum_default("close_behavior"))
+                .expect("FIELDS 里的枚举默认值必须是 CloseBehavior 认识的取值"),
+            events_retention_days: int_default("events_retention_days"),
         }
     }
 }
@@ -98,37 +270,12 @@ impl AppConfig {
             .with_grace_period_s(self.grace_period_s as u64)
             .with_min_segment_duration_s(self.min_segment_duration_s as u64)
     }
-
-    /// 序列化成 TOML。生产写回走 [`patch_line`]（保留用户注释），
-    /// 这个只在测试里用来验证往返。
-    #[cfg(test)]
-    pub fn to_toml(self) -> String {
-        format!(
-            "idle_threshold_s = {}\n\
-             grace_period_s = {}\n\
-             min_segment_duration_s = {}\n\
-             heartbeat_every_s = {}\n\
-             autostart = {}\n\
-             close_behavior = \"{}\"\n\
-             events_retention_days = {}\n",
-            self.idle_threshold_s,
-            self.grace_period_s,
-            self.min_segment_duration_s,
-            self.heartbeat_every_s,
-            self.autostart,
-            self.close_behavior.as_str(),
-            self.events_retention_days,
-        )
-    }
-}
-
-fn clamp_u32(v: i64, min: u32, max: u32) -> u32 {
-    v.clamp(min as i64, max as i64) as u32
 }
 
 /// **纯函数**：任何输入都返回一个可用的配置。
 ///
 /// 逐字段取值：类型对不上、越界、缺失都只影响那一个字段。
+/// **夹取范围与默认值从 `FIELDS` 取**，不再在这里各写一遍。
 pub fn parse(src: &str) -> AppConfig {
     let d = AppConfig::default();
     let Ok(table) = src.parse::<toml::Table>() else {
@@ -136,35 +283,29 @@ pub fn parse(src: &str) -> AppConfig {
         return d;
     };
 
-    // 整数字段：非整数（字符串/浮点/数组）就当没写
-    let int = |key: &str| -> Option<i64> { table.get(key).and_then(|v| v.as_integer()) };
+    // 整数字段：非整数（字符串/浮点/数组）就当没写；越界按表里的范围夹住。
+    // 「负数天」最合理的解释是「不要按天数删」，下限 0 表达的就是这个。
+    let int = |key: &str| -> Option<u32> {
+        let v = table.get(key)?.as_integer()?;
+        match field(key).map(|f| &f.kind) {
+            Some(FieldKind::Int { min, max, .. }) => Some(v.clamp(*min as i64, *max as i64) as u32),
+            _ => None,
+        }
+    };
     let boolean = |key: &str| -> Option<bool> { table.get(key).and_then(|v| v.as_bool()) };
     let text = |key: &str| -> Option<&str> { table.get(key).and_then(|v| v.as_str()) };
 
     AppConfig {
-        // 下限 10：idle_threshold = 0 会让每条事件都切段，一天几万段
-        idle_threshold_s: int("idle_threshold_s")
-            .map(|v| clamp_u32(v, MIN_IDLE_THRESHOLD_S, MAX_SECONDS))
-            .unwrap_or(d.idle_threshold_s),
-        // 0 对这两个参数是有意义的（关掉该行为），所以下限就是 0
-        grace_period_s: int("grace_period_s")
-            .map(|v| clamp_u32(v, 0, MAX_SECONDS))
-            .unwrap_or(d.grace_period_s),
+        idle_threshold_s: int("idle_threshold_s").unwrap_or(d.idle_threshold_s),
+        grace_period_s: int("grace_period_s").unwrap_or(d.grace_period_s),
         min_segment_duration_s: int("min_segment_duration_s")
-            .map(|v| clamp_u32(v, 0, MAX_SECONDS))
             .unwrap_or(d.min_segment_duration_s),
-        heartbeat_every_s: int("heartbeat_every_s")
-            .map(|v| clamp_u32(v, MIN_HEARTBEAT_S, MAX_HEARTBEAT_S))
-            .unwrap_or(d.heartbeat_every_s),
+        heartbeat_every_s: int("heartbeat_every_s").unwrap_or(d.heartbeat_every_s),
         autostart: boolean("autostart").unwrap_or(d.autostart),
         close_behavior: text("close_behavior")
             .and_then(CloseBehavior::from_str)
             .unwrap_or(d.close_behavior),
-        // 0 是有效取值（永不删），所以下限就是 0；负数也落到 0
-        // ——"负数天"最合理的解释是"不要按天数删"，不是"删掉一切"。
-        events_retention_days: int("events_retention_days")
-            .map(|v| clamp_u32(v, 0, MAX_RETENTION_DAYS))
-            .unwrap_or(d.events_retention_days),
+        events_retention_days: int("events_retention_days").unwrap_or(d.events_retention_days),
     }
 }
 
@@ -402,15 +543,36 @@ close_behavior = "minimize"
     }
 
     #[test]
-    fn serialising_round_trips() {
-        let c = AppConfig {
-            autostart: true,
-            ..AppConfig::default()
-        };
-        let text = c.to_toml();
-        let back = parse(&text);
+    fn every_field_survives_a_write_then_parse_round_trip() {
+        // 走**生产那条路**（`set_value` → `patch_line` → `parse`），
+        // 而不是另写一个序列化器再验它 —— 那会多出一份「键名清单」，
+        // 两份清单迟早有一份忘了改。
+        let dir = std::env::temp_dir().join(format!("ts-cfg-rt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+
+        for (key, raw) in [
+            ("idle_threshold_s", "120"),
+            ("grace_period_s", "0"),
+            ("min_segment_duration_s", "45"),
+            ("heartbeat_every_s", "5"),
+            ("events_retention_days", "180"),
+            ("autostart", "true"),
+            ("close_behavior", "quit"),
+        ] {
+            set_value(&path, key, raw).expect("每个登记过的键都必须写得进去");
+        }
+
+        let back = parse(&std::fs::read_to_string(&path).unwrap());
+        assert_eq!(back.idle_threshold_s, 120);
+        assert_eq!(back.grace_period_s, 0);
+        assert_eq!(back.min_segment_duration_s, 45);
+        assert_eq!(back.heartbeat_every_s, 5);
+        assert_eq!(back.events_retention_days, 180);
         assert!(back.autostart);
-        assert_eq!(back.idle_threshold_s, c.idle_threshold_s);
+        assert_eq!(back.close_behavior, CloseBehavior::Quit);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -651,11 +813,151 @@ mod retention_tests {
     }
 
     #[test]
-    fn the_key_survives_a_toml_round_trip() {
-        let c = AppConfig {
-            events_retention_days: 180,
-            ..AppConfig::default()
-        };
-        assert_eq!(parse(&c.to_toml()).events_retention_days, 180);
+    fn the_key_survives_a_write_then_parse_round_trip() {
+        let dir = std::env::temp_dir().join(format!("ts-cfg-rt2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        set_value(&path, "events_retention_days", "180").unwrap();
+        let back = parse(&std::fs::read_to_string(&path).unwrap());
+        assert_eq!(back.events_retention_days, 180);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- 配置项的唯一所有者：FIELDS ---
+
+    /// 表与结构体必须一一对应。**加字段忘了登记表、或表里写错类型**，
+    /// 这里立刻红 —— 而不是等界面上少一个控件、或那个键改不进去。
+    ///
+    /// 默认值写死在这里是故意的：改默认值应当是个显眼的动作。
+    #[test]
+    fn the_field_table_matches_the_struct() {
+        assert_eq!(FIELDS.len(), 7, "config.toml 的可改键变了就同步这里");
+        assert_eq!(
+            AppConfig::default(),
+            AppConfig {
+                idle_threshold_s: 300,
+                grace_period_s: 60,
+                min_segment_duration_s: 30,
+                heartbeat_every_s: 10,
+                autostart: false,
+                close_behavior: CloseBehavior::Ask,
+                events_retention_days: 365,
+            }
+        );
+        for f in FIELDS {
+            assert_eq!(field(f.key).map(|x| x.key), Some(f.key), "`{}` 查不到自己", f.key);
+        }
+        assert!(matches!(
+            field("autostart").unwrap().kind,
+            FieldKind::Bool { .. }
+        ));
+        assert!(matches!(
+            field("close_behavior").unwrap().kind,
+            FieldKind::Enum { .. }
+        ));
+    }
+
+    /// 表里那个 `values` 既是合法取值也是报错文案，必须与枚举一致 ——
+    /// 否则会出现「表说合法、`from_str` 不认」的键。
+    #[test]
+    fn close_behavior_values_match_the_enum() {
+        for v in CLOSE_BEHAVIORS {
+            assert!(
+                CloseBehavior::from_str(v).is_some(),
+                "`{v}` 登记在表里，但 from_str 不认它"
+            );
+        }
+        for cb in [CloseBehavior::Ask, CloseBehavior::Minimize, CloseBehavior::Quit] {
+            assert!(
+                CLOSE_BEHAVIORS.contains(&cb.as_str()),
+                "枚举取值 `{}` 不在表里 —— 界面不给它选项、也写不回去",
+                cb.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn render_value_clamps_and_quotes_like_patch_line_expects() {
+        assert_eq!(render_value("idle_threshold_s", "0").unwrap().0, "10", "下限 10");
+        assert_eq!(render_value("events_retention_days", "-5").unwrap().0, "0");
+        assert_eq!(render_value("autostart", "true").unwrap().0, "true");
+        assert_eq!(
+            render_value("close_behavior", "quit").unwrap().0,
+            "\"quit\"",
+            "枚举要带引号写回 TOML"
+        );
+        // 数字键把夹取后的值一并带出来（保留期靠它热生效）
+        assert_eq!(
+            render_value("events_retention_days", "40000").unwrap().1,
+            Some(MAX_RETENTION_DAYS)
+        );
+        assert_eq!(render_value("autostart", "true").unwrap().1, None);
+    }
+
+    #[test]
+    fn render_value_rejects_garbage_before_anything_is_written() {
+        assert!(render_value("idle_threshold_s", "soon").is_err());
+        assert!(render_value("autostart", "yes").is_err());
+        assert!(render_value("close_behavior", "explode").is_err());
+        assert!(render_value("no_such_key", "1").is_err(), "未知键必须拒绝");
+    }
+
+    // --- 「改完要不要重启」的诚实性（2026-10-15）---
+    //
+    // 界面标「已保存，立刻生效」的字段**必须真的会热生效**。2026-10-15 之前
+    // 这里把 `autostart` / `close_behavior` 都算成热生效，但 `Residency` 在
+    // `install()` 时快照了这两个值，`set_config` 只写文件、不回写快照 ——
+    // 界面说「已保存」而行为要等下次启动。界面说谎比多要求一次重启更糟。
+
+    #[test]
+    fn close_behavior_claims_to_be_live_because_the_close_handler_re_reads_the_file() {
+        assert!(
+            !needs_restart("close_behavior"),
+            "关窗拦截现读 config.toml（residency::effective_close_behavior），真热生效"
+        );
+    }
+
+    #[test]
+    fn autostart_does_not_claim_to_be_live() {
+        assert!(
+            needs_restart("autostart"),
+            "Residency 是启动快照，托盘勾选态与系统注册表 set_config 都碰不到 —— 必须说要重启"
+        );
+    }
+
+    #[test]
+    fn the_genuinely_live_fields_stay_live() {
+        assert!(!needs_restart("events_retention_days"));
+    }
+
+    #[test]
+    fn engine_and_collector_params_still_need_restart() {
+        for key in [
+            "idle_threshold_s",
+            "grace_period_s",
+            "min_segment_duration_s",
+            "heartbeat_every_s",
+        ] {
+            assert!(needs_restart(key), "{key} 绑在构造注入上");
+        }
+    }
+
+    #[test]
+    fn an_unknown_key_is_treated_as_needing_restart() {
+        assert!(
+            needs_restart("some_key_we_never_saw"),
+            "没登记过的键宁可多提醒一次重启，也别让它悄悄标成已生效"
+        );
+    }
+
+    /// 界面读的那张表就是这张，不许再抄一份。
+    #[test]
+    fn the_verdict_map_covers_every_key() {
+        let map = needs_restart_map();
+        assert_eq!(map.len(), FIELDS.len());
+        assert_eq!(map.get("close_behavior"), Some(&false));
+        assert_eq!(map.get("events_retention_days"), Some(&false));
+        assert_eq!(map.get("autostart"), Some(&true));
     }
 }
